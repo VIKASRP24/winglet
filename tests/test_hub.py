@@ -349,3 +349,14 @@ async def test_unpairing_voids_notification_action_links(client, hub):
     hub.store.remove_device(device["id"])
     resp = await client.post(f"/api/inbox/{item['id']}/respond?choice=once&sig={old_sig}")
     assert resp.status == 401
+
+
+async def test_missing_static_asset_is_404_not_the_app_shell(client, hub):
+    root = hub.web_root
+    root.mkdir()
+    (root / "index.html").write_text("<html>shell</html>")
+    resp = await client.get("/assets/node_modules/font.ttf")
+    assert resp.status == 404 and "immutable" not in resp.headers.get("Cache-Control", "")
+    resp = await client.get("/_expo/static/js/web/gone.js")
+    assert resp.status == 404
+    assert "shell" in await (await client.get("/inbox")).text()

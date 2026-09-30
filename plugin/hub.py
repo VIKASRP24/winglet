@@ -619,12 +619,17 @@ class Hub:
         root = root.resolve()
         candidate = (root / tail).resolve() if tail else root / "index.html"
         inside = candidate == root / "index.html" or root in candidate.parents
-        if not inside or not candidate.is_file():
+        found = inside and candidate.is_file()
+        if not found:
+            # A missing file (font, script, icon) is a 404, not the HTML shell: a browser handed HTML
+            # for a font or script fails in confusing ways, and must not cache that answer.
+            if "." in Path(tail).name or tail.startswith(("_expo/", "assets/")):
+                return web.Response(status=404, text="not found", headers={"Cache-Control": "no-store"})
             # Client-side routes (/chat/abc) fall back to the SPA shell; Expo also emits <route>.html.
             html = (root / f"{tail}.html").resolve() if tail else None
             candidate = html if html and root in html.parents and html.is_file() else root / "index.html"
         headers = {"Cache-Control": "no-cache"}
-        if "/_expo/static/" in f"/{tail}" or "/assets/" in f"/{tail}":
+        if found and tail.startswith(("_expo/static/", "assets/")):
             headers["Cache-Control"] = "public, max-age=31536000, immutable"
         ctype = mimetypes.guess_type(candidate.name)[0] or "application/octet-stream"
         if candidate.suffix == ".webmanifest":

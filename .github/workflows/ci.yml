@@ -16,6 +16,8 @@ jobs:
           python-version: "3.12"
       - run: pip install aiohttp cryptography httpx pytest pytest-aiohttp http_ece
       - run: pytest -q
+      - name: Bundled web app is complete
+        run: python scripts/check_web_bundle.py
 
   app:
     name: App typecheck + web build
