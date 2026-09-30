@@ -291,8 +291,17 @@ class Hub:
 
     async def h_inbox(self, request: web.Request) -> web.Response:
         self._require(request)
-        return _json({"items": self.store.list_inbox(status=request.query.get("status") or None),
-                      "pending": self.store.pending_count()})
+        status = request.query.get("status") or None
+        if status == "pending":
+            items = self.store.pending_items()
+        elif status:
+            items = self.store.list_inbox(status=status)
+        else:
+            # Everything still waiting for an answer, however old, plus recent history.
+            pending = self.store.pending_items()
+            seen = {i["id"] for i in pending}
+            items = pending + [i for i in self.store.list_inbox() if i["id"] not in seen]
+        return _json({"items": items, "pending": self.store.pending_count()})
 
     async def h_inbox_respond(self, request: web.Request) -> web.Response:
         item_id = request.match_info["item_id"]

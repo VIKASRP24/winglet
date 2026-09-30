@@ -400,3 +400,13 @@ async def test_notifications_point_at_real_app_routes(client, hub, monkeypatch):
     await hub.add_inbox("approval", "general", "Approval needed", "ls", {"choices": ["once"]})
     clicks = [post[1]["json"]["click"] for post in hub._http.posts]
     assert clicks == [f"winglet://chat/{hub.server_id()}/general", "winglet://inbox"]
+
+
+async def test_old_pending_requests_are_never_crowded_out(client, hub):
+    token = await pair(client, hub)
+    old = await hub.add_inbox("approval", "general", "Approval needed", "ls", {"choices": ["once"]}, push=False)
+    for i in range(101):
+        await hub.add_inbox("result", "general", "Routine finished", f"r{i}", {}, push=False)
+    data = await (await client.get("/api/inbox", headers={"Authorization": f"Bearer {token}"})).json()
+    assert data["pending"] == 1
+    assert old["id"] in [i["id"] for i in data["items"] if i["status"] == "pending"]
