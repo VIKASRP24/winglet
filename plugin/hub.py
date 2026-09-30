@@ -264,6 +264,11 @@ class Hub:
         text = (text or "").strip()[:MAX_TEXT]
         if not text or not chat_id:
             return None
+        if client_id:
+            # A retry of something we already have (the reply to the first try was lost): don't run it twice.
+            existing = self.store.find_user_message(chat_id, client_id)
+            if existing is not None:
+                return existing
         chat = self.store.get_chat(chat_id) or self.store.ensure_chat(chat_id, _clip(text, 40))
         message = self.store.add_message(chat_id, "user", text,
                                          meta={"device": device["name"], "client_id": client_id})

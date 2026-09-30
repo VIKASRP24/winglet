@@ -360,3 +360,19 @@ async def test_missing_static_asset_is_404_not_the_app_shell(client, hub):
     resp = await client.get("/_expo/static/js/web/gone.js")
     assert resp.status == 404
     assert "shell" in await (await client.get("/inbox")).text()
+
+
+async def test_retried_send_is_not_run_twice(client, hub):
+    calls = []
+
+    async def on_user_message(chat, text, device, message):
+        calls.append(text)
+
+    hub.on_user_message = on_user_message
+    token = await pair(client, hub)
+    auth = {"Authorization": f"Bearer {token}"}
+    body = {"text": "deploy it", "client_id": "c-123"}
+    first = await (await client.post("/api/chats/general/messages", json=body, headers=auth)).json()
+    again = await (await client.post("/api/chats/general/messages", json=body, headers=auth)).json()
+    assert first["message"]["id"] == again["message"]["id"]
+    assert calls == ["deploy it"]

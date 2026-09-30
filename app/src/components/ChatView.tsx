@@ -195,7 +195,7 @@ const MessageRow = memo(function MessageRow({ server, message, grouped, live, in
           ),
         )}
         {failed ? (
-          <Pressable style={styles.failed} onPress={() => sendMessage(server.id, message.chat_id, message.text)}>
+          <Pressable style={styles.failed} onPress={() => sendMessage(server.id, message.chat_id, message.text, message.meta?.client_id)}>
             <RotateCcw size={13} color={colors.red} />
             <Text style={styles.failedText}>Not delivered · tap to retry</Text>
           </Pressable>

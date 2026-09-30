@@ -240,6 +240,12 @@ class Store:
                 self._exec("DELETE FROM messages WHERE id = ?", (message_id,))
             return current
 
+    def find_user_message(self, chat_id: str, client_id: str) -> Optional[Dict[str, Any]]:
+        """A message this chat already received with the app's ``client_id`` (retry detection)."""
+        row = self._one("SELECT * FROM messages WHERE chat_id = ? AND role = 'user' "
+                        "AND json_extract(meta, '$.client_id') = ?", (chat_id, client_id))
+        return self._message(row) if row else None
+
     def streaming_messages(self, chat_id: str) -> List[Dict[str, Any]]:
         rows = self._all("SELECT * FROM messages WHERE chat_id = ? AND status = 'streaming'", (chat_id,))
         return [self._message(r) for r in rows]

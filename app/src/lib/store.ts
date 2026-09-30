@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { api, ApiError, wsUrl } from './api';
+import { markFailed, mergeMessages } from './messages';
 import { getJSON, setJSON } from './storage';
 import type { Chat, ConnStatus, InboxItem, Message, Server } from './types';
 
@@ -37,7 +38,7 @@ type AppState = {
   setForeground: (fg: boolean) => void;
   loadMessages: (serverId: string, chatId: string, older?: boolean) => Promise<void>;
   loadInbox: (serverId: string) => Promise<void>;
-  sendMessage: (serverId: string, chatId: string, text: string) => Promise<void>;
+  sendMessage: (serverId: string, chatId: string, text: string, retryClientId?: string) => Promise<void>;
   respond: (serverId: string, itemId: string, reply: { choice?: string; answer?: string }) => Promise<void>;
   createChat: (serverId: string, title?: string) => Promise<Chat | undefined>;
   renameChat: (serverId: string, chatId: string, title: string) => Promise<void>;
@@ -225,15 +226,10 @@ export const useApp = create<AppState>((set, get) => {
       const before = older && existing.length ? `&before=${existing[0].created_at}` : '';
       try {
         const data = await api<{ messages: Message[] }>(server, `/api/chats/${encodeURIComponent(chatId)}/messages?limit=60${before}`);
-        patch(serverId, (s) => {
-          const current = s.messages[chatId] ?? [];
-          const byId = new Map<string, Message>();
-          for (const m of older ? [...data.messages, ...current] : [...data.messages, ...current.filter((m) => m.status === 'pending' || m.status === 'failed')]) {
-            byId.set(m.id, m);
-          }
-          const merged = [...byId.values()].sort((a, b) => a.created_at - b.created_at);
-          return { messages: { ...s.messages, [chatId]: merged }, loaded: { ...s.loaded, [chatId]: true } };
-        });
+        patch(serverId, (s) => ({
+          messages: { ...s.messages, [chatId]: mergeMessages(s.messages[chatId] ?? [], data.messages) },
+          loaded: { ...s.loaded, [chatId]: true },
+        }));
       } catch (e) {
         if (e instanceof ApiError && e.status === 401) patch(serverId, () => ({ status: 'unauthorized' }));
       }
@@ -252,10 +248,11 @@ export const useApp = create<AppState>((set, get) => {
       }
     },
 
-    sendMessage: async (serverId, chatId, text) => {
+    sendMessage: async (serverId, chatId, text, retryClientId) => {
       const server = get().servers.find((s) => s.id === serverId);
       if (!server || !text.trim()) return;
-      const clientId = `c-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+      // A retry reuses the original id so the server can tell it already has the message.
+      const clientId = retryClientId ?? `c-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
       const now = Date.now() / 1000;
       const optimistic: Message = {
         id: clientId, chat_id: chatId, role: 'user', text: text.trim(), status: 'pending',
@@ -268,7 +265,7 @@ export const useApp = create<AppState>((set, get) => {
         });
         upsertMessage(serverId, chatId, data.message);
       } catch {
-        upsertMessage(serverId, chatId, { ...optimistic, status: 'failed' });
+        patch(serverId, (s) => ({ messages: { ...s.messages, [chatId]: markFailed(s.messages[chatId] ?? [], clientId) } }));
       }
     },
 
