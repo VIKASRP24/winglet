@@ -357,7 +357,7 @@ class Hub:
         bot = self.bot()["title"]
         chat = self.store.get_chat(item["chat_id"]) or {}
         return {"title": f"{bot} · {item['title']}", "body": _clip(item["body"], 180),
-                "url": f"/inbox/{item['id']}", "kind": item["kind"], "item_id": item["id"],
+                "url": "/inbox", "kind": item["kind"], "item_id": item["id"],
                 "chat_id": item["chat_id"], "chat_title": chat.get("title", "")}
 
     # -- outbound (called by the adapter) ------------------------------------------------------
@@ -524,8 +524,12 @@ class Hub:
         title = bot if chat_id != HOME_CHAT_ID else f"{bot} · Update"
         if chat.get("kind") == "chat" and chat.get("title") not in ("", "General"):
             title = f"{bot} · {chat['title']}"
-        await self.push_now({"title": title, "body": _clip(message["text"], 180), "url": f"/chat/{chat_id}",
+        await self.push_now({"title": title, "body": _clip(message["text"], 180), "url": self.chat_path(chat_id),
                              "kind": "message", "chat_id": chat_id}, tag=f"chat-{chat_id}")
+
+    def chat_path(self, chat_id: str) -> str:
+        """The app's route for a chat (bots are told apart by server id)."""
+        return f"/chat/{quote(self.server_id(), safe='')}/{quote(chat_id, safe='')}"
 
     async def push_now(self, note: Dict[str, Any], *, tag: str, urgency: str = "normal",
                        item: Optional[Dict[str, Any]] = None) -> int:
@@ -607,7 +611,8 @@ class Hub:
             note.get("kind", ""), "sent you a message")
         payload = {"topic": data["topic"], "title": self.bot()["title"], "message": f"{self.bot()['title']} {generic}",
                    "tags": ["winglet"], "priority": 4 if note.get("kind") in ("approval", "question") else 3,
-                   "click": f"winglet://open{note.get('url', '/')}"}
+                   # Opens the Android app on the same route the web notification uses.
+                   "click": f"winglet:/{note.get('url') or '/'}"}
         await client.post(data["server"], json=payload, timeout=15.0)
 
     async def h_push_test(self, request: web.Request) -> web.Response:

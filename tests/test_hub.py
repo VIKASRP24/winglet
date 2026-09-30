@@ -390,3 +390,13 @@ async def test_bad_paging_params_are_400(client, hub):
     token = await pair(client, hub)
     resp = await client.get("/api/chats/general/messages?limit=abc", headers={"Authorization": f"Bearer {token}"})
     assert resp.status == 400
+
+
+async def test_notifications_point_at_real_app_routes(client, hub, monkeypatch):
+    monkeypatch.setattr("plugin.hub.PUSH_DEBOUNCE_SECONDS", 0.05)
+    hub.store.add_push_sub("dev", "ntfy", "https://ntfy.sh/t", {"server": "https://ntfy.sh", "topic": "t"})
+    await hub.post_message("general", "done!")
+    await asyncio.sleep(0.5)
+    await hub.add_inbox("approval", "general", "Approval needed", "ls", {"choices": ["once"]})
+    clicks = [post[1]["json"]["click"] for post in hub._http.posts]
+    assert clicks == [f"winglet://chat/{hub.server_id()}/general", "winglet://inbox"]
