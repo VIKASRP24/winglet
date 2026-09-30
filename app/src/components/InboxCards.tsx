@@ -191,7 +191,7 @@ const styles = StyleSheet.create({
   recommended: { color: colors.accent, fontFamily: fonts.bold, fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5 },
   otherRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   otherInput: {
-    flex: 1, backgroundColor: colors.rail, color: colors.text, fontFamily: fonts.regular, fontSize: 15, borderRadius: radius.md,
+    flex: 1, minWidth: 0, backgroundColor: colors.rail, color: colors.text, fontFamily: fonts.regular, fontSize: 15, borderRadius: radius.md,
     paddingHorizontal: 12, paddingVertical: 9,
   },
 });
