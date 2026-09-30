@@ -40,6 +40,7 @@ PUSH_DEBOUNCE_SECONDS = 2.5
 MAX_TEXT = 16_000
 PUSH_SUBJECT = "https://github.com/VIKASRP24/winglet"
 PAIR_FAILURES_PER_MINUTE = 10
+ALIVE_CACHE_SECONDS = 2.0
 
 InboundFn = Callable[[Dict[str, Any], str, Dict[str, Any], Dict[str, Any]], Awaitable[None]]
 ResolveFn = Callable[[Dict[str, Any], str], Awaitable[bool]]
@@ -73,6 +74,7 @@ class Hub:
         self._push_tasks: Dict[str, asyncio.Task] = {}
         self._typing: Set[str] = set()
         self._pair_failures: Dict[str, List[float]] = {}
+        self._alive_cache: Dict[str, tuple] = {}
         # Hermes-side callbacks, installed by the adapter.
         self.on_user_message: Optional[InboundFn] = None
         self.on_approval: Optional[ResolveFn] = None
@@ -158,8 +160,18 @@ class Hub:
         return info
 
     def server_id(self) -> str:
-        return self.store.secret("server_id", lambda: hashlib.sha256(
-            self.store.secret("action_key").encode()).hexdigest()[:12])
+        return self.store.secret("server_id", lambda: secrets.token_hex(6))
+
+    def device_alive(self, device_id: str) -> bool:
+        """Whether a device is still paired. Unpairing can happen in another process (the CLI), so
+        this reads the database, cached for a moment to keep streaming broadcasts cheap."""
+        now = time.monotonic()
+        cached = self._alive_cache.get(device_id)
+        if cached and now - cached[1] < ALIVE_CACHE_SECONDS:
+            return cached[0]
+        alive = self.store.get_device(device_id) is not None
+        self._alive_cache[device_id] = (alive, now)
+        return alive
 
     async def h_info(self, request: web.Request) -> web.Response:
         return _json({"app": "winglet", "version": VERSION, "server_id": self.server_id(), "bot": self.bot(),
@@ -190,6 +202,7 @@ class Hub:
     async def h_unpair(self, request: web.Request) -> web.Response:
         device = self._require(request)
         self.store.remove_device(device["id"])
+        self._alive_cache.pop(device["id"], None)
         for ws, meta in list(self._sockets.items()):
             if meta["device"]["id"] == device["id"]:
                 await ws.close()
@@ -421,6 +434,9 @@ class Hub:
         return ws
 
     async def _on_ws(self, ws: web.WebSocketResponse, device: Dict[str, Any], data: Dict[str, Any]) -> None:
+        if self.store.get_device(device["id"]) is None:
+            await ws.close(code=4401, message=b"unpaired")
+            return
         kind = data.get("type")
         if kind == "ping":
             await ws.send_json({"type": "pong", "t": data.get("t")})
@@ -439,7 +455,12 @@ class Hub:
 
     async def broadcast(self, event: Dict[str, Any]) -> None:
         dead = []
-        for ws in list(self._sockets):
+        for ws, meta in list(self._sockets.items()):
+            if not self.device_alive(meta["device"]["id"]):
+                dead.append(ws)
+                with contextlib.suppress(Exception):
+                    await ws.close(code=4401, message=b"unpaired")
+                continue
             try:
                 await ws.send_json(event)
             except Exception:

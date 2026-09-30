@@ -291,3 +291,43 @@ async def test_pairing_is_rate_limited(client, hub):
     for _ in range(10):
         assert (await client.post("/api/pair", json={"code": "NOPE0000"})).status == 403
     assert (await client.post("/api/pair", json={"code": hub.store.create_pair_code()})).status == 429
+
+
+async def test_unpair_from_another_process_cuts_off_open_socket(client, hub, monkeypatch):
+    monkeypatch.setattr("plugin.hub.ALIVE_CACHE_SECONDS", 0)
+    received = []
+
+    async def on_user_message(chat, text, device, message):
+        received.append(text)
+
+    hub.on_user_message = on_user_message
+    token = await pair(client, hub)
+    ws = await client.ws_connect(f"/api/ws?token={token}")
+    hello = await ws.receive_json()
+    hub.store.remove_device(hello["device"]["id"])  # what `hermes winglet unpair` does
+    await ws.send_json({"type": "message.send", "chat_id": "general", "text": "still here?"})
+    msg = await ws.receive()
+    assert msg.type.name in ("CLOSE", "CLOSED", "CLOSING")
+    assert received == []
+
+
+async def test_revoked_socket_gets_no_broadcasts(client, hub, monkeypatch):
+    monkeypatch.setattr("plugin.hub.ALIVE_CACHE_SECONDS", 0)
+    token = await pair(client, hub)
+    ws = await client.ws_connect(f"/api/ws?token={token}")
+    hello = await ws.receive_json()
+    hub.store.remove_device(hello["device"]["id"])
+    await hub.post_message("general", "secret reply", push=False)
+    msg = await ws.receive()
+    assert msg.type.name in ("CLOSE", "CLOSED", "CLOSING")
+
+
+async def test_unpairing_voids_notification_action_links(client, hub):
+    token = await pair(client, hub)
+    item = await hub.add_inbox("approval", "general", "Approval needed", "ls",
+                               {"choices": ["once", "deny"], "session_key": "k"}, push=False)
+    old_sig = hub.action_signature(item["id"], "once")
+    device = (await (await client.get("/api/me", headers={"Authorization": f"Bearer {token}"})).json())["device"]
+    hub.store.remove_device(device["id"])
+    resp = await client.post(f"/api/inbox/{item['id']}/respond?choice=once&sig={old_sig}")
+    assert resp.status == 401

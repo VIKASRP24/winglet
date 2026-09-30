@@ -165,7 +165,12 @@ class Store:
     def remove_device(self, device_id: str) -> bool:
         with self._lock:
             self._exec("DELETE FROM push_subs WHERE device_id = ?", (device_id,))
-            return self._exec("DELETE FROM devices WHERE id = ?", (device_id,)) == 1
+            removed = self._exec("DELETE FROM devices WHERE id = ?", (device_id,)) == 1
+            if removed:
+                # Notification action links are signed with this key; rotating it voids any the
+                # removed phone may still hold.
+                self._exec("DELETE FROM kv WHERE key = 'action_key'")
+            return removed
 
     @staticmethod
     def _device(row: sqlite3.Row) -> Dict[str, Any]:
