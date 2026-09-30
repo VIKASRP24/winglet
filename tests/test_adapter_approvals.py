@@ -1,5 +1,7 @@
 """Exercise the real adapter with small Hermes interface doubles, without installing the gateway."""
 
+import asyncio
+import copy
 import importlib.util
 import sys
 from pathlib import Path
@@ -14,13 +16,21 @@ from plugin.store import Store
 
 @pytest.fixture
 def adapter(monkeypatch, tmp_path):
+    class BaseAdapter:
+        async def send_exec_approval(self, chat_id, command, session_key, description=None,
+                                     metadata=None, allow_permanent=True, allow_session=True,
+                                     smart_denied=False):
+            return await self._send_exec_approval_prompt(prompt(
+                chat_id=chat_id, command=command, session_key=session_key, description=description,
+                metadata=metadata, smart_denied=smart_denied))
+
     shared = {name: lambda *args, **kwargs: None for name in
               ("extra_or_secret", "get_scoped_secret", "seed_extra_from_env")}
     interfaces = {
         "gateway": {}, "gateway.platforms": {},
         "gateway.config": {"Platform": str, "PlatformConfig": object},
         "gateway.platforms._shared": shared,
-        "gateway.platforms.base": {"BasePlatformAdapter": object, "ExecApprovalPrompt": SimpleNamespace,
+        "gateway.platforms.base": {"BasePlatformAdapter": BaseAdapter, "ExecApprovalPrompt": SimpleNamespace,
                                    "SendResult": SimpleNamespace},
         "gateway.platforms.event": {"MessageEvent": SimpleNamespace, "MessageType": SimpleNamespace},
     }
@@ -41,6 +51,32 @@ def adapter(monkeypatch, tmp_path):
     for task in awaitable_tasks:
         task.cancel()
     store.close()
+
+
+@pytest.fixture
+def notifier():
+    # Model Hermes' synchronous call site, including the real module/frame/context names.
+    # Return the coroutine without running it: by the time the loop receives it this frame is gone.
+    module = ModuleType("gateway.run_turn_runner")
+    module.namespace = SimpleNamespace
+    exec("""
+class TurnRunner:
+    def __init__(self, adapter, session_key="s1", chat_id="general"):
+        self._ctx = namespace(_status_adapter=adapter, session_key=session_key, _status_chat_id=chat_id)
+
+    def _approval_notify_sync(self, approval_data, target=None, **overrides):
+        ctx = self._ctx
+        arguments = dict(chat_id=ctx._status_chat_id, command=approval_data["command"],
+                         session_key=ctx.session_key, metadata=approval_data.get("metadata"))
+        arguments.update(overrides)
+        return (target or ctx._status_adapter).send_exec_approval(**arguments)
+
+    def changed_notifier(self, approval_data):
+        ctx = self._ctx
+        return ctx._status_adapter.send_exec_approval(
+            chat_id=ctx._status_chat_id, command=approval_data["command"], session_key=ctx.session_key)
+""", module.__dict__)
+    return module.TurnRunner
 
 
 def prompt(**overrides):
@@ -85,3 +121,91 @@ async def test_already_claimed_identity_cannot_create_a_duplicate_card(adapter, 
     assert (await adapter._send_exec_approval_prompt(p)).success
     assert not (await adapter._send_exec_approval_prompt(p)).success
     assert adapter._hub.store.pending_count() == 1
+
+
+async def test_notifier_captures_exact_identity_before_worker_frame_disappears(adapter, notifier, monkeypatch):
+    queue = [{"request_id": "a", "command": "ls"}, {"request_id": "b", "command": "ls"}]
+    monkeypatch.setattr(bridge, "queued_approvals", lambda session: queue)
+    data = {"request_id": "b", "command": "ls", "metadata": {"thread_id": "t1"}}
+    coroutine = await asyncio.to_thread(notifier(adapter)._approval_notify_sync, data)
+    # Neither later mutation nor two identical queued commands can change the captured identity.
+    data["request_id"] = "a"
+    assert data["metadata"] == {"thread_id": "t1"}
+    assert (await coroutine).success
+    assert adapter._hub.store.pending_items("approval")[0]["payload"]["request_id"] == "b"
+
+
+async def test_notifier_withdrawn_request_never_binds_identical_replacement(adapter, notifier, monkeypatch):
+    queue = [{"request_id": "original", "command": "ls"}]
+    monkeypatch.setattr(bridge, "queued_approvals", lambda session: queue)
+    coroutine = notifier(adapter)._approval_notify_sync({"request_id": "original", "command": "ls"})
+    queue[:] = [{"request_id": "replacement", "command": "ls"}]
+    assert not (await coroutine).success
+    assert adapter._hub.store.pending_count() == 0
+
+
+async def test_changed_or_missing_notifier_identity_uses_typed_flow(adapter, notifier, monkeypatch):
+    monkeypatch.setattr(bridge, "queued_approvals", lambda session: [{"request_id": "a", "command": "ls"}])
+    data = {"request_id": "a", "command": "ls"}
+    runner = notifier(adapter)
+    assert not (await runner.changed_notifier(data)).success
+    assert not (await adapter.send_exec_approval("general", "ls", "s1")).success
+    for identity in (None, "", 42):
+        assert not (await runner._approval_notify_sync(data | {"request_id": identity})).success
+    assert adapter._hub.store.pending_count() == 0
+
+
+async def test_notifier_wrong_session_chat_or_adapter_cannot_supply_identity(adapter, notifier, monkeypatch):
+    monkeypatch.setattr(bridge, "queued_approvals", lambda session: [{"request_id": "a", "command": "ls"}])
+    runner = notifier(adapter)
+    data = {"request_id": "a", "command": "ls"}
+    assert not (await runner._approval_notify_sync(data, session_key="other")).success
+    assert not (await runner._approval_notify_sync(data, chat_id="other")).success
+    assert not (await runner._approval_notify_sync(data, target=copy.copy(adapter))).success
+
+    class Relay:
+        def send_exec_approval(self, **kwargs):
+            # Even matching arguments through an intermediary are not the immediate notifier call.
+            return adapter.send_exec_approval(**kwargs)
+
+    assert not (await notifier(Relay())._approval_notify_sync(data)).success
+    assert adapter._hub.store.pending_count() == 0
+
+
+async def test_same_named_notifier_from_another_module_cannot_supply_identity(adapter, notifier, monkeypatch):
+    monkeypatch.setattr(bridge, "queued_approvals", lambda session: [{"request_id": "a", "command": "ls"}])
+    monkeypatch.setitem(notifier._approval_notify_sync.__globals__, "__name__", "other.gateway")
+    assert not (await notifier(adapter)._approval_notify_sync({"request_id": "a", "command": "ls"})).success
+    assert adapter._hub.store.pending_count() == 0
+
+
+async def test_explicit_identity_wins_and_invalid_supplied_identity_does_not_capture(adapter, notifier, monkeypatch):
+    queue = [{"request_id": "a", "command": "ls"}, {"request_id": "b", "command": "ls"}]
+    monkeypatch.setattr(bridge, "queued_approvals", lambda session: queue)
+    data = {"request_id": "a", "command": "ls"}
+    runner = notifier(adapter)
+    assert (await runner._approval_notify_sync(data, request_id="b")).success
+    for identity in (None, "", "withdrawn"):
+        assert not (await runner._approval_notify_sync(
+            data, metadata={"approval_request_id": identity})).success
+    assert adapter._hub.store.pending_count() == 1
+
+
+async def test_parallel_sessions_keep_their_notified_identities(adapter, notifier, monkeypatch):
+    monkeypatch.setattr(bridge, "queued_approvals", lambda session:
+                        [{"request_id": session, "command": "ls"}])
+    coroutines = await asyncio.gather(*[
+        asyncio.to_thread(notifier(adapter, session)._approval_notify_sync,
+                          {"request_id": session, "command": "ls"}) for session in ("s1", "s2")])
+    assert all(result.success for result in await asyncio.gather(*coroutines))
+    assert {(i["payload"]["session_key"], i["payload"]["request_id"])
+            for i in adapter._hub.store.pending_items("approval")} == {("s1", "s1"), ("s2", "s2")}
+
+
+async def test_frame_access_unavailable_falls_back(adapter, notifier, monkeypatch):
+    def unavailable(depth):
+        raise ValueError("frame unavailable")
+
+    monkeypatch.setattr(bridge.sys, "_getframe", unavailable)
+    assert not (await notifier(adapter)._approval_notify_sync({"request_id": "a", "command": "ls"})).success
+    assert adapter._hub.store.pending_count() == 0
