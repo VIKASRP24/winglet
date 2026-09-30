@@ -181,6 +181,9 @@ function ChatMenu({ server, chat, onClose }: { server: Server; chat: Chat | null
               }}
             />
           ) : null}
+          {chat?.id !== 'general' ? (
+            <Text style={styles.sheetNote}>Deletes this chat from Winglet on every device. Hermes keeps its own session history.</Text>
+          ) : null}
         </Pressable>
       </Pressable>
     </Modal>
@@ -210,6 +213,7 @@ const styles = StyleSheet.create({
   workingDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.yellow },
   backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', alignItems: 'center', justifyContent: 'center', padding: 24 },
   sheet: { width: '100%', maxWidth: 400, backgroundColor: colors.chat, borderRadius: radius.lg, padding: 18, gap: 12 },
+  sheetNote: { color: colors.textFaint, fontFamily: fonts.regular, fontSize: 12.5, lineHeight: 18 },
   sheetTitle: { color: colors.text, fontFamily: fonts.bold, fontSize: 18 },
   renameRow: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: colors.rail, borderRadius: radius.md, paddingHorizontal: 12 },
   renameInput: { flex: 1, color: colors.text, fontFamily: fonts.medium, fontSize: 16, paddingVertical: 12 },

@@ -40,9 +40,12 @@ PUSH_DEBOUNCE_SECONDS = 2.5
 MAX_TEXT = 16_000
 PUSH_SUBJECT = "https://github.com/VIKASRP24/winglet"
 PAIR_FAILURES_PER_MINUTE = 10
+ALIVE_CACHE_SECONDS = 2.0
+# Raster formats only: SVG is a document that can carry script.
+INLINE_IMAGE_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp", "image/avif", "image/bmp"}
 
 InboundFn = Callable[[Dict[str, Any], str, Dict[str, Any], Dict[str, Any]], Awaitable[None]]
-ResolveFn = Callable[[Dict[str, Any], str], Awaitable[bool]]
+ResolveFn = Callable[[Dict[str, Any], Any], Awaitable[bool]]
 
 
 def _json(data: Any, status: int = 200) -> web.Response:
@@ -73,6 +76,7 @@ class Hub:
         self._push_tasks: Dict[str, asyncio.Task] = {}
         self._typing: Set[str] = set()
         self._pair_failures: Dict[str, List[float]] = {}
+        self._alive_cache: Dict[str, tuple] = {}
         # Hermes-side callbacks, installed by the adapter.
         self.on_user_message: Optional[InboundFn] = None
         self.on_approval: Optional[ResolveFn] = None
@@ -158,8 +162,18 @@ class Hub:
         return info
 
     def server_id(self) -> str:
-        return self.store.secret("server_id", lambda: hashlib.sha256(
-            self.store.secret("action_key").encode()).hexdigest()[:12])
+        return self.store.secret("server_id", lambda: secrets.token_hex(6))
+
+    def device_alive(self, device_id: str) -> bool:
+        """Whether a device is still paired. Unpairing can happen in another process (the CLI), so
+        this reads the database, cached for a moment to keep streaming broadcasts cheap."""
+        now = time.monotonic()
+        cached = self._alive_cache.get(device_id)
+        if cached and now - cached[1] < ALIVE_CACHE_SECONDS:
+            return cached[0]
+        alive = self.store.get_device(device_id) is not None
+        self._alive_cache[device_id] = (alive, now)
+        return alive
 
     async def h_info(self, request: web.Request) -> web.Response:
         return _json({"app": "winglet", "version": VERSION, "server_id": self.server_id(), "bot": self.bot(),
@@ -175,6 +189,8 @@ class Hub:
             body = await request.json()
         except Exception:
             return _error(400, "invalid JSON")
+        if not isinstance(body, dict):
+            return _error(400, "expected a JSON object")
         if not self.store.redeem_pair_code(str(body.get("code") or "")):
             self._pair_failures[peer] = recent + [now]
             return _error(403, "This pairing code is invalid or expired. Run `hermes winglet pair` for a new one.")
@@ -190,6 +206,7 @@ class Hub:
     async def h_unpair(self, request: web.Request) -> web.Response:
         device = self._require(request)
         self.store.remove_device(device["id"])
+        self._alive_cache.pop(device["id"], None)
         for ws, meta in list(self._sockets.items()):
             if meta["device"]["id"] == device["id"]:
                 await ws.close()
@@ -230,14 +247,24 @@ class Hub:
     async def h_messages(self, request: web.Request) -> web.Response:
         self._require(request)
         chat_id = request.match_info["chat_id"]
-        before = request.query.get("before")
-        messages = self.store.list_messages(chat_id, before=float(before) if before else None,
-                                            limit=int(request.query.get("limit") or 50))
-        return _json({"messages": messages})
+        try:
+            before = float(request.query["before"]) if request.query.get("before") else None
+            before_position = int(request.query["before_position"]) if request.query.get("before_position") else None
+            limit = int(request.query.get("limit") or 50)
+            if before_position is not None and before_position < 1:
+                raise ValueError
+        except ValueError:
+            return _error(400, "before and limit must be numbers; before_position must be a positive integer")
+        messages = self.store.list_messages(chat_id, before_position=before_position,
+                                            before_id=request.query.get("before_id") or None,
+                                            before=before, limit=limit)
+        return _json({"messages": messages, "deleted_ids": self.store.deleted_message_ids(chat_id)})
 
     async def h_message_send(self, request: web.Request) -> web.Response:
         device = self._require(request)
         body = await self._body(request)
+        if self.store.get_chat(request.match_info["chat_id"]) is None:
+            return _error(404, "This chat was deleted.")
         message = await self.user_message(device, request.match_info["chat_id"], str(body.get("text") or ""),
                                           str(body.get("client_id") or ""))
         if message is None:
@@ -249,7 +276,14 @@ class Hub:
         text = (text or "").strip()[:MAX_TEXT]
         if not text or not chat_id:
             return None
-        chat = self.store.get_chat(chat_id) or self.store.ensure_chat(chat_id, _clip(text, 40))
+        if client_id:
+            # A retry of something we already have (the reply to the first try was lost): don't run it twice.
+            existing = self.store.find_user_message(chat_id, client_id)
+            if existing is not None:
+                return existing
+        chat = self.store.get_chat(chat_id)
+        if chat is None:
+            return None  # deleted (or never created): don't bring it back
         message = self.store.add_message(chat_id, "user", text,
                                          meta={"device": device["name"], "client_id": client_id})
         await self.broadcast({"type": "message.new", "chat_id": chat_id, "message": message})
@@ -267,8 +301,17 @@ class Hub:
 
     async def h_inbox(self, request: web.Request) -> web.Response:
         self._require(request)
-        return _json({"items": self.store.list_inbox(status=request.query.get("status") or None),
-                      "pending": self.store.pending_count()})
+        status = request.query.get("status") or None
+        if status == "pending":
+            items = self.store.pending_items()
+        elif status:
+            items = self.store.list_inbox(status=status)
+        else:
+            # Everything still waiting for an answer, however old, plus recent history.
+            pending = self.store.pending_items()
+            seen = {i["id"] for i in pending}
+            items = pending + [i for i in self.store.list_inbox() if i["id"] not in seen]
+        return _json({"items": items, "pending": self.store.pending_count()})
 
     async def h_inbox_respond(self, request: web.Request) -> web.Response:
         item_id = request.match_info["item_id"]
@@ -299,17 +342,30 @@ class Hub:
             ok = bool(self.on_approval and await self.on_approval(item, choice))
             resolution = choice
         elif item["kind"] == "question":
-            text = str(answer if answer is not None else choice).strip()
-            if not text:
-                return False, item
-            ok = bool(self.on_answer and await self.on_answer(item, text))
-            resolution = text
+            if isinstance(answer, list):  # multi-select: the labels the user ticked
+                picked = [str(a).strip() for a in answer if str(a).strip()]
+                if not picked:
+                    return False, item
+                reply: Any = picked
+                resolution = ", ".join(picked)
+            else:
+                reply = resolution = str(answer if answer is not None else choice).strip()
+                if not reply:
+                    return False, item
+            ok = bool(self.on_answer and await self.on_answer(item, reply))
         else:  # results are simply acknowledged
             ok, resolution = True, "seen"
         updated = self.store.resolve_inbox(item_id, "resolved" if ok else "expired", resolution if ok else "")
         item = updated or self.store.get_inbox(item_id)
         await self.broadcast({"type": "inbox.update", "item": item, "pending": self.store.pending_count()})
         return ok, item
+
+    async def expire_item(self, item_id: str, note: str = "") -> Optional[Dict[str, Any]]:
+        """Mark a pending card dead (its request ended without an answer from Winglet)."""
+        item = self.store.resolve_inbox(item_id, "expired", note[:500])
+        if item is not None:
+            await self.broadcast({"type": "inbox.update", "item": item, "pending": self.store.pending_count()})
+        return item
 
     async def add_inbox(self, kind: str, chat_id: str, title: str, body: str, payload: Dict[str, Any], *,
                         push: bool = True) -> Dict[str, Any]:
@@ -326,7 +382,7 @@ class Hub:
         bot = self.bot()["title"]
         chat = self.store.get_chat(item["chat_id"]) or {}
         return {"title": f"{bot} · {item['title']}", "body": _clip(item["body"], 180),
-                "url": f"/inbox/{item['id']}", "kind": item["kind"], "item_id": item["id"],
+                "url": "/inbox", "kind": item["kind"], "item_id": item["id"],
                 "chat_id": item["chat_id"], "chat_title": chat.get("title", "")}
 
     # -- outbound (called by the adapter) ------------------------------------------------------
@@ -376,17 +432,36 @@ class Hub:
         dest_dir.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(src, dest_dir / name)
         mime = mimetypes.guess_type(name)[0] or "application/octet-stream"
-        kind = mime.split("/")[0] if mime.split("/")[0] in ("image", "audio", "video") else "file"
-        return {"url": f"/api/media/{media_id}/{quote(name)}", "name": name, "mime": mime, "kind": kind,
-                "size": (dest_dir / name).stat().st_size}
+        kind = "image" if mime in INLINE_IMAGE_TYPES else mime.split("/")[0] if mime.split("/")[0] in (
+            "audio", "video") else "file"
+        # The link carries a signature for this one file, never the device's bearer token.
+        return {"url": f"/api/media/{media_id}/{quote(name)}?sig={self.media_signature(media_id)}", "name": name,
+                "mime": mime, "kind": kind, "size": (dest_dir / name).stat().st_size}
+
+    def media_signature(self, media_id: str) -> str:
+        key = self.store.secret("media_key").encode()
+        return hmac.new(key, media_id.encode(), hashlib.sha256).hexdigest()[:32]
 
     async def h_media(self, request: web.Request) -> web.StreamResponse:
-        self._require(request)
         media_id, name = request.match_info["media_id"], request.match_info["name"]
+        sig = request.query.get("sig", "")
+        if not (sig and hmac.compare_digest(sig, self.media_signature(media_id))):
+            self._require(request)  # older links used the device token
         path = (self.media_dir / media_id / name).resolve()
         if self.media_dir.resolve() not in path.parents or not path.is_file():
             return _error(404, "not found")
-        return web.FileResponse(path, headers={"Cache-Control": "private, max-age=86400"})
+        mime = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        inline = mime in INLINE_IMAGE_TYPES or mime.startswith(("audio/", "video/"))
+        # Agent output is untrusted: an HTML or SVG file must never run as part of the app's origin.
+        # Anything that isn't plain media downloads, and the sandbox CSP neuters it even if opened.
+        headers = {
+            "Cache-Control": "private, max-age=86400",
+            "Content-Type": mime if inline else "application/octet-stream",
+            "Content-Disposition": f"{'inline' if inline else 'attachment'}; filename*=UTF-8''{quote(path.name)}",
+            "Content-Security-Policy": "default-src 'none'; sandbox",
+            "X-Content-Type-Options": "nosniff",
+        }
+        return web.FileResponse(path, headers=headers)
 
     # -- websocket -------------------------------------------------------------------------
 
@@ -414,6 +489,9 @@ class Hub:
         return ws
 
     async def _on_ws(self, ws: web.WebSocketResponse, device: Dict[str, Any], data: Dict[str, Any]) -> None:
+        if self.store.get_device(device["id"]) is None:
+            await ws.close(code=4401, message=b"unpaired")
+            return
         kind = data.get("type")
         if kind == "ping":
             await ws.send_json({"type": "pong", "t": data.get("t")})
@@ -432,7 +510,12 @@ class Hub:
 
     async def broadcast(self, event: Dict[str, Any]) -> None:
         dead = []
-        for ws in list(self._sockets):
+        for ws, meta in list(self._sockets.items()):
+            if not self.device_alive(meta["device"]["id"]):
+                dead.append(ws)
+                with contextlib.suppress(Exception):
+                    await ws.close(code=4401, message=b"unpaired")
+                continue
             try:
                 await ws.send_json(event)
             except Exception:
@@ -466,37 +549,49 @@ class Hub:
         title = bot if chat_id != HOME_CHAT_ID else f"{bot} · Update"
         if chat.get("kind") == "chat" and chat.get("title") not in ("", "General"):
             title = f"{bot} · {chat['title']}"
-        await self.push_now({"title": title, "body": _clip(message["text"], 180), "url": f"/chat/{chat_id}",
+        await self.push_now({"title": title, "body": _clip(message["text"], 180), "url": self.chat_path(chat_id),
                              "kind": "message", "chat_id": chat_id}, tag=f"chat-{chat_id}")
 
+    def chat_path(self, chat_id: str) -> str:
+        """The app's route for a chat (bots are told apart by server id)."""
+        return f"/chat/{quote(self.server_id(), safe='')}/{quote(chat_id, safe='')}"
+
     async def push_now(self, note: Dict[str, Any], *, tag: str, urgency: str = "normal",
-                       item: Optional[Dict[str, Any]] = None) -> int:
-        """Send ``note`` to every subscription; returns how many deliveries were attempted."""
+                       item: Optional[Dict[str, Any]] = None) -> Dict[str, int]:
+        """Send ``note`` to every subscription. Returns counts of deliveries the push services
+        accepted, rejected, and dropped as expired (accepted is not proof the phone showed it)."""
+        result = {"accepted": 0, "failed": 0, "expired": 0}
         subs = self.store.list_push_subs()
         if not subs:
-            return 0
+            return result
         client = await self._client()
         note = {**note, "tag": tag, "server_id": self.server_id()}
         if item is not None and item["kind"] == "approval":
             note["actions"] = [{"action": c, "title": item["payload"].get("labels", {}).get(c, c.title()),
                                 "sig": self.action_signature(item["id"], c)}
                                for c in item["payload"].get("choices", []) if c in ("once", "deny")]
-        attempts = 0
         for sub in subs:
-            attempts += 1
             try:
                 if sub["kind"] == "webpush":
                     status = await webpush.send(client, sub["data"], note, self.vapid_private_key(), PUSH_SUBJECT,
                                                 urgency=urgency, topic=tag)
-                    if status in (404, 410):
-                        self.store.remove_push_sub(endpoint=sub["endpoint"])
-                    elif status >= 400:
-                        logger.warning("[winglet] web push rejected with HTTP %s", status)
                 elif sub["kind"] == "ntfy":
-                    await self._send_ntfy(client, sub["data"], note)
+                    status = await self._send_ntfy(client, sub["data"], note)
+                else:
+                    continue
             except Exception as exc:
                 logger.warning("[winglet] push delivery failed: %s", exc)
-        return attempts
+                result["failed"] += 1
+                continue
+            if status in (404, 410) and sub["kind"] == "webpush":
+                self.store.remove_push_sub(endpoint=sub["endpoint"])
+                result["expired"] += 1
+            elif status >= 300:
+                logger.warning("[winglet] %s push rejected with HTTP %s", sub["kind"], status)
+                result["failed"] += 1
+            else:
+                result["accepted"] += 1
+        return result
 
     async def _client(self):
         if self._http is None:
@@ -520,9 +615,14 @@ class Hub:
         device = self._require(request)
         body = await self._body(request)
         sub = body.get("subscription") or body
-        endpoint = str(sub.get("endpoint") or "")
-        keys = sub.get("keys") or {}
-        if not endpoint.startswith("https://") or not keys.get("p256dh") or not keys.get("auth"):
+        endpoint = str(sub.get("endpoint") or "") if isinstance(sub, dict) else ""
+        keys = (sub.get("keys") if isinstance(sub, dict) else None) or {}
+        try:
+            valid = (endpoint.startswith("https://") and len(webpush.b64url_decode(keys["p256dh"])) == 65
+                     and len(webpush.b64url_decode(keys["auth"])) >= 16)
+        except Exception:
+            valid = False
+        if not valid:
             return _error(400, "invalid push subscription")
         self.store.add_push_sub(device["id"], "webpush", endpoint,
                                 {"endpoint": endpoint, "keys": {"p256dh": keys["p256dh"], "auth": keys["auth"]}})
@@ -537,26 +637,37 @@ class Hub:
     async def h_ntfy(self, request: web.Request) -> web.Response:
         """Enable ntfy delivery for this device and return the private topic to subscribe to."""
         device = self._require(request)
-        topic = self.store.secret("ntfy_topic", lambda: "winglet-" + secrets.token_hex(12))
-        self.store.add_push_sub(device["id"], "ntfy", f"{self.ntfy_server}/{topic}",
-                                {"server": self.ntfy_server, "topic": topic})
+        legacy_shared = self.store.get_kv("ntfy_topic")  # v0.1 gave every phone the same topic
+        mine = [sub for sub in self.store.list_push_subs("ntfy")
+                if sub["device_id"] == device["id"] and sub["data"].get("topic") != legacy_shared]
+        if mine:
+            topic = mine[0]["data"]["topic"]
+        else:
+            # One private topic per phone: unpairing a phone stops exactly its notifications.
+            topic = "winglet-" + secrets.token_hex(12)
+            if legacy_shared:
+                self.store.remove_push_sub(endpoint=f"{self.ntfy_server}/{legacy_shared}", device_id=device["id"])
+            self.store.add_push_sub(device["id"], "ntfy", f"{self.ntfy_server}/{topic}",
+                                    {"server": self.ntfy_server, "topic": topic})
         return _json({"server": self.ntfy_server, "topic": topic,
                       "subscribe_url": f"{self.ntfy_server}/{topic}"})
 
-    async def _send_ntfy(self, client, data: Dict[str, Any], note: Dict[str, Any]) -> None:
+    async def _send_ntfy(self, client, data: Dict[str, Any], note: Dict[str, Any]) -> int:
         # ntfy topics transit a third-party server, so only generic text is sent there.
         generic = {"approval": "needs your approval", "question": "has a question for you"}.get(
             note.get("kind", ""), "sent you a message")
         payload = {"topic": data["topic"], "title": self.bot()["title"], "message": f"{self.bot()['title']} {generic}",
                    "tags": ["winglet"], "priority": 4 if note.get("kind") in ("approval", "question") else 3,
-                   "click": f"winglet://open{note.get('url', '/')}"}
-        await client.post(data["server"], json=payload, timeout=15.0)
+                   # Opens the Android app on the same route the web notification uses.
+                   "click": f"winglet:/{note.get('url') or '/'}"}
+        resp = await client.post(data["server"], json=payload, timeout=15.0)
+        return resp.status_code
 
     async def h_push_test(self, request: web.Request) -> web.Response:
         self._require(request)
-        attempts = await self.push_now({"title": self.bot()["title"], "body": "Notifications are working 🎉",
-                                        "url": "/", "kind": "test"}, tag="test")
-        return _json({"ok": attempts > 0, "attempts": attempts})
+        result = await self.push_now({"title": self.bot()["title"], "body": "Notifications are working 🎉",
+                                      "url": "/", "kind": "test"}, tag="test")
+        return _json({"ok": result["accepted"] > 0, **result})
 
     # -- static web app -----------------------------------------------------------------------
 
@@ -570,12 +681,17 @@ class Hub:
         root = root.resolve()
         candidate = (root / tail).resolve() if tail else root / "index.html"
         inside = candidate == root / "index.html" or root in candidate.parents
-        if not inside or not candidate.is_file():
+        found = inside and candidate.is_file()
+        if not found:
+            # A missing file (font, script, icon) is a 404, not the HTML shell: a browser handed HTML
+            # for a font or script fails in confusing ways, and must not cache that answer.
+            if "." in Path(tail).name or tail.startswith(("_expo/", "assets/")):
+                return web.Response(status=404, text="not found", headers={"Cache-Control": "no-store"})
             # Client-side routes (/chat/abc) fall back to the SPA shell; Expo also emits <route>.html.
             html = (root / f"{tail}.html").resolve() if tail else None
             candidate = html if html and root in html.parents and html.is_file() else root / "index.html"
         headers = {"Cache-Control": "no-cache"}
-        if "/_expo/static/" in f"/{tail}" or "/assets/" in f"/{tail}":
+        if found and tail.startswith(("_expo/static/", "assets/")):
             headers["Cache-Control"] = "public, max-age=31536000, immutable"
         ctype = mimetypes.guess_type(candidate.name)[0] or "application/octet-stream"
         if candidate.suffix == ".webmanifest":

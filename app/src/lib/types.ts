@@ -22,6 +22,7 @@ export type Attachment = { url: string; name: string; mime: string; kind: 'image
 
 export type Message = {
   id: string;
+  position?: number; // server insertion order; absent on optimistic rows and older servers
   chat_id: string;
   role: 'user' | 'bot' | 'system';
   text: string;

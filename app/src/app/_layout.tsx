@@ -15,7 +15,7 @@ import { useApp } from '../lib/store';
 import { colors } from '../lib/theme';
 
 export default function RootLayout() {
-  const [fontsLoaded] = useFonts({ Inter_400Regular, Inter_500Medium, Inter_600SemiBold, Inter_700Bold, Inter_800ExtraBold });
+  const [fontsLoaded, fontError] = useFonts({ Inter_400Regular, Inter_500Medium, Inter_600SemiBold, Inter_700Bold, Inter_800ExtraBold });
   const ready = useApp((s) => s.ready);
   const init = useApp((s) => s.init);
   const setForeground = useApp((s) => s.setForeground);
@@ -35,7 +35,8 @@ export default function RootLayout() {
     return () => sub.remove();
   }, [setForeground]);
 
-  if (!fontsLoaded || !ready) return <View style={{ flex: 1, backgroundColor: colors.rail }} />;
+  // A font that fails to load falls back to the system font rather than a blank screen.
+  if ((!fontsLoaded && !fontError) || !ready) return <View style={{ flex: 1, backgroundColor: colors.rail }} />;
 
   return (
     <SafeAreaProvider style={{ backgroundColor: colors.rail }}>

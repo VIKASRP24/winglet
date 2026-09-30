@@ -7,7 +7,7 @@ import { Linking, Platform, ScrollView, StyleSheet, Text, View } from 'react-nat
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BotAvatar } from '../components/BotAvatar';
 import { Button, IconButton, Row, SectionLabel } from '../components/ui';
-import { enableNtfy, enableWebPush, openNtfySubscribe, sendTestPush, webPushServer, webPushState, type PushState } from '../lib/push';
+import { describeTestPush, enableNtfy, enableWebPush, openNtfySubscribe, sendTestPush, webPushServer, webPushState, type PushState } from '../lib/push';
 import { useApp } from '../lib/store';
 import { colors, fonts, radius } from '../lib/theme';
 import type { Server } from '../lib/types';
@@ -114,7 +114,13 @@ function WebPushSettings({ servers }: { servers: Server[] }) {
             }}
           />
           {state === 'granted' ? (
-            <Button title="Send a test" variant="secondary" onPress={async () => setMsg((await sendTestPush(server)) ? 'Sent! It should arrive in a moment.' : 'No devices registered yet.')} />
+            <Button title="Send a test" variant="secondary" onPress={async () => {
+              try {
+                setMsg(describeTestPush(await sendTestPush(server)));
+              } catch (e) {
+                setMsg((e as Error).message);
+              }
+            }} />
           ) : null}
         </View>
       </>
@@ -137,6 +143,7 @@ function NtfySettings({ server }: { server: Server }) {
       <Text style={styles.note}>
         Android notifications come through the free ntfy app, so Winglet doesn't need Google services or a relay. Notifications only say that {server.bot.title} needs you; details stay on your server.
       </Text>
+      <Text style={styles.note}>Upgrading an older install? Set up notifications again on each phone, then remove its old shared topic from ntfy.</Text>
       {topic ? (
         <>
           <Text style={styles.note}>Subscribe to this topic in ntfy (server {topic.server}):</Text>
