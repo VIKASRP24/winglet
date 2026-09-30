@@ -72,6 +72,8 @@ export function wsUrl(server: Server): string {
 
 export function mediaUrl(server: Server, path: string): string {
   if (/^https?:\/\//.test(path)) return path;
+  // Current servers sign each media link; only older links need the device token.
+  if (/[?&]sig=/.test(path)) return `${server.url}${path}`;
   const sep = path.includes('?') ? '&' : '?';
   return `${server.url}${path}${sep}token=${encodeURIComponent(server.token)}`;
 }

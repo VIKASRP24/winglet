@@ -41,6 +41,8 @@ MAX_TEXT = 16_000
 PUSH_SUBJECT = "https://github.com/VIKASRP24/winglet"
 PAIR_FAILURES_PER_MINUTE = 10
 ALIVE_CACHE_SECONDS = 2.0
+# Raster formats only: SVG is a document that can carry script.
+INLINE_IMAGE_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp", "image/avif", "image/bmp"}
 
 InboundFn = Callable[[Dict[str, Any], str, Dict[str, Any], Dict[str, Any]], Awaitable[None]]
 ResolveFn = Callable[[Dict[str, Any], str], Awaitable[bool]]
@@ -396,17 +398,36 @@ class Hub:
         dest_dir.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(src, dest_dir / name)
         mime = mimetypes.guess_type(name)[0] or "application/octet-stream"
-        kind = mime.split("/")[0] if mime.split("/")[0] in ("image", "audio", "video") else "file"
-        return {"url": f"/api/media/{media_id}/{quote(name)}", "name": name, "mime": mime, "kind": kind,
-                "size": (dest_dir / name).stat().st_size}
+        kind = "image" if mime in INLINE_IMAGE_TYPES else mime.split("/")[0] if mime.split("/")[0] in (
+            "audio", "video") else "file"
+        # The link carries a signature for this one file, never the device's bearer token.
+        return {"url": f"/api/media/{media_id}/{quote(name)}?sig={self.media_signature(media_id)}", "name": name,
+                "mime": mime, "kind": kind, "size": (dest_dir / name).stat().st_size}
+
+    def media_signature(self, media_id: str) -> str:
+        key = self.store.secret("media_key").encode()
+        return hmac.new(key, media_id.encode(), hashlib.sha256).hexdigest()[:32]
 
     async def h_media(self, request: web.Request) -> web.StreamResponse:
-        self._require(request)
         media_id, name = request.match_info["media_id"], request.match_info["name"]
+        sig = request.query.get("sig", "")
+        if not (sig and hmac.compare_digest(sig, self.media_signature(media_id))):
+            self._require(request)  # older links used the device token
         path = (self.media_dir / media_id / name).resolve()
         if self.media_dir.resolve() not in path.parents or not path.is_file():
             return _error(404, "not found")
-        return web.FileResponse(path, headers={"Cache-Control": "private, max-age=86400"})
+        mime = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        inline = mime in INLINE_IMAGE_TYPES or mime.startswith(("audio/", "video/"))
+        # Agent output is untrusted: an HTML or SVG file must never run as part of the app's origin.
+        # Anything that isn't plain media downloads, and the sandbox CSP neuters it even if opened.
+        headers = {
+            "Cache-Control": "private, max-age=86400",
+            "Content-Type": mime if inline else "application/octet-stream",
+            "Content-Disposition": f"{'inline' if inline else 'attachment'}; filename*=UTF-8''{quote(path.name)}",
+            "Content-Security-Policy": "default-src 'none'; sandbox",
+            "X-Content-Type-Options": "nosniff",
+        }
+        return web.FileResponse(path, headers=headers)
 
     # -- websocket -------------------------------------------------------------------------
 

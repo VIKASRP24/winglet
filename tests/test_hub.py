@@ -263,15 +263,33 @@ async def test_static_serving_and_spa_fallback(client, hub):
     assert (await client.get("/api/nope")).status == 404
 
 
-async def test_media_requires_token(client, hub, tmp_path):
+async def test_media_links_are_signed_and_need_no_token(client, hub, tmp_path):
     token = await pair(client, hub)
     f = tmp_path / "chart.png"
     f.write_bytes(b"\x89PNG fake")
     attachment = hub.add_media(str(f))
-    assert attachment["kind"] == "image"
-    assert (await client.get(attachment["url"])).status == 401
-    resp = await client.get(f"{attachment['url']}?token={token}")
+    assert attachment["kind"] == "image" and "sig=" in attachment["url"] and token not in attachment["url"]
+    resp = await client.get(attachment["url"])
     assert resp.status == 200 and await resp.read() == b"\x89PNG fake"
+    assert resp.headers["Content-Disposition"].startswith("inline")
+    unsigned = attachment["url"].split("?")[0]
+    assert (await client.get(unsigned)).status == 401
+    assert (await client.get(unsigned + "?sig=forged")).status == 401
+    assert (await client.get(f"{unsigned}?token={token}")).status == 200  # legacy links
+
+
+async def test_active_documents_are_served_inert(client, hub, tmp_path):
+    for name in ("report.html", "logo.svg"):
+        f = tmp_path / name
+        f.write_text("<script>localStorage.getItem('winglet.servers')</script>")
+        attachment = hub.add_media(str(f))
+        assert attachment["kind"] == "file"
+        resp = await client.get(attachment["url"])
+        assert resp.status == 200
+        assert resp.headers["Content-Disposition"].startswith("attachment")
+        assert resp.headers["Content-Type"] == "application/octet-stream"
+        assert "sandbox" in resp.headers["Content-Security-Policy"]
+        assert resp.headers["X-Content-Type-Options"] == "nosniff"
 
 
 async def test_turn_end_finalizes_stale_streaming_messages(hub):
