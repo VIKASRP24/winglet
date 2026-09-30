@@ -410,3 +410,17 @@ async def test_old_pending_requests_are_never_crowded_out(client, hub):
     data = await (await client.get("/api/inbox", headers={"Authorization": f"Bearer {token}"})).json()
     assert data["pending"] == 1
     assert old["id"] in [i["id"] for i in data["items"] if i["status"] == "pending"]
+
+
+async def test_multi_select_answer_passes_the_list(client, hub):
+    answers = []
+
+    async def on_answer(item, reply):
+        answers.append(reply)
+        return True
+
+    hub.on_answer = on_answer
+    item = await hub.add_inbox("question", "general", "Question", "Where to deploy?",
+                               {"choices": ["Staging", "Prod"], "clarify_id": "q2", "multi_select": True}, push=False)
+    ok, updated = await hub.respond(item["id"], answer=["Staging", "Prod"])
+    assert ok and answers == [["Staging", "Prod"]] and updated["resolution"] == "Staging, Prod"

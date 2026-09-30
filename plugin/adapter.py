@@ -231,9 +231,10 @@ class WingletAdapter(BasePlatformAdapter):
         payload = item["payload"]
         return bridge.resolve_approval(payload.get("session_key") or "", payload.get("request_id") or "", choice)
 
-    async def _on_answer(self, item: Dict[str, Any], answer: str) -> bool:
-        from tools.clarify_gateway import resolve_gateway_clarify
-        return bool(resolve_gateway_clarify(item["payload"].get("clarify_id") or "", answer))
+    async def _on_answer(self, item: Dict[str, Any], answer: Any) -> bool:
+        payload = item["payload"]
+        return bridge.resolve_clarify(payload.get("clarify_id") or "",
+                                      bridge.clarify_answer(answer, bool(payload.get("multi_select"))))
 
     # -- outbound ----------------------------------------------------------------------------
 

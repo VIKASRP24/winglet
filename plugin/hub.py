@@ -45,7 +45,7 @@ ALIVE_CACHE_SECONDS = 2.0
 INLINE_IMAGE_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp", "image/avif", "image/bmp"}
 
 InboundFn = Callable[[Dict[str, Any], str, Dict[str, Any], Dict[str, Any]], Awaitable[None]]
-ResolveFn = Callable[[Dict[str, Any], str], Awaitable[bool]]
+ResolveFn = Callable[[Dict[str, Any], Any], Awaitable[bool]]
 
 
 def _json(data: Any, status: int = 200) -> web.Response:
@@ -332,11 +332,17 @@ class Hub:
             ok = bool(self.on_approval and await self.on_approval(item, choice))
             resolution = choice
         elif item["kind"] == "question":
-            text = str(answer if answer is not None else choice).strip()
-            if not text:
-                return False, item
-            ok = bool(self.on_answer and await self.on_answer(item, text))
-            resolution = text
+            if isinstance(answer, list):  # multi-select: the labels the user ticked
+                picked = [str(a).strip() for a in answer if str(a).strip()]
+                if not picked:
+                    return False, item
+                reply: Any = picked
+                resolution = ", ".join(picked)
+            else:
+                reply = resolution = str(answer if answer is not None else choice).strip()
+                if not reply:
+                    return False, item
+            ok = bool(self.on_answer and await self.on_answer(item, reply))
         else:  # results are simply acknowledged
             ok, resolution = True, "seen"
         updated = self.store.resolve_inbox(item_id, "resolved" if ok else "expired", resolution if ok else "")
