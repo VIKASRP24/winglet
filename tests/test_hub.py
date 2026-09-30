@@ -34,6 +34,7 @@ class FakeHTTP:
 
 @pytest.fixture
 def hub(store, tmp_path):
+    store.ensure_chat("general", "General")  # the adapter creates it on startup
     return Hub(store, web_root=tmp_path / "web", http_client=FakeHTTP(),
                bot_info=lambda: {"name": "hermes", "title": "Hermes"})
 
@@ -424,3 +425,13 @@ async def test_multi_select_answer_passes_the_list(client, hub):
                                {"choices": ["Staging", "Prod"], "clarify_id": "q2", "multi_select": True}, push=False)
     ok, updated = await hub.respond(item["id"], answer=["Staging", "Prod"])
     assert ok and answers == [["Staging", "Prod"]] and updated["resolution"] == "Staging, Prod"
+
+
+async def test_sending_to_a_deleted_chat_does_not_recreate_it(client, hub):
+    token = await pair(client, hub)
+    auth = {"Authorization": f"Bearer {token}"}
+    chat = (await (await client.post("/api/chats", json={"title": "Temp"}, headers=auth)).json())["chat"]
+    assert (await client.delete(f"/api/chats/{chat['id']}", headers=auth)).status == 200
+    resp = await client.post(f"/api/chats/{chat['id']}/messages", json={"text": "hello?"}, headers=auth)
+    assert resp.status == 404
+    assert hub.store.get_chat(chat["id"]) is None

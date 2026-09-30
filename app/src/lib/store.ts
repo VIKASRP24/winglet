@@ -76,6 +76,19 @@ export const useApp = create<AppState>((set, get) => {
 
   const persist = () => setJSON(SERVERS_KEY, get().servers);
 
+  /** Drop everything the app holds for a deleted chat and move off it if it was open. */
+  const forgetChat = (serverId: string, chatId: string) => {
+    patch(serverId, (s) => {
+      const { [chatId]: _chat, ...chats } = s.chats;
+      const { [chatId]: _messages, ...messages } = s.messages;
+      const { [chatId]: _loaded, ...loaded } = s.loaded;
+      const { [chatId]: _typing, ...typing } = s.typing;
+      return { chats, messages, loaded, typing };
+    });
+    const { selection, select } = get();
+    if (selection.serverId === serverId && selection.chatId === chatId) select(serverId, 'general');
+  };
+
   const handleEvent = (serverId: string, ev: any) => {
     const server = get().servers.find((s) => s.id === serverId);
     switch (ev.type) {
@@ -123,11 +136,7 @@ export const useApp = create<AppState>((set, get) => {
         if (ev.chat) patch(serverId, (s) => ({ chats: { ...s.chats, [ev.chat.id]: ev.chat } }));
         break;
       case 'chat.delete':
-        patch(serverId, (s) => {
-          const chats = { ...s.chats };
-          delete chats[ev.chat_id];
-          return { chats };
-        });
+        forgetChat(serverId, ev.chat_id);
         break;
       case 'typing':
         patch(serverId, (s) => {
@@ -310,11 +319,7 @@ export const useApp = create<AppState>((set, get) => {
       const server = get().servers.find((s) => s.id === serverId);
       if (!server) return;
       await api(server, `/api/chats/${encodeURIComponent(chatId)}`, { method: 'DELETE' });
-      patch(serverId, (s) => {
-        const chats = { ...s.chats };
-        delete chats[chatId];
-        return { chats };
-      });
+      forgetChat(serverId, chatId);
     },
 
     dismissToast: (id) => set((state) => ({ toasts: state.toasts.filter((t) => t.id !== id) })),

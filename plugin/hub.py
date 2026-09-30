@@ -257,6 +257,8 @@ class Hub:
     async def h_message_send(self, request: web.Request) -> web.Response:
         device = self._require(request)
         body = await self._body(request)
+        if self.store.get_chat(request.match_info["chat_id"]) is None:
+            return _error(404, "This chat was deleted.")
         message = await self.user_message(device, request.match_info["chat_id"], str(body.get("text") or ""),
                                           str(body.get("client_id") or ""))
         if message is None:
@@ -273,7 +275,9 @@ class Hub:
             existing = self.store.find_user_message(chat_id, client_id)
             if existing is not None:
                 return existing
-        chat = self.store.get_chat(chat_id) or self.store.ensure_chat(chat_id, _clip(text, 40))
+        chat = self.store.get_chat(chat_id)
+        if chat is None:
+            return None  # deleted (or never created): don't bring it back
         message = self.store.add_message(chat_id, "user", text,
                                          meta={"device": device["name"], "client_id": client_id})
         await self.broadcast({"type": "message.new", "chat_id": chat_id, "message": message})
