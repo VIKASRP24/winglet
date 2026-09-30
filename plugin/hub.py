@@ -618,9 +618,18 @@ class Hub:
     async def h_ntfy(self, request: web.Request) -> web.Response:
         """Enable ntfy delivery for this device and return the private topic to subscribe to."""
         device = self._require(request)
-        topic = self.store.secret("ntfy_topic", lambda: "winglet-" + secrets.token_hex(12))
-        self.store.add_push_sub(device["id"], "ntfy", f"{self.ntfy_server}/{topic}",
-                                {"server": self.ntfy_server, "topic": topic})
+        legacy_shared = self.store.get_kv("ntfy_topic")  # v0.1 gave every phone the same topic
+        mine = [sub for sub in self.store.list_push_subs("ntfy")
+                if sub["device_id"] == device["id"] and sub["data"].get("topic") != legacy_shared]
+        if mine:
+            topic = mine[0]["data"]["topic"]
+        else:
+            # One private topic per phone: unpairing a phone stops exactly its notifications.
+            topic = "winglet-" + secrets.token_hex(12)
+            if legacy_shared:
+                self.store.remove_push_sub(endpoint=f"{self.ntfy_server}/{legacy_shared}", device_id=device["id"])
+            self.store.add_push_sub(device["id"], "ntfy", f"{self.ntfy_server}/{topic}",
+                                    {"server": self.ntfy_server, "topic": topic})
         return _json({"server": self.ntfy_server, "topic": topic,
                       "subscribe_url": f"{self.ntfy_server}/{topic}"})
 

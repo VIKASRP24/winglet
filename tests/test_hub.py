@@ -435,3 +435,13 @@ async def test_sending_to_a_deleted_chat_does_not_recreate_it(client, hub):
     resp = await client.post(f"/api/chats/{chat['id']}/messages", json={"text": "hello?"}, headers=auth)
     assert resp.status == 404
     assert hub.store.get_chat(chat["id"]) is None
+
+
+async def test_each_phone_gets_its_own_ntfy_topic(client, hub):
+    a, b = await pair(client, hub, "Phone A"), await pair(client, hub, "Phone B")
+    topic_a = (await (await client.get("/api/push/ntfy", headers={"Authorization": f"Bearer {a}"})).json())["topic"]
+    topic_b = (await (await client.get("/api/push/ntfy", headers={"Authorization": f"Bearer {b}"})).json())["topic"]
+    again_a = (await (await client.get("/api/push/ntfy", headers={"Authorization": f"Bearer {a}"})).json())["topic"]
+    assert topic_a != topic_b and again_a == topic_a
+    await client.delete("/api/me", headers={"Authorization": f"Bearer {b}"})
+    assert [s["data"]["topic"] for s in hub.store.list_push_subs("ntfy")] == [topic_a]
