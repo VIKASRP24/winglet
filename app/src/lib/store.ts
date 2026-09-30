@@ -223,7 +223,9 @@ export const useApp = create<AppState>((set, get) => {
       const server = get().servers.find((s) => s.id === serverId);
       if (!server) return;
       const existing = get().runtime[serverId]?.messages[chatId] ?? [];
-      const before = older && existing.length ? `&before=${existing[0].created_at}` : '';
+      // Page from the oldest message the server knows (optimistic rows have no server position).
+      const oldest = existing.find((m) => m.status !== 'pending' && m.status !== 'failed');
+      const before = older && oldest ? `&before_id=${encodeURIComponent(oldest.id)}` : '';
       try {
         const data = await api<{ messages: Message[] }>(server, `/api/chats/${encodeURIComponent(chatId)}/messages?limit=60${before}`);
         patch(serverId, (s) => ({

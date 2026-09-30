@@ -254,13 +254,20 @@ class Store:
         row = self._one("SELECT * FROM messages WHERE id = ?", (message_id,))
         return self._message(row) if row else None
 
-    def list_messages(self, chat_id: str, *, before: Optional[float] = None, limit: int = 50) -> List[Dict[str, Any]]:
+    def list_messages(self, chat_id: str, *, before_id: Optional[str] = None, before: Optional[float] = None,
+                      limit: int = 50) -> List[Dict[str, Any]]:
+        """Newest ``limit`` messages, oldest first. Pages by insertion order (rowid), so messages that
+        share a timestamp are never skipped; ``before`` (a timestamp) is kept for older clients."""
         limit = max(1, min(int(limit or 50), 200))
-        if before:
+        if before_id:
+            rows = self._all("SELECT * FROM messages WHERE chat_id = ? AND rowid < "
+                             "(SELECT rowid FROM messages WHERE id = ?) ORDER BY rowid DESC LIMIT ?",
+                             (chat_id, before_id, limit))
+        elif before:
             rows = self._all("SELECT * FROM messages WHERE chat_id = ? AND created_at < ? "
-                             "ORDER BY created_at DESC LIMIT ?", (chat_id, float(before), limit))
+                             "ORDER BY rowid DESC LIMIT ?", (chat_id, float(before), limit))
         else:
-            rows = self._all("SELECT * FROM messages WHERE chat_id = ? ORDER BY created_at DESC LIMIT ?",
+            rows = self._all("SELECT * FROM messages WHERE chat_id = ? ORDER BY rowid DESC LIMIT ?",
                              (chat_id, limit))
         return [self._message(r) for r in reversed(rows)]
 

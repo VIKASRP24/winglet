@@ -245,9 +245,13 @@ class Hub:
     async def h_messages(self, request: web.Request) -> web.Response:
         self._require(request)
         chat_id = request.match_info["chat_id"]
-        before = request.query.get("before")
-        messages = self.store.list_messages(chat_id, before=float(before) if before else None,
-                                            limit=int(request.query.get("limit") or 50))
+        try:
+            before = float(request.query["before"]) if request.query.get("before") else None
+            limit = int(request.query.get("limit") or 50)
+        except ValueError:
+            return _error(400, "before and limit must be numbers")
+        messages = self.store.list_messages(chat_id, before_id=request.query.get("before_id") or None,
+                                            before=before, limit=limit)
         return _json({"messages": messages})
 
     async def h_message_send(self, request: web.Request) -> web.Response:

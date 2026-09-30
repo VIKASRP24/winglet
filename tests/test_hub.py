@@ -376,3 +376,17 @@ async def test_retried_send_is_not_run_twice(client, hub):
     again = await (await client.post("/api/chats/general/messages", json=body, headers=auth)).json()
     assert first["message"]["id"] == again["message"]["id"]
     assert calls == ["deploy it"]
+
+
+def test_paging_never_skips_messages_with_equal_timestamps(store, monkeypatch):
+    monkeypatch.setattr("plugin.store._now", lambda: 1000.0)
+    ids = [store.add_message("general", "bot", f"m{i}")["id"] for i in range(61)]
+    page = store.list_messages("general", limit=60)
+    older = store.list_messages("general", before_id=page[0]["id"], limit=60)
+    assert [m["id"] for m in older + page] == ids
+
+
+async def test_bad_paging_params_are_400(client, hub):
+    token = await pair(client, hub)
+    resp = await client.get("/api/chats/general/messages?limit=abc", headers={"Authorization": f"Bearer {token}"})
+    assert resp.status == 400
