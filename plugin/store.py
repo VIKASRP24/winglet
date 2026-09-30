@@ -39,6 +39,10 @@ CREATE TABLE IF NOT EXISTS messages (
     created_at REAL NOT NULL, updated_at REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS messages_chat ON messages (chat_id, created_at);
+CREATE TABLE IF NOT EXISTS message_deletions (
+    id TEXT PRIMARY KEY, chat_id TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS message_deletions_chat ON message_deletions (chat_id);
 CREATE TABLE IF NOT EXISTS inbox (
     id TEXT PRIMARY KEY, kind TEXT NOT NULL, chat_id TEXT NOT NULL, title TEXT NOT NULL,
     body TEXT NOT NULL DEFAULT '', payload TEXT NOT NULL DEFAULT '{}', status TEXT NOT NULL DEFAULT 'pending',
@@ -78,6 +82,12 @@ class Store:
         with self._lock:
             self._db.execute("PRAGMA journal_mode=WAL")
             self._db.executescript(_SCHEMA)
+            # v0.1 shared one topic between phones. Retire it before the upgraded hub can send any
+            # push, including when its row belongs to a different phone than the one being revoked.
+            legacy_topic = self.get_kv("ntfy_topic")
+            if legacy_topic:
+                self._exec("DELETE FROM push_subs WHERE kind = 'ntfy' AND json_extract(data, '$.topic') = ?",
+                           (legacy_topic,))
 
     def close(self) -> None:
         with self._lock:
@@ -204,8 +214,17 @@ class Store:
 
     def delete_chat(self, chat_id: str) -> bool:
         with self._lock:
-            self._exec("DELETE FROM messages WHERE chat_id = ?", (chat_id,))
-            return self._exec("DELETE FROM chats WHERE id = ?", (chat_id,)) == 1
+            self._db.execute("BEGIN IMMEDIATE")
+            try:
+                self._exec("INSERT OR IGNORE INTO message_deletions (id, chat_id) "
+                           "SELECT id, chat_id FROM messages WHERE chat_id = ?", (chat_id,))
+                self._exec("DELETE FROM messages WHERE chat_id = ?", (chat_id,))
+                removed = self._exec("DELETE FROM chats WHERE id = ?", (chat_id,)) == 1
+                self._db.commit()
+                return removed
+            except Exception:
+                self._db.rollback()
+                raise
 
     def _touch_chat(self, chat_id: str, preview: str) -> None:
         preview = " ".join((preview or "").split())[:140]
@@ -237,37 +256,52 @@ class Store:
         with self._lock:
             current = self.get_message(message_id)
             if current is not None:
-                self._exec("DELETE FROM messages WHERE id = ?", (message_id,))
+                self._db.execute("BEGIN IMMEDIATE")
+                try:
+                    self._exec("INSERT OR IGNORE INTO message_deletions (id, chat_id) VALUES (?, ?)",
+                               (message_id, current["chat_id"]))
+                    self._exec("DELETE FROM messages WHERE id = ?", (message_id,))
+                    self._db.commit()
+                except Exception:
+                    self._db.rollback()
+                    raise
             return current
+
+    def deleted_message_ids(self, chat_id: str) -> List[str]:
+        """Durable tombstones let a reconnect repair delete events the phone missed while offline."""
+        return [r["id"] for r in self._all("SELECT id FROM message_deletions WHERE chat_id = ?", (chat_id,))]
 
     def find_user_message(self, chat_id: str, client_id: str) -> Optional[Dict[str, Any]]:
         """A message this chat already received with the app's ``client_id`` (retry detection)."""
-        row = self._one("SELECT * FROM messages WHERE chat_id = ? AND role = 'user' "
+        row = self._one("SELECT rowid AS position, * FROM messages WHERE chat_id = ? AND role = 'user' "
                         "AND json_extract(meta, '$.client_id') = ?", (chat_id, client_id))
         return self._message(row) if row else None
 
     def streaming_messages(self, chat_id: str) -> List[Dict[str, Any]]:
-        rows = self._all("SELECT * FROM messages WHERE chat_id = ? AND status = 'streaming'", (chat_id,))
+        rows = self._all("SELECT rowid AS position, * FROM messages WHERE chat_id = ? AND status = 'streaming'", (chat_id,))
         return [self._message(r) for r in rows]
 
     def get_message(self, message_id: str) -> Optional[Dict[str, Any]]:
-        row = self._one("SELECT * FROM messages WHERE id = ?", (message_id,))
+        row = self._one("SELECT rowid AS position, * FROM messages WHERE id = ?", (message_id,))
         return self._message(row) if row else None
 
-    def list_messages(self, chat_id: str, *, before_id: Optional[str] = None, before: Optional[float] = None,
+    def list_messages(self, chat_id: str, *, before_position: Optional[int] = None, before_id: Optional[str] = None, before: Optional[float] = None,
                       limit: int = 50) -> List[Dict[str, Any]]:
         """Newest ``limit`` messages, oldest first. Pages by insertion order (rowid), so messages that
         share a timestamp are never skipped; ``before`` (a timestamp) is kept for older clients."""
         limit = max(1, min(int(limit or 50), 200))
-        if before_id:
-            rows = self._all("SELECT * FROM messages WHERE chat_id = ? AND rowid < "
+        if before_position is not None:
+            rows = self._all("SELECT rowid AS position, * FROM messages WHERE chat_id = ? AND rowid < ? "
+                             "ORDER BY rowid DESC LIMIT ?", (chat_id, before_position, limit))
+        elif before_id:
+            rows = self._all("SELECT rowid AS position, * FROM messages WHERE chat_id = ? AND rowid < "
                              "(SELECT rowid FROM messages WHERE id = ?) ORDER BY rowid DESC LIMIT ?",
                              (chat_id, before_id, limit))
         elif before:
-            rows = self._all("SELECT * FROM messages WHERE chat_id = ? AND created_at < ? "
+            rows = self._all("SELECT rowid AS position, * FROM messages WHERE chat_id = ? AND created_at < ? "
                              "ORDER BY rowid DESC LIMIT ?", (chat_id, float(before), limit))
         else:
-            rows = self._all("SELECT * FROM messages WHERE chat_id = ? ORDER BY rowid DESC LIMIT ?",
+            rows = self._all("SELECT rowid AS position, * FROM messages WHERE chat_id = ? ORDER BY rowid DESC LIMIT ?",
                              (chat_id, limit))
         return [self._message(r) for r in reversed(rows)]
 

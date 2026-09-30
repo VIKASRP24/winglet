@@ -386,11 +386,80 @@ def test_paging_never_skips_messages_with_equal_timestamps(store, monkeypatch):
     page = store.list_messages("general", limit=60)
     older = store.list_messages("general", before_id=page[0]["id"], limit=60)
     assert [m["id"] for m in older + page] == ids
+    positions = [m["position"] for m in older + page]
+    assert positions == sorted(set(positions))
+    assert store.get_message(ids[-1])["position"] == positions[-1]
+
+
+def test_paging_position_survives_deletion_of_the_cursor_message(store):
+    messages = [store.add_message("general", "bot", str(i)) for i in range(4)]
+    cursor = messages[2]
+    store.delete_message(cursor["id"])
+    older = store.list_messages("general", before_position=cursor["position"])
+    assert [m["id"] for m in older] == [m["id"] for m in messages[:2]]
+
+
+async def test_history_includes_persisted_deletions_outside_latest_page(client, hub):
+    token = await pair(client, hub)
+    gone = hub.store.add_message("general", "bot", "Remove this")
+    other = hub.store.add_message("other", "bot", "Keep isolated")
+    for i in range(65):
+        hub.store.add_message("general", "bot", str(i))
+    await hub.delete_message(gone["id"])
+    hub.store.delete_message(other["id"])
+    # Reopening the database simulates a gateway restart between deletion and phone reconnect.
+    reopened = Store(hub.store.path)
+    assert reopened.deleted_message_ids("general") == [gone["id"]]
+    reopened.close()
+    data = await (await client.get("/api/chats/general/messages?limit=60",
+                                  headers={"Authorization": f"Bearer {token}"})).json()
+    assert len(data["messages"]) == 60
+    assert data["deleted_ids"] == [gone["id"]]
+
+
+def test_deleted_chat_records_deletions(store):
+    chat = store.create_chat("Temp")
+    message = store.add_message(chat["id"], "bot", "Gone")
+    assert store.delete_chat(chat["id"])
+    assert store.deleted_message_ids(chat["id"]) == [message["id"]]
+
+
+async def test_legacy_ntfy_is_retired_on_upgrade_before_any_push(tmp_path):
+    path = tmp_path / "legacy.db"
+    old = Store(path)
+    a, _ = old.add_device("Phone A")
+    b, _ = old.add_device("Phone B")
+    old.set_kv("ntfy_topic", "legacy-shared")
+    shared = {"server": "https://old.ntfy.example", "topic": "legacy-shared"}
+    for device in (a, b):
+        old.add_push_sub(device["id"], "ntfy", "https://old.ntfy.example/legacy-shared", shared)
+    old.add_push_sub(b["id"], "webpush", "https://push.example/b", {"keys": {}})
+    old.close()
+
+    upgraded = Store(path)
+    http = FakeHTTP()
+    upgraded_hub = Hub(upgraded, http_client=http)
+    try:
+        assert upgraded.list_push_subs("ntfy") == []
+        assert len(upgraded.list_push_subs("webpush")) == 1
+        upgraded.remove_push_sub(endpoint="https://push.example/b")
+        upgraded.remove_device(a["id"])
+        result = await upgraded_hub.push_now({"kind": "message", "url": "/"}, tag="test")
+        assert result == {"accepted": 0, "failed": 0, "expired": 0} and http.posts == []
+        private = {"server": "https://ntfy.sh", "topic": "private-b"}
+        upgraded.add_push_sub(b["id"], "ntfy", "https://ntfy.sh/private-b", private)
+        reopened = Store(path)
+        assert [s["data"]["topic"] for s in reopened.list_push_subs("ntfy")] == ["private-b"]
+        reopened.close()
+    finally:
+        upgraded.close()
 
 
 async def test_bad_paging_params_are_400(client, hub):
     token = await pair(client, hub)
     resp = await client.get("/api/chats/general/messages?limit=abc", headers={"Authorization": f"Bearer {token}"})
+    assert resp.status == 400
+    resp = await client.get("/api/chats/general/messages?before_position=-1", headers={"Authorization": f"Bearer {token}"})
     assert resp.status == 400
 
 

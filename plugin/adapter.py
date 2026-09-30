@@ -295,11 +295,18 @@ class WingletAdapter(BasePlatformAdapter):
         styles = {choice: style for _label, choice, style in prompt.actions}
         claimed = {i["payload"].get("request_id") for i in hub.store.pending_items("approval")
                    if i["payload"].get("session_key") == prompt.session_key}
-        request_id = bridge.pick_request_id(bridge.queued_approvals(prompt.session_key) or [], prompt.command,
+        # The ID must travel with the prompt, not be guessed from today's queue. The namespaced
+        # metadata field is an integration contract for Hermes versions forwarding approval identity;
+        # a native request_id on the prompt also supports versions adding it to ExecApprovalPrompt.
+        identity = getattr(prompt, "request_id", None) or (prompt.metadata or {}).get("approval_request_id")
+        request_id = bridge.pick_request_id(bridge.queued_approvals(prompt.session_key) or [], identity,
                                             {r for r in claimed if r})
         if request_id is None:
-            logger.warning("[%s] could not match an approval request; answer it with /approve in the chat",
+            logger.warning("[%s] approval identity unavailable; using Hermes' text approval flow",
                            self.name)
+            # The gateway falls back to its /approve instructions when button delivery is unsupported.
+            # Do not persist or push a card whose identity is unknown or already expired.
+            return SendResult(success=False, error="An active approval request ID is required for buttons")
         item = await hub.add_inbox(
             "approval", prompt.chat_id, "Approval needed", prompt.command,
             {"command": prompt.command, "description": prompt.description, "choices": prompt.choices,

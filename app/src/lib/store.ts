@@ -14,6 +14,7 @@ export type ServerState = {
   status: ConnStatus;
   chats: Record<string, Chat>;
   messages: Record<string, Message[]>;
+  deleted: Record<string, string[]>;
   loaded: Record<string, boolean>;
   inbox: Record<string, InboxItem>;
   pending: number;
@@ -47,7 +48,7 @@ type AppState = {
 };
 
 const emptyRuntime = (): ServerState => ({
-  status: 'connecting', chats: {}, messages: {}, loaded: {}, inbox: {}, pending: 0, typing: {},
+  status: 'connecting', chats: {}, messages: {}, deleted: {}, loaded: {}, inbox: {}, pending: 0, typing: {},
 });
 
 const connections = new Map<string, Connection>();
@@ -61,11 +62,12 @@ export const useApp = create<AppState>((set, get) => {
 
   const upsertMessage = (serverId: string, chatId: string, message: Message) =>
     patch(serverId, (s) => {
+      if (s.deleted[chatId]?.includes(message.id)) return {};
       const list = s.messages[chatId] ?? [];
       const clientId = message.meta?.client_id;
       const idx = list.findIndex((m) => m.id === message.id || (clientId && m.meta?.client_id === clientId));
       const next = idx >= 0 ? list.map((m, i) => (i === idx ? message : m)) : [...list, message];
-      return { messages: { ...s.messages, [chatId]: next } };
+      return { messages: { ...s.messages, [chatId]: mergeMessages(next, []) } };
     });
 
   const toast = (t: Omit<Toast, 'id'>) => {
@@ -81,9 +83,10 @@ export const useApp = create<AppState>((set, get) => {
     patch(serverId, (s) => {
       const { [chatId]: _chat, ...chats } = s.chats;
       const { [chatId]: _messages, ...messages } = s.messages;
+      const { [chatId]: _deleted, ...deleted } = s.deleted;
       const { [chatId]: _loaded, ...loaded } = s.loaded;
       const { [chatId]: _typing, ...typing } = s.typing;
-      return { chats, messages, loaded, typing };
+      return { chats, messages, deleted, loaded, typing };
     });
     const { selection, select } = get();
     if (selection.serverId === serverId && selection.chatId === chatId) select(serverId, 'general');
@@ -130,6 +133,7 @@ export const useApp = create<AppState>((set, get) => {
       case 'message.delete':
         patch(serverId, (s) => ({
           messages: { ...s.messages, [ev.chat_id]: (s.messages[ev.chat_id] ?? []).filter((m) => m.id !== ev.message_id) },
+          deleted: { ...s.deleted, [ev.chat_id]: [...new Set([...(s.deleted[ev.chat_id] ?? []), ev.message_id])] },
         }));
         break;
       case 'chat.update':
@@ -234,13 +238,22 @@ export const useApp = create<AppState>((set, get) => {
       const existing = get().runtime[serverId]?.messages[chatId] ?? [];
       // Page from the oldest message the server knows (optimistic rows have no server position).
       const oldest = existing.find((m) => m.status !== 'pending' && m.status !== 'failed');
-      const before = older && oldest ? `&before_id=${encodeURIComponent(oldest.id)}` : '';
+      const before = older && oldest ? (oldest.position !== undefined
+        ? `&before_position=${oldest.position}` : `&before_id=${encodeURIComponent(oldest.id)}`) : '';
       try {
-        const data = await api<{ messages: Message[] }>(server, `/api/chats/${encodeURIComponent(chatId)}/messages?limit=60${before}`);
-        patch(serverId, (s) => ({
-          messages: { ...s.messages, [chatId]: mergeMessages(s.messages[chatId] ?? [], data.messages) },
-          loaded: { ...s.loaded, [chatId]: true },
-        }));
+        const data = await api<{ messages: Message[]; deleted_ids?: string[] }>(server, `/api/chats/${encodeURIComponent(chatId)}/messages?limit=60${before}`);
+        if (get().servers.find((s) => s.id === serverId) !== server) return;
+        patch(serverId, (s) => {
+          if (s.status === 'online' && !s.chats[chatId]) return {};
+          // A live delete may have arrived after this snapshot was taken. Keep both sets so a stale
+          // response cannot bring it back, and reconnect can apply deletes missed while offline.
+          const deleted = [...new Set([...(s.deleted[chatId] ?? []), ...(data.deleted_ids ?? [])])];
+          return {
+            messages: { ...s.messages, [chatId]: mergeMessages(s.messages[chatId] ?? [], data.messages, deleted, older) },
+            deleted: { ...s.deleted, [chatId]: deleted },
+            loaded: { ...s.loaded, [chatId]: true },
+          };
+        });
       } catch (e) {
         if (e instanceof ApiError && e.status === 401) patch(serverId, () => ({ status: 'unauthorized' }));
       }

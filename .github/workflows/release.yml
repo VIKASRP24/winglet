@@ -28,7 +28,7 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: app/package-lock.json
-      - run: npm ci && npx tsc --noEmit
+      - run: npm ci && npx tsc --noEmit && npm test
         working-directory: app
 
   android:
