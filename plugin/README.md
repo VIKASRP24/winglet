@@ -12,6 +12,10 @@ What it adds on your server:
 - One-tap approvals and answers to the agent's questions
 - Hosting for the installable web app
 
+Approval cards capture the exact request ID at current Hermes' notification handoff. If that
+handoff is unsupported or the request has expired, Hermes sends its typed approval instructions.
+See [approval compatibility](../docs/APPROVALS.md).
+
 ## Install
 
 ```bash

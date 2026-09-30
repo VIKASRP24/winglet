@@ -19,7 +19,7 @@ import asyncio
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Coroutine, Dict, Optional
 
 from gateway.config import Platform, PlatformConfig
 from gateway.platforms._shared import extra_or_secret, get_scoped_secret, seed_extra_from_env
@@ -286,6 +286,29 @@ class WingletAdapter(BasePlatformAdapter):
         return {"name": (chat or {}).get("title") or chat_id, "type": "dm", "chat_id": chat_id}
 
     # -- approvals & questions ------------------------------------------------------------------
+
+    def send_exec_approval(
+        self, chat_id: str, command: str, session_key: str, description: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None, allow_permanent: bool = True, allow_session: bool = True,
+        smart_denied: bool = False, *, request_id: Optional[str] = None,
+    ) -> Coroutine[Any, Any, SendResult]:
+        """Capture the notified ID synchronously, then let Hermes render/schedule its prompt.
+
+        An async override would run after the notifier's frame has disappeared. This regular
+        function returns the usual awaitable, with only the immutable ID copied across threads.
+        Explicit identity takes precedence; stale/invalid supplied IDs never trigger inference.
+        """
+        metadata = dict(metadata or {})
+        if request_id is not None:
+            metadata["approval_request_id"] = request_id
+        elif "approval_request_id" not in metadata:
+            identity = bridge.notified_request_id(self, chat_id, session_key)
+            if identity is not None:
+                metadata["approval_request_id"] = identity
+        return super().send_exec_approval(
+            chat_id=chat_id, command=command, session_key=session_key, description=description,
+            metadata=metadata, allow_permanent=allow_permanent, allow_session=allow_session,
+            smart_denied=smart_denied)
 
     async def _send_exec_approval_prompt(self, prompt: ExecApprovalPrompt) -> SendResult:
         hub = self._hub
