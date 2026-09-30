@@ -1,0 +1,584 @@
+"""Winglet hub: the HTTP/WebSocket server the app talks to, plus push delivery.
+
+Independent of Hermes internals so it can be tested on its own. The platform adapter
+(``adapter.py``) owns a Hub and plugs Hermes into it through a few callbacks.
+
+Wire protocol (JSON over one WebSocket at ``/api/ws?token=<device token>``):
+
+server -> app  ``{"type": "hello" | "message.new" | "message.update" | "message.delete" | "typing" |
+                  "chat.update" | "chat.delete" | "inbox.new" | "inbox.update" | "pong", ...}``
+app -> server  ``{"type": "message.send", "chat_id", "text", "client_id"}``,
+               ``{"type": "inbox.respond", "id", "choice" | "answer"}``, ``{"type": "ping"}``
+"""
+
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import hashlib
+import hmac
+import json
+import logging
+import mimetypes
+import secrets
+import shutil
+import time
+from pathlib import Path
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Set
+from urllib.parse import quote
+
+from aiohttp import WSMsgType, web
+
+from . import webpush
+from .store import Store
+
+logger = logging.getLogger(__name__)
+
+VERSION = "0.1.0"
+HOME_CHAT_ID = "home"
+PUSH_DEBOUNCE_SECONDS = 2.5
+MAX_TEXT = 16_000
+PUSH_SUBJECT = "https://github.com/VIKASRP24/winglet"
+
+InboundFn = Callable[[Dict[str, Any], str, Dict[str, Any], Dict[str, Any]], Awaitable[None]]
+ResolveFn = Callable[[Dict[str, Any], str], Awaitable[bool]]
+
+
+def _json(data: Any, status: int = 200) -> web.Response:
+    return web.json_response(data, status=status, dumps=lambda o: json.dumps(o, separators=(",", ":")))
+
+
+def _error(status: int, message: str) -> web.Response:
+    return _json({"error": message}, status=status)
+
+
+def _clip(text: str, n: int) -> str:
+    text = " ".join((text or "").split())
+    return text if len(text) <= n else text[: n - 1] + "…"
+
+
+class Hub:
+    def __init__(self, store: Store, *, web_root: Optional[Path] = None,
+                 bot_info: Optional[Callable[[], Dict[str, Any]]] = None,
+                 ntfy_server: str = "https://ntfy.sh", http_client: Any = None,
+                 media_dir: Optional[Path] = None):
+        self.store = store
+        self.web_root = web_root
+        self.media_dir = media_dir or Path(store.path).parent / "media"
+        self._bot_info = bot_info or (lambda: {"name": "Hermes", "title": "Hermes", "description": ""})
+        self.ntfy_server = (ntfy_server or "https://ntfy.sh").rstrip("/")
+        self._http = http_client
+        self._sockets: Dict[web.WebSocketResponse, Dict[str, Any]] = {}
+        self._push_tasks: Dict[str, asyncio.Task] = {}
+        self._typing: Set[str] = set()
+        # Hermes-side callbacks, installed by the adapter.
+        self.on_user_message: Optional[InboundFn] = None
+        self.on_approval: Optional[ResolveFn] = None
+        self.on_answer: Optional[ResolveFn] = None
+        self.store.ensure_chat(HOME_CHAT_ID, "Updates", kind="home")
+
+    # -- lifecycle -------------------------------------------------------------------
+
+    def build_app(self) -> web.Application:
+        app = web.Application(client_max_size=2 * 1024 * 1024, middlewares=[self._cors])
+        r = app.router
+        r.add_get("/api/info", self.h_info)
+        r.add_post("/api/pair", self.h_pair)
+        r.add_get("/api/ws", self.h_ws)
+        r.add_get("/api/me", self.h_me)
+        r.add_delete("/api/me", self.h_unpair)
+        r.add_get("/api/chats", self.h_chats)
+        r.add_post("/api/chats", self.h_chat_create)
+        r.add_patch("/api/chats/{chat_id}", self.h_chat_rename)
+        r.add_delete("/api/chats/{chat_id}", self.h_chat_delete)
+        r.add_get("/api/chats/{chat_id}/messages", self.h_messages)
+        r.add_post("/api/chats/{chat_id}/messages", self.h_message_send)
+        r.add_get("/api/inbox", self.h_inbox)
+        r.add_post("/api/inbox/{item_id}/respond", self.h_inbox_respond)
+        r.add_get("/api/push/vapid", self.h_vapid)
+        r.add_post("/api/push/webpush", self.h_webpush_subscribe)
+        r.add_delete("/api/push/webpush", self.h_webpush_unsubscribe)
+        r.add_get("/api/push/ntfy", self.h_ntfy)
+        r.add_post("/api/push/test", self.h_push_test)
+        r.add_get("/api/media/{media_id}/{name}", self.h_media)
+        r.add_get("/{tail:.*}", self.h_static)
+        app.on_shutdown.append(self._close_sockets)
+        return app
+
+    async def _close_sockets(self, _app: web.Application) -> None:
+        for ws in list(self._sockets):
+            with contextlib.suppress(Exception):
+                await ws.close()
+        for task in self._push_tasks.values():
+            task.cancel()
+        self._push_tasks.clear()
+
+    @web.middleware
+    async def _cors(self, request: web.Request, handler):
+        # The native app calls from its own origin-less context; browsers use the same origin as the
+        # server. Allowing any origin is safe because every API call needs a bearer token (no cookies).
+        if request.method == "OPTIONS":
+            resp: web.StreamResponse = web.Response(status=204)
+        else:
+            resp = await handler(request)
+        if request.path.startswith("/api/"):
+            resp.headers["Access-Control-Allow-Origin"] = "*"
+            resp.headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type"
+            resp.headers["Access-Control-Allow-Methods"] = "GET, POST, PATCH, DELETE, OPTIONS"
+            resp.headers.setdefault("Cache-Control", "no-store")
+        return resp
+
+    # -- auth ------------------------------------------------------------------------
+
+    def _device(self, request: web.Request) -> Optional[Dict[str, Any]]:
+        auth = request.headers.get("Authorization", "")
+        token = auth[7:].strip() if auth.lower().startswith("bearer ") else request.query.get("token", "")
+        return self.store.device_for_token(token)
+
+    def _require(self, request: web.Request) -> Dict[str, Any]:
+        device = self._device(request)
+        if device is None:
+            raise web.HTTPUnauthorized(text=json.dumps({"error": "not paired"}), content_type="application/json")
+        return device
+
+    def action_signature(self, item_id: str, choice: str) -> str:
+        """HMAC used for one-tap notification action links (no bearer token available there)."""
+        key = self.store.secret("action_key").encode()
+        return hmac.new(key, f"{item_id}:{choice}".encode(), hashlib.sha256).hexdigest()[:32]
+
+    # -- info & pairing ------------------------------------------------------------------
+
+    def bot(self) -> Dict[str, Any]:
+        info = dict(self._bot_info() or {})
+        info.setdefault("name", "Hermes")
+        info.setdefault("title", info["name"])
+        info.setdefault("description", "")
+        return info
+
+    def server_id(self) -> str:
+        return self.store.secret("server_id", lambda: hashlib.sha256(
+            self.store.secret("action_key").encode()).hexdigest()[:12])
+
+    async def h_info(self, request: web.Request) -> web.Response:
+        return _json({"app": "winglet", "version": VERSION, "server_id": self.server_id(), "bot": self.bot(),
+                      "features": {"webpush": True, "ntfy": True, "approvals": True, "questions": True}})
+
+    async def h_pair(self, request: web.Request) -> web.Response:
+        try:
+            body = await request.json()
+        except Exception:
+            return _error(400, "invalid JSON")
+        if not self.store.redeem_pair_code(str(body.get("code") or "")):
+            return _error(403, "This pairing code is invalid or expired. Run `hermes winglet pair` for a new one.")
+        device, token = self.store.add_device(str(body.get("device_name") or ""), str(body.get("platform") or ""))
+        logger.info("[winglet] paired new device %s (%s)", device["name"], device["platform"] or "unknown")
+        return _json({"token": token, "device": device, "server_id": self.server_id(), "bot": self.bot()})
+
+    async def h_me(self, request: web.Request) -> web.Response:
+        device = self._require(request)
+        return _json({"device": device, "bot": self.bot(), "server_id": self.server_id()})
+
+    async def h_unpair(self, request: web.Request) -> web.Response:
+        device = self._require(request)
+        self.store.remove_device(device["id"])
+        for ws, meta in list(self._sockets.items()):
+            if meta["device"]["id"] == device["id"]:
+                await ws.close()
+        return _json({"ok": True})
+
+    # -- chats & messages ----------------------------------------------------------------
+
+    async def h_chats(self, request: web.Request) -> web.Response:
+        self._require(request)
+        return _json({"chats": self.store.list_chats()})
+
+    async def h_chat_create(self, request: web.Request) -> web.Response:
+        self._require(request)
+        body = await self._body(request)
+        chat = self.store.create_chat(str(body.get("title") or ""))
+        await self.broadcast({"type": "chat.update", "chat": chat})
+        return _json({"chat": chat})
+
+    async def h_chat_rename(self, request: web.Request) -> web.Response:
+        self._require(request)
+        body = await self._body(request)
+        chat = self.store.rename_chat(request.match_info["chat_id"], str(body.get("title") or ""))
+        if chat is None:
+            return _error(404, "no such chat")
+        await self.broadcast({"type": "chat.update", "chat": chat})
+        return _json({"chat": chat})
+
+    async def h_chat_delete(self, request: web.Request) -> web.Response:
+        self._require(request)
+        chat_id = request.match_info["chat_id"]
+        if chat_id == HOME_CHAT_ID:
+            return _error(400, "the Updates chat can't be deleted")
+        if not self.store.delete_chat(chat_id):
+            return _error(404, "no such chat")
+        await self.broadcast({"type": "chat.delete", "chat_id": chat_id})
+        return _json({"ok": True})
+
+    async def h_messages(self, request: web.Request) -> web.Response:
+        self._require(request)
+        chat_id = request.match_info["chat_id"]
+        before = request.query.get("before")
+        messages = self.store.list_messages(chat_id, before=float(before) if before else None,
+                                            limit=int(request.query.get("limit") or 50))
+        return _json({"messages": messages})
+
+    async def h_message_send(self, request: web.Request) -> web.Response:
+        device = self._require(request)
+        body = await self._body(request)
+        message = await self.user_message(device, request.match_info["chat_id"], str(body.get("text") or ""),
+                                          str(body.get("client_id") or ""))
+        if message is None:
+            return _error(400, "empty message")
+        return _json({"message": message})
+
+    async def user_message(self, device: Dict[str, Any], chat_id: str, text: str,
+                           client_id: str = "") -> Optional[Dict[str, Any]]:
+        text = (text or "").strip()[:MAX_TEXT]
+        if not text or not chat_id:
+            return None
+        chat = self.store.get_chat(chat_id) or self.store.ensure_chat(chat_id, _clip(text, 40))
+        message = self.store.add_message(chat_id, "user", text,
+                                         meta={"device": device["name"], "client_id": client_id})
+        await self.broadcast({"type": "message.new", "chat_id": chat_id, "message": message})
+        await self.broadcast({"type": "chat.update", "chat": self.store.get_chat(chat_id)})
+        if self.on_user_message is not None:
+            try:
+                await self.on_user_message(chat, text, device, message)
+            except Exception:
+                logger.exception("[winglet] failed to hand message to Hermes")
+                await self.post_message(chat_id, "⚠️ Couldn't reach the agent. Check the gateway logs.",
+                                        role="system", push=False)
+        return message
+
+    # -- inbox ---------------------------------------------------------------------------
+
+    async def h_inbox(self, request: web.Request) -> web.Response:
+        self._require(request)
+        return _json({"items": self.store.list_inbox(status=request.query.get("status") or None),
+                      "pending": self.store.pending_count()})
+
+    async def h_inbox_respond(self, request: web.Request) -> web.Response:
+        item_id = request.match_info["item_id"]
+        body = await self._body(request)
+        choice = str(body.get("choice") or request.query.get("choice") or "")
+        answer = body.get("answer")
+        device = self._device(request)
+        if device is None:
+            # One-tap notification actions carry an HMAC instead of a bearer token.
+            sig = str(body.get("sig") or request.query.get("sig") or "")
+            if not (choice and hmac.compare_digest(sig, self.action_signature(item_id, choice))):
+                return _error(401, "not paired")
+        ok, item = await self.respond(item_id, choice=choice, answer=answer)
+        if item is None:
+            return _error(404, "no such item")
+        return _json({"ok": ok, "item": item}, status=200 if ok else 409)
+
+    async def respond(self, item_id: str, *, choice: str = "", answer: Any = None) -> tuple[bool, Optional[Dict]]:
+        item = self.store.get_inbox(item_id)
+        if item is None:
+            return False, None
+        if item["status"] != "pending":
+            return False, item
+        ok = False
+        if item["kind"] == "approval":
+            if choice not in (item["payload"].get("choices") or []):
+                return False, item
+            ok = bool(self.on_approval and await self.on_approval(item, choice))
+            resolution = choice
+        elif item["kind"] == "question":
+            text = str(answer if answer is not None else choice).strip()
+            if not text:
+                return False, item
+            ok = bool(self.on_answer and await self.on_answer(item, text))
+            resolution = text
+        else:  # results are simply acknowledged
+            ok, resolution = True, "seen"
+        updated = self.store.resolve_inbox(item_id, "resolved" if ok else "expired", resolution if ok else "")
+        item = updated or self.store.get_inbox(item_id)
+        await self.broadcast({"type": "inbox.update", "item": item, "pending": self.store.pending_count()})
+        return ok, item
+
+    async def add_inbox(self, kind: str, chat_id: str, title: str, body: str, payload: Dict[str, Any], *,
+                        push: bool = True) -> Dict[str, Any]:
+        item = self.store.add_inbox(kind, chat_id, title, body, payload)
+        await self.broadcast({"type": "inbox.new", "item": item, "pending": self.store.pending_count()})
+        if push:
+            await self.push_now(self._inbox_notification(item), tag=f"inbox-{item['id']}", urgency="high",
+                                item=item)
+        return item
+
+    def _inbox_notification(self, item: Dict[str, Any]) -> Dict[str, Any]:
+        bot = self.bot()["title"]
+        chat = self.store.get_chat(item["chat_id"]) or {}
+        return {"title": f"{bot} · {item['title']}", "body": _clip(item["body"], 180),
+                "url": f"/inbox/{item['id']}", "kind": item["kind"], "item_id": item["id"],
+                "chat_id": item["chat_id"], "chat_title": chat.get("title", "")}
+
+    # -- outbound (called by the adapter) ------------------------------------------------------
+
+    async def post_message(self, chat_id: str, text: str, *, role: str = "bot", status: str = "final",
+                           meta: Optional[Dict[str, Any]] = None, push: bool = True) -> Dict[str, Any]:
+        message = self.store.add_message(chat_id, role, text, status=status, meta=meta)
+        await self.broadcast({"type": "message.new", "chat_id": chat_id, "message": message})
+        await self.broadcast({"type": "chat.update", "chat": self.store.get_chat(chat_id)})
+        if push and role == "bot":
+            self.schedule_push(chat_id, message["id"], final=status == "final")
+        return message
+
+    async def edit_message(self, message_id: str, text: str, *, final: bool = False) -> Optional[Dict[str, Any]]:
+        message = self.store.update_message(message_id, text, status="final" if final else "streaming")
+        if message is None:
+            return None
+        await self.broadcast({"type": "message.update", "chat_id": message["chat_id"], "message": message})
+        if message["role"] == "bot":
+            self.schedule_push(message["chat_id"], message_id, final=final)
+        return message
+
+    async def delete_message(self, message_id: str) -> bool:
+        message = self.store.delete_message(message_id)
+        if message is None:
+            return False
+        await self.broadcast({"type": "message.delete", "chat_id": message["chat_id"], "message_id": message_id})
+        return True
+
+    async def set_typing(self, chat_id: str, on: bool) -> None:
+        """``on`` is re-sent every few seconds while the agent works; the app expires it after ~8s."""
+        if not on and chat_id not in self._typing:
+            return
+        (self._typing.add if on else self._typing.discard)(chat_id)
+        await self.broadcast({"type": "typing", "chat_id": chat_id, "on": on})
+
+    def add_media(self, path: str, name: Optional[str] = None) -> Dict[str, Any]:
+        """Copy a local file the agent produced into Winglet's media store; returns an attachment."""
+        src = Path(path)
+        name = Path(name or src.name).name or "file"
+        media_id = secrets.token_urlsafe(12)
+        dest_dir = self.media_dir / media_id
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(src, dest_dir / name)
+        mime = mimetypes.guess_type(name)[0] or "application/octet-stream"
+        kind = mime.split("/")[0] if mime.split("/")[0] in ("image", "audio", "video") else "file"
+        return {"url": f"/api/media/{media_id}/{quote(name)}", "name": name, "mime": mime, "kind": kind,
+                "size": (dest_dir / name).stat().st_size}
+
+    async def h_media(self, request: web.Request) -> web.StreamResponse:
+        self._require(request)
+        media_id, name = request.match_info["media_id"], request.match_info["name"]
+        path = (self.media_dir / media_id / name).resolve()
+        if self.media_dir.resolve() not in path.parents or not path.is_file():
+            return _error(404, "not found")
+        return web.FileResponse(path, headers={"Cache-Control": "private, max-age=86400"})
+
+    # -- websocket -------------------------------------------------------------------------
+
+    async def h_ws(self, request: web.Request) -> web.StreamResponse:
+        device = self._device(request)
+        if device is None:
+            return _error(401, "not paired")
+        ws = web.WebSocketResponse(heartbeat=25, max_msg_size=1024 * 1024)
+        await ws.prepare(request)
+        self._sockets[ws] = {"device": device}
+        try:
+            await ws.send_json({"type": "hello", "server_id": self.server_id(), "bot": self.bot(), "device": device,
+                                "version": VERSION, "chats": self.store.list_chats(),
+                                "typing": sorted(self._typing), "pending": self.store.pending_count()})
+            async for msg in ws:
+                if msg.type != WSMsgType.TEXT:
+                    continue
+                try:
+                    data = json.loads(msg.data)
+                except ValueError:
+                    continue
+                await self._on_ws(ws, device, data)
+        finally:
+            self._sockets.pop(ws, None)
+        return ws
+
+    async def _on_ws(self, ws: web.WebSocketResponse, device: Dict[str, Any], data: Dict[str, Any]) -> None:
+        kind = data.get("type")
+        if kind == "ping":
+            await ws.send_json({"type": "pong", "t": data.get("t")})
+        elif kind == "message.send":
+            await self.user_message(device, str(data.get("chat_id") or ""), str(data.get("text") or ""),
+                                    str(data.get("client_id") or ""))
+        elif kind == "inbox.respond":
+            await self.respond(str(data.get("id") or ""), choice=str(data.get("choice") or ""),
+                               answer=data.get("answer"))
+        elif kind == "presence":
+            self._sockets[ws]["visible"] = bool(data.get("visible", True))
+
+    def live_clients(self) -> int:
+        """Sockets whose app is in the foreground (a backgrounded PWA may keep its socket briefly)."""
+        return sum(1 for ws, meta in self._sockets.items() if not ws.closed and meta.get("visible", True))
+
+    async def broadcast(self, event: Dict[str, Any]) -> None:
+        dead = []
+        for ws in list(self._sockets):
+            try:
+                await ws.send_json(event)
+            except Exception:
+                dead.append(ws)
+        for ws in dead:
+            self._sockets.pop(ws, None)
+
+    # -- push ------------------------------------------------------------------------------
+
+    def schedule_push(self, chat_id: str, message_id: str, *, final: bool) -> None:
+        """Debounced per chat so a streamed reply produces one notification with the final text."""
+        task = self._push_tasks.pop(chat_id, None)
+        if task is not None:
+            task.cancel()
+        delay = 0.3 if final else PUSH_DEBOUNCE_SECONDS
+        self._push_tasks[chat_id] = asyncio.ensure_future(self._delayed_push(chat_id, message_id, delay))
+
+    async def _delayed_push(self, chat_id: str, message_id: str, delay: float) -> None:
+        try:
+            await asyncio.sleep(delay)
+        except asyncio.CancelledError:
+            return
+        self._push_tasks.pop(chat_id, None)
+        if self.live_clients():
+            return
+        message = self.store.get_message(message_id)
+        if message is None or not message["text"].strip():
+            return
+        chat = self.store.get_chat(chat_id) or {"title": chat_id}
+        bot = self.bot()["title"]
+        title = bot if chat_id != HOME_CHAT_ID else f"{bot} · Update"
+        if chat.get("kind") == "chat" and chat.get("title") not in ("", "General"):
+            title = f"{bot} · {chat['title']}"
+        await self.push_now({"title": title, "body": _clip(message["text"], 180), "url": f"/chat/{chat_id}",
+                             "kind": "message", "chat_id": chat_id}, tag=f"chat-{chat_id}")
+
+    async def push_now(self, note: Dict[str, Any], *, tag: str, urgency: str = "normal",
+                       item: Optional[Dict[str, Any]] = None) -> int:
+        """Send ``note`` to every subscription; returns how many deliveries were attempted."""
+        subs = self.store.list_push_subs()
+        if not subs:
+            return 0
+        client = await self._client()
+        note = {**note, "tag": tag, "server_id": self.server_id()}
+        if item is not None and item["kind"] == "approval":
+            note["actions"] = [{"action": c, "title": item["payload"].get("labels", {}).get(c, c.title()),
+                                "sig": self.action_signature(item["id"], c)}
+                               for c in item["payload"].get("choices", []) if c in ("once", "deny")]
+        attempts = 0
+        for sub in subs:
+            attempts += 1
+            try:
+                if sub["kind"] == "webpush":
+                    status = await webpush.send(client, sub["data"], note, self.vapid_private_key(), PUSH_SUBJECT,
+                                                urgency=urgency, topic=tag)
+                    if status in (404, 410):
+                        self.store.remove_push_sub(endpoint=sub["endpoint"])
+                    elif status >= 400:
+                        logger.warning("[winglet] web push rejected with HTTP %s", status)
+                elif sub["kind"] == "ntfy":
+                    await self._send_ntfy(client, sub["data"], note)
+            except Exception as exc:
+                logger.warning("[winglet] push delivery failed: %s", exc)
+        return attempts
+
+    async def _client(self):
+        if self._http is None:
+            import httpx
+            self._http = httpx.AsyncClient(timeout=15.0)
+        return self._http
+
+    async def aclose(self) -> None:
+        if self._http is not None:
+            with contextlib.suppress(Exception):
+                await self._http.aclose()
+            self._http = None
+
+    def vapid_private_key(self) -> str:
+        return self.store.secret("vapid_private_pem", webpush.generate_vapid_private_key)
+
+    async def h_vapid(self, request: web.Request) -> web.Response:
+        return _json({"public_key": webpush.vapid_public_key(self.vapid_private_key())})
+
+    async def h_webpush_subscribe(self, request: web.Request) -> web.Response:
+        device = self._require(request)
+        body = await self._body(request)
+        sub = body.get("subscription") or body
+        endpoint = str(sub.get("endpoint") or "")
+        keys = sub.get("keys") or {}
+        if not endpoint.startswith("https://") or not keys.get("p256dh") or not keys.get("auth"):
+            return _error(400, "invalid push subscription")
+        self.store.add_push_sub(device["id"], "webpush", endpoint,
+                                {"endpoint": endpoint, "keys": {"p256dh": keys["p256dh"], "auth": keys["auth"]}})
+        return _json({"ok": True})
+
+    async def h_webpush_unsubscribe(self, request: web.Request) -> web.Response:
+        device = self._require(request)
+        body = await self._body(request)
+        removed = self.store.remove_push_sub(endpoint=str(body.get("endpoint") or ""), device_id=device["id"])
+        return _json({"ok": True, "removed": removed})
+
+    async def h_ntfy(self, request: web.Request) -> web.Response:
+        """Enable ntfy delivery for this device and return the private topic to subscribe to."""
+        device = self._require(request)
+        topic = self.store.secret("ntfy_topic", lambda: "winglet-" + secrets.token_hex(12))
+        self.store.add_push_sub(device["id"], "ntfy", f"{self.ntfy_server}/{topic}",
+                                {"server": self.ntfy_server, "topic": topic})
+        return _json({"server": self.ntfy_server, "topic": topic,
+                      "subscribe_url": f"{self.ntfy_server}/{topic}"})
+
+    async def _send_ntfy(self, client, data: Dict[str, Any], note: Dict[str, Any]) -> None:
+        # ntfy topics transit a third-party server, so only generic text is sent there.
+        generic = {"approval": "needs your approval", "question": "has a question for you"}.get(
+            note.get("kind", ""), "sent you a message")
+        payload = {"topic": data["topic"], "title": self.bot()["title"], "message": f"{self.bot()['title']} {generic}",
+                   "tags": ["winglet"], "priority": 4 if note.get("kind") in ("approval", "question") else 3,
+                   "click": f"winglet://open{note.get('url', '/')}"}
+        await client.post(data["server"], json=payload, timeout=15.0)
+
+    async def h_push_test(self, request: web.Request) -> web.Response:
+        self._require(request)
+        attempts = await self.push_now({"title": self.bot()["title"], "body": "Notifications are working 🎉",
+                                        "url": "/", "kind": "test"}, tag="test")
+        return _json({"ok": attempts > 0, "attempts": attempts})
+
+    # -- static web app -----------------------------------------------------------------------
+
+    async def h_static(self, request: web.Request) -> web.StreamResponse:
+        tail = request.match_info.get("tail", "")
+        if tail.startswith("api/"):
+            return _error(404, "not found")
+        root = self.web_root
+        if root is None or not (root / "index.html").is_file():
+            return web.Response(text=_NO_WEB_BUILD, content_type="text/html")
+        root = root.resolve()
+        candidate = (root / tail).resolve() if tail else root / "index.html"
+        inside = candidate == root / "index.html" or root in candidate.parents
+        if not inside or not candidate.is_file():
+            # Client-side routes (/chat/abc) fall back to the SPA shell; Expo also emits <route>.html.
+            html = (root / f"{tail}.html").resolve() if tail else None
+            candidate = html if html and root in html.parents and html.is_file() else root / "index.html"
+        headers = {"Cache-Control": "no-cache"}
+        if "/_expo/static/" in f"/{tail}" or "/assets/" in f"/{tail}":
+            headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        ctype = mimetypes.guess_type(candidate.name)[0] or "application/octet-stream"
+        if candidate.suffix == ".webmanifest":
+            ctype = "application/manifest+json"
+        return web.FileResponse(candidate, headers={**headers, "Content-Type": ctype})
+
+    @staticmethod
+    async def _body(request: web.Request) -> Dict[str, Any]:
+        if not request.can_read_body:
+            return {}
+        try:
+            data = await request.json()
+        except Exception:
+            return {}
+        return data if isinstance(data, dict) else {}
+
+
+_NO_WEB_BUILD = """<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width">
+<title>Winglet</title><body style="background:#1e1f22;color:#dbdee1;font:16px system-ui;padding:32px">
+<h2>🪽 Winglet is running</h2><p>The web app isn't bundled in this install. Reinstall the plugin from a
+release, or use the Android app.</p></body>"""

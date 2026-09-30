@@ -1,0 +1,35 @@
+name: winglet
+label: Winglet
+kind: platform
+version: 0.1.0
+description: >
+  Winglet: your Hermes agents on your phone. Adds the Winglet mobile app as a
+  messaging platform, with QR pairing, push notifications, and one-tap
+  approvals. Serves the installable web app for iPhone and desktop.
+author: VIKASRP24
+requires_env: []
+optional_env:
+  - name: WINGLET_ENABLED
+    description: "Start Winglet with the gateway (true/false). `hermes winglet setup` sets this."
+    prompt: "Enable Winglet? (true/false)"
+    password: false
+  - name: WINGLET_PORT
+    description: "Port the app connects to (default 8787)"
+    prompt: "Winglet port"
+    password: false
+  - name: WINGLET_HOST
+    description: "Bind address (default 0.0.0.0)"
+    prompt: "Winglet bind address"
+    password: false
+  - name: WINGLET_PUBLIC_URL
+    description: "URL your phone uses to reach this machine, e.g. https://box.tailnet.ts.net (used in pairing QR codes)"
+    prompt: "Winglet public URL (or empty)"
+    password: false
+  - name: WINGLET_NTFY_SERVER
+    description: "ntfy server for Android notifications (default https://ntfy.sh)"
+    prompt: "ntfy server URL (or empty)"
+    password: false
+  - name: WINGLET_HOME_CHANNEL
+    description: "Chat that receives routine / cron results (default: home)"
+    prompt: "Home chat id (or empty)"
+    password: false
