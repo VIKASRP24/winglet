@@ -142,10 +142,13 @@ the old shared topic. Web Push registrations are unaffected.
 
 ### Approval compatibility
 
-Interactive approval cards require Hermes to forward the exact request ID as
-`ExecApprovalPrompt.request_id` or `metadata.approval_request_id`. Hermes versions that omit it use
-their normal text prompt with `/approve` and `/deny` instructions. Winglet never guesses an approval
-identity from the command or queue order, even when only one request appears to match.
+Interactive approval cards bind to the exact Hermes request ID. Winglet accepts an ID forwarded
+with the prompt, or captures it from current Hermes' synchronous approval notifier before the
+prompt is scheduled. This compatibility path checks the notifier, adapter, chat, and session;
+if Hermes changes that call path or the request has expired, Winglet uses the normal text prompt
+with `/approve` and `/deny` instructions. Winglet never guesses an approval identity from the
+command or queue order, even when only one request appears to match. See
+[approval identity and compatibility](docs/APPROVALS.md) for the integration details and tests.
 
 ### More than one bot
 
