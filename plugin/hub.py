@@ -39,6 +39,7 @@ HOME_CHAT_ID = "home"
 PUSH_DEBOUNCE_SECONDS = 2.5
 MAX_TEXT = 16_000
 PUSH_SUBJECT = "https://github.com/VIKASRP24/winglet"
+PAIR_FAILURES_PER_MINUTE = 10
 
 InboundFn = Callable[[Dict[str, Any], str, Dict[str, Any], Dict[str, Any]], Awaitable[None]]
 ResolveFn = Callable[[Dict[str, Any], str], Awaitable[bool]]
@@ -71,6 +72,7 @@ class Hub:
         self._sockets: Dict[web.WebSocketResponse, Dict[str, Any]] = {}
         self._push_tasks: Dict[str, asyncio.Task] = {}
         self._typing: Set[str] = set()
+        self._pair_failures: Dict[str, List[float]] = {}
         # Hermes-side callbacks, installed by the adapter.
         self.on_user_message: Optional[InboundFn] = None
         self.on_approval: Optional[ResolveFn] = None
@@ -164,12 +166,19 @@ class Hub:
                       "features": {"webpush": True, "ntfy": True, "approvals": True, "questions": True}})
 
     async def h_pair(self, request: web.Request) -> web.Response:
+        peer = request.remote or "?"
+        now = time.monotonic()
+        recent = [t for t in self._pair_failures.get(peer, []) if now - t < 60]
+        if len(recent) >= PAIR_FAILURES_PER_MINUTE:
+            return _error(429, "Too many attempts. Wait a minute and try again.")
         try:
             body = await request.json()
         except Exception:
             return _error(400, "invalid JSON")
         if not self.store.redeem_pair_code(str(body.get("code") or "")):
+            self._pair_failures[peer] = recent + [now]
             return _error(403, "This pairing code is invalid or expired. Run `hermes winglet pair` for a new one.")
+        self._pair_failures.pop(peer, None)
         device, token = self.store.add_device(str(body.get("device_name") or ""), str(body.get("platform") or ""))
         logger.info("[winglet] paired new device %s (%s)", device["name"], device["platform"] or "unknown")
         return _json({"token": token, "device": device, "server_id": self.server_id(), "bot": self.bot()})
@@ -304,11 +313,13 @@ class Hub:
 
     async def add_inbox(self, kind: str, chat_id: str, title: str, body: str, payload: Dict[str, Any], *,
                         push: bool = True) -> Dict[str, Any]:
-        item = self.store.add_inbox(kind, chat_id, title, body, payload)
+        # Results are informational: they land in the inbox history but never count as "needs you".
+        status = "resolved" if kind == "result" else "pending"
+        item = self.store.add_inbox(kind, chat_id, title, body, payload, status=status)
         await self.broadcast({"type": "inbox.new", "item": item, "pending": self.store.pending_count()})
         if push:
-            await self.push_now(self._inbox_notification(item), tag=f"inbox-{item['id']}", urgency="high",
-                                item=item)
+            await self.push_now(self._inbox_notification(item), tag=f"inbox-{item['id']}",
+                                urgency="normal" if kind == "result" else "high", item=item)
         return item
 
     def _inbox_notification(self, item: Dict[str, Any]) -> Dict[str, Any]:
@@ -351,6 +362,10 @@ class Hub:
             return
         (self._typing.add if on else self._typing.discard)(chat_id)
         await self.broadcast({"type": "typing", "chat_id": chat_id, "on": on})
+        if not on:
+            # A turn ended: anything still marked as streaming (e.g. a tool-progress bubble) is done.
+            for message in self.store.streaming_messages(chat_id):
+                await self.edit_message(message["id"], message["text"], final=True)
 
     def add_media(self, path: str, name: Optional[str] = None) -> Dict[str, Any]:
         """Copy a local file the agent produced into Winglet's media store; returns an attachment."""

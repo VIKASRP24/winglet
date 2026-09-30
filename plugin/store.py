@@ -235,6 +235,10 @@ class Store:
                 self._exec("DELETE FROM messages WHERE id = ?", (message_id,))
             return current
 
+    def streaming_messages(self, chat_id: str) -> List[Dict[str, Any]]:
+        rows = self._all("SELECT * FROM messages WHERE chat_id = ? AND status = 'streaming'", (chat_id,))
+        return [self._message(r) for r in rows]
+
     def get_message(self, message_id: str) -> Optional[Dict[str, Any]]:
         row = self._one("SELECT * FROM messages WHERE id = ?", (message_id,))
         return self._message(row) if row else None
@@ -258,11 +262,11 @@ class Store:
     # -- inbox -------------------------------------------------------------------
 
     def add_inbox(self, kind: str, chat_id: str, title: str, body: str = "",
-                  payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+                  payload: Optional[Dict[str, Any]] = None, status: str = "pending") -> Dict[str, Any]:
         item_id, now = new_id(), _now()
-        self._exec("INSERT INTO inbox (id, kind, chat_id, title, body, payload, created_at, updated_at) "
-                   "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                   (item_id, kind, chat_id, title[:200], body, json.dumps(payload or {}), now, now))
+        self._exec("INSERT INTO inbox (id, kind, chat_id, title, body, payload, status, created_at, updated_at) "
+                   "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                   (item_id, kind, chat_id, title[:200], body, json.dumps(payload or {}), status, now, now))
         return self.get_inbox(item_id)
 
     def get_inbox(self, item_id: str) -> Optional[Dict[str, Any]]:

@@ -1,0 +1,59 @@
+{
+  "expo": {
+    "name": "Winglet",
+    "slug": "winglet",
+    "version": "0.1.0",
+    "scheme": "winglet",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#1E1F22",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "io.github.vikasrp24.winglet"
+    },
+    "android": {
+      "package": "io.github.vikasrp24.winglet",
+      "versionCode": 1,
+      "adaptiveIcon": {
+        "backgroundColor": "#1E1F22",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "softwareKeyboardLayoutMode": "resize",
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "output": "single",
+      "bundler": "metro",
+      "favicon": "./assets/favicon.png",
+      "name": "Winglet",
+      "shortName": "Winglet",
+      "themeColor": "#1E1F22",
+      "backgroundColor": "#1E1F22"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      "expo-font",
+      "expo-image",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Winglet uses the camera to scan the pairing QR code from your server.",
+          "recordAudioAndroid": false,
+          "barcodeScannerEnabled": true
+        }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "usesCleartextTraffic": true
+          }
+        }
+      ]
+    ]
+  }
+}

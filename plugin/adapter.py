@@ -110,6 +110,21 @@ def _env_enablement() -> Optional[dict]:
     return {"enabled": True, **seed}
 
 
+def _routine_title(job_id: str) -> str:
+    try:
+        from cron.jobs import get_job
+        job = get_job(job_id) or {}
+        name = str(job.get("name") or "").strip()
+        # Bot Mode names routines "[bot:<name>] <routine>"; the app already shows which bot it is.
+        if name.startswith("[bot:") and "]" in name:
+            name = name.split("]", 1)[1].strip()
+        if name:
+            return f"Routine finished: {name}"[:120]
+    except Exception:
+        pass
+    return "Routine finished"
+
+
 def _strip_cursor(text: str) -> str:
     """Drop the streaming cursor Hermes appends to in-progress previews; the app draws its own."""
     stripped = text.rstrip()
@@ -160,7 +175,9 @@ class WingletAdapter(BasePlatformAdapter):
             hub.on_approval = self._on_approval
             hub.on_answer = self._on_answer
             from gateway.platforms.shared_ingress import bind_listener
-            self._runner = await bind_listener(self, hub.build_app(), self._host, self._port, "/api/ws")
+            # No access log: device tokens ride in WebSocket/media query strings and must not reach log files.
+            self._runner = await bind_listener(self, hub.build_app(), self._host, self._port, "/api/ws",
+                                               access_log=None)
             self._hub = hub
         except OSError as exc:
             logger.error("[%s] could not listen on %s:%s: %s", self.name, self._host, self._port, exc)
@@ -214,14 +231,15 @@ class WingletAdapter(BasePlatformAdapter):
         hub = self._hub
         if hub is None:
             return SendResult(success=False, error="Winglet is not running", retryable=True)
-        streaming = bool((metadata or {}).get("expect_edits"))
+        metadata = metadata or {}
         text = _strip_cursor(content or "")
-        if streaming and chat_id != HOME_CHAT_ID:
-            message = await hub.post_message(chat_id, text, status="streaming")
-        elif chat_id == HOME_CHAT_ID:
-            # Routine / cron output: keep it in the Updates chat and surface it in the inbox.
+        if metadata.get("job_id"):
+            # A routine (cron job) delivered its result: keep it in the chat and surface it in the inbox.
             message = await hub.post_message(chat_id, text, push=False)
-            await hub.add_inbox("result", chat_id, "New update", text, {"message_id": message["id"]})
+            await hub.add_inbox("result", chat_id, _routine_title(str(metadata["job_id"])), text,
+                                {"message_id": message["id"], "job_id": metadata["job_id"]})
+        elif metadata.get("expect_edits"):
+            message = await hub.post_message(chat_id, text, status="streaming")
         else:
             message = await hub.post_message(chat_id, text)
         return SendResult(success=True, message_id=message["id"])

@@ -272,3 +272,22 @@ async def test_media_requires_token(client, hub, tmp_path):
     assert (await client.get(attachment["url"])).status == 401
     resp = await client.get(f"{attachment['url']}?token={token}")
     assert resp.status == 200 and await resp.read() == b"\x89PNG fake"
+
+
+async def test_turn_end_finalizes_stale_streaming_messages(hub):
+    msg = await hub.post_message("general", "💻 Running ls", status="streaming")
+    await hub.set_typing("general", True)
+    await hub.set_typing("general", False)
+    assert hub.store.get_message(msg["id"])["status"] == "final"
+
+
+async def test_routine_results_do_not_count_as_needing_you(hub):
+    await hub.add_inbox("result", "general", "Routine finished", "All good", {}, push=False)
+    assert hub.store.pending_count() == 0
+    assert hub.store.list_inbox()[0]["kind"] == "result"
+
+
+async def test_pairing_is_rate_limited(client, hub):
+    for _ in range(10):
+        assert (await client.post("/api/pair", json={"code": "NOPE0000"})).status == 403
+    assert (await client.post("/api/pair", json={"code": hub.store.create_pair_code()})).status == 429

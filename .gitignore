@@ -155,3 +155,9 @@ web-build/
 __pycache__/
 *.py[cod]
 .venv/
+
+# Expo generated native projects (Continuous Native Generation)
+app/android/
+app/ios/
+expo-env.d.ts
+.metro-health-check*
