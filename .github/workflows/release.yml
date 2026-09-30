@@ -11,12 +11,47 @@ permissions:
   contents: write
 
 jobs:
+  checks:
+    name: Tests and typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install aiohttp cryptography httpx pytest pytest-aiohttp http_ece
+      - run: pytest -q
+      - run: python scripts/check_web_bundle.py
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - run: npm ci && npx tsc --noEmit
+        working-directory: app
+
   android:
     name: Android APK
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    env:
+      HAS_SIGNING_KEY: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
     steps:
       - uses: actions/checkout@v4
+      - name: Work out the version
+        run: |
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+            [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::Tags must look like v1.2.3"; exit 1; }
+            [ "$HAS_SIGNING_KEY" = "true" ] || { echo "::error::Releases need the signing key secrets (see docs/RELEASING.md)"; exit 1; }
+            LABEL="$VERSION"
+          else
+            VERSION="$(node -p "require('./app/app.json').expo.version")"
+            LABEL="dev-${GITHUB_SHA::7}"
+            [ "$HAS_SIGNING_KEY" = "true" ] || LABEL="${LABEL}-debugkey"
+          fi
+          echo "WINGLET_VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "APK_LABEL=$LABEL" >> "$GITHUB_ENV"
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -32,15 +67,30 @@ jobs:
       - name: Generate native Android project
         working-directory: app
         run: npx expo prebuild --platform android --no-install
+      - name: Load signing key
+        if: env.HAS_SIGNING_KEY == 'true'
+        run: |
+          echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > "$RUNNER_TEMP/release.keystore"
+          echo "WINGLET_KEYSTORE_PATH=$RUNNER_TEMP/release.keystore" >> "$GITHUB_ENV"
       - name: Build release APK
         working-directory: app/android
+        env:
+          WINGLET_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          WINGLET_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          WINGLET_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: ./gradlew assembleRelease --no-daemon -PreactNativeArchitectures=arm64-v8a,armeabi-v7a
+      - name: Check the signature
+        run: |
+          APK=app/android/app/build/outputs/apk/release/app-release.apk
+          APKSIGNER="$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -1)apksigner"
+          "$APKSIGNER" verify --print-certs "$APK" | tee certs.txt
+          if [ "$HAS_SIGNING_KEY" = "true" ] && grep -q "CN=Android Debug" certs.txt; then
+            echo "::error::Release APK is signed with the debug key"; exit 1
+          fi
       - name: Rename APK
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          [ "$GITHUB_REF_TYPE" = "tag" ] || VERSION="dev-${GITHUB_SHA::7}"
           mkdir -p out
-          cp app/android/app/build/outputs/apk/release/app-release.apk "out/winglet-${VERSION}.apk"
+          cp app/android/app/build/outputs/apk/release/app-release.apk "out/winglet-${APK_LABEL}.apk"
           ls -la out
       - uses: actions/upload-artifact@v4
         with:
@@ -75,7 +125,7 @@ jobs:
   release:
     name: Publish release
     if: github.ref_type == 'tag'
-    needs: [android, plugin]
+    needs: [checks, android, plugin]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
