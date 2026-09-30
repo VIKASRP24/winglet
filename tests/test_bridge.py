@@ -5,17 +5,23 @@ import pytest
 from plugin import bridge
 
 
-def test_pick_request_id_takes_newest_unclaimed():
+def test_pick_request_id_requires_the_prompt_identity():
     entries = [{"request_id": "a", "command": "ls"}, {"request_id": "b", "command": "rm -rf x"}]
-    assert bridge.pick_request_id(entries, "rm -rf x", set()) == "b"
-    assert bridge.pick_request_id(entries, "something else", {"b"}) == "a"
-    assert bridge.pick_request_id(entries, "ls", {"a", "b"}) is None
-    assert bridge.pick_request_id([], "ls", set()) is None
+    assert bridge.pick_request_id(entries, "b", set()) == "b"
+    assert bridge.pick_request_id(entries, None, set()) is None
+    assert bridge.pick_request_id(entries, "gone", set()) is None
+    assert bridge.pick_request_id(entries, "a", {"a", "b"}) is None
+    assert bridge.pick_request_id([], "a", set()) is None
 
 
-def test_pick_request_id_prefers_exact_command():
-    entries = [{"request_id": "a", "command": "rm -rf x"}, {"request_id": "b", "command": "ls"}]
-    assert bridge.pick_request_id(entries, "rm -rf x", set()) == "a"
+def test_replacement_or_identical_commands_do_not_establish_identity():
+    entries = [{"request_id": "b", "command": "ls"}, {"request_id": "c", "command": "ls"}]
+    # The original "ls" request a was withdrawn while its prompt was scheduled. Even an exact
+    # command match now belongs to a different execution, so a's card must never authorize b or c.
+    assert bridge.pick_request_id(entries, "a", set()) is None
+    assert bridge.pick_request_id(entries, "ls", set()) is None
+    assert bridge.pick_request_id(entries, "b", set()) == "b"
+    assert bridge.pick_request_id(entries, "c", {"b"}) == "c"
 
 
 def test_multi_select_answers_are_json_arrays():

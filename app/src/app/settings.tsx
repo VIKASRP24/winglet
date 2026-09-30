@@ -143,6 +143,7 @@ function NtfySettings({ server }: { server: Server }) {
       <Text style={styles.note}>
         Android notifications come through the free ntfy app, so Winglet doesn't need Google services or a relay. Notifications only say that {server.bot.title} needs you; details stay on your server.
       </Text>
+      <Text style={styles.note}>Upgrading an older install? Set up notifications again on each phone, then remove its old shared topic from ntfy.</Text>
       {topic ? (
         <>
           <Text style={styles.note}>Subscribe to this topic in ntfy (server {topic.server}):</Text>

@@ -249,12 +249,16 @@ class Hub:
         chat_id = request.match_info["chat_id"]
         try:
             before = float(request.query["before"]) if request.query.get("before") else None
+            before_position = int(request.query["before_position"]) if request.query.get("before_position") else None
             limit = int(request.query.get("limit") or 50)
+            if before_position is not None and before_position < 1:
+                raise ValueError
         except ValueError:
-            return _error(400, "before and limit must be numbers")
-        messages = self.store.list_messages(chat_id, before_id=request.query.get("before_id") or None,
+            return _error(400, "before and limit must be numbers; before_position must be a positive integer")
+        messages = self.store.list_messages(chat_id, before_position=before_position,
+                                            before_id=request.query.get("before_id") or None,
                                             before=before, limit=limit)
-        return _json({"messages": messages})
+        return _json({"messages": messages, "deleted_ids": self.store.deleted_message_ids(chat_id)})
 
     async def h_message_send(self, request: web.Request) -> web.Response:
         device = self._require(request)

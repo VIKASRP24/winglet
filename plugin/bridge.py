@@ -14,16 +14,15 @@ from typing import Any, Dict, Iterable, List, Optional, Set
 logger = logging.getLogger(__name__)
 
 
-def pick_request_id(entries: Iterable[Dict[str, Any]], command: str, claimed: Set[str]) -> Optional[str]:
-    """The queued approval a freshly sent prompt belongs to.
+def pick_request_id(entries: Iterable[Dict[str, Any]], request_id: Any, claimed: Set[str]) -> Optional[str]:
+    """Validate the identity supplied with this prompt; never infer it from command text.
 
-    Hermes queues the request and then asks the adapter to show it, so the prompt's request is the
-    newest one no existing card has claimed. Prefer an exact command match when several are waiting.
+    Even a unique command match can belong to a replacement request after the original timed out.
+    Hermes versions that omit identity must use their text approval flow instead of interactive cards.
     """
-    unclaimed = [e for e in entries if e.get("request_id") and e["request_id"] not in claimed]
-    exact = [e for e in unclaimed if (e.get("command") or "") == command]
-    pool = exact or unclaimed
-    return str(pool[-1]["request_id"]) if pool else None
+    if not isinstance(request_id, str) or not request_id or request_id in claimed:
+        return None
+    return request_id if any(e.get("request_id") == request_id for e in entries) else None
 
 
 def queued_approvals(session_key: str) -> Optional[List[Dict[str, Any]]]:
