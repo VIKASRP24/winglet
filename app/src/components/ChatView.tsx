@@ -54,6 +54,17 @@ export function ChatView({ server, chatId, showBack }: { server: Server; chatId:
     return () => clearInterval(t);
   }, [typing]);
 
+  if (runtime?.status === 'online' && !chat) {
+    return (
+      <View style={[styles.root, styles.empty, { paddingTop: insets.top }]}>
+        <Text style={styles.emptyTitle}>This chat was deleted</Text>
+        <Pressable style={styles.suggestion} onPress={() => (showBack ? router.replace('/') : undefined)}>
+          <Text style={styles.suggestionText}>{showBack ? 'Back to chats' : 'Pick another chat on the left'}</Text>
+        </Pressable>
+      </View>
+    );
+  }
+
   const title = chat?.kind === 'home' ? 'Updates' : chat?.title ?? 'Chat';
   const statusLabel = runtime?.status === 'online' ? (typing ? 'working…' : 'online')
     : runtime?.status === 'unauthorized' ? 'unpaired' : runtime?.status === 'offline' ? 'offline — reconnecting' : 'connecting…';
@@ -195,7 +206,7 @@ const MessageRow = memo(function MessageRow({ server, message, grouped, live, in
           ),
         )}
         {failed ? (
-          <Pressable style={styles.failed} onPress={() => sendMessage(server.id, message.chat_id, message.text)}>
+          <Pressable style={styles.failed} onPress={() => sendMessage(server.id, message.chat_id, message.text, message.meta?.client_id)}>
             <RotateCcw size={13} color={colors.red} />
             <Text style={styles.failedText}>Not delivered · tap to retry</Text>
           </Pressable>

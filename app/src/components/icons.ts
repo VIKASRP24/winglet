@@ -1,5 +1,6 @@
 // Per-icon imports keep the web bundle small (the package index pulls in every icon).
 export { default as ArrowUp } from 'lucide-react-native/icons/arrow-up';
+export { default as Check } from 'lucide-react-native/icons/check';
 export { default as BellRing } from 'lucide-react-native/icons/bell-ring';
 export { default as CheckCircle2 } from 'lucide-react-native/icons/circle-check';
 export { default as ChevronLeft } from 'lucide-react-native/icons/chevron-left';

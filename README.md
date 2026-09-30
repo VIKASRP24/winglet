@@ -130,10 +130,22 @@ works too.
 
 ### Notifications
 
+Upgrading from an installation that shared one Android notification topic between phones?
+Winglet retires that topic automatically to stop revoked phones from receiving notifications.
+Set up notifications again on **each phone**, subscribe to its new private topic in ntfy, and remove
+the old shared topic. Web Push registrations are unaffected.
+
 - **iPhone / desktop:** Settings → Notifications → *Turn on notifications*. Uses standard Web Push,
   end-to-end encrypted with keys that live on your server.
 - **Android:** Settings → Notifications → *Set up notifications*, then subscribe in the free
   [ntfy](https://ntfy.sh) app. ntfy only ever sees "Hermes needs you", never the details.
+
+### Approval compatibility
+
+Interactive approval cards require Hermes to forward the exact request ID as
+`ExecApprovalPrompt.request_id` or `metadata.approval_request_id`. Hermes versions that omit it use
+their normal text prompt with `/approve` and `/deny` instructions. Winglet never guesses an approval
+identity from the command or queue order, even when only one request appears to match.
 
 ### More than one bot
 

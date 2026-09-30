@@ -1,4 +1,4 @@
-import { CheckCircle2, CircleHelp, Clock, ShieldAlert, Sparkles, XCircle } from './icons';
+import { Check, CheckCircle2, CircleHelp, Clock, ShieldAlert, Sparkles, XCircle } from './icons';
 import { useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useApp } from '../lib/store';
@@ -84,14 +84,20 @@ function QuestionCard({ serverId, item }: { serverId: string; item: InboxItem; c
   const respond = useApp((s) => s.respond);
   const [other, setOther] = useState('');
   const [busy, setBusy] = useState(false);
+  const [picked, setPicked] = useState<string[]>([]);
   const pending = item.status === 'pending';
   const choices = item.payload.choices ?? [];
-  const send = async (answer: string) => {
-    if (!answer.trim()) return;
+  const multi = !!item.payload.multi_select && choices.length > 0;
+  const send = async (answer: string | string[]) => {
+    if (Array.isArray(answer) ? !answer.length : !answer.trim()) return;
     tap();
     setBusy(true);
-    await respond(serverId, item.id, { answer: answer.trim() });
+    await respond(serverId, item.id, { answer: Array.isArray(answer) ? answer : answer.trim() });
     setBusy(false);
+  };
+  const toggle = (label: string) => {
+    tap();
+    setPicked((p) => (p.includes(label) ? p.filter((x) => x !== label) : [...p, label]));
   };
   return (
     <View style={[styles.card, pending && styles.cardAccent]}>
@@ -106,13 +112,25 @@ function QuestionCard({ serverId, item }: { serverId: string; item: InboxItem; c
           {choices.map((choice) => {
             const recommended = /\(recommended\)\s*$/i.test(choice);
             const label = choice.replace(/\s*\(recommended\)\s*$/i, '');
+            const on = picked.includes(label);
             return (
-              <Pressable key={choice} disabled={busy} onPress={() => send(label)} style={({ pressed, hovered }: any) => [styles.choice, (pressed || hovered) && { backgroundColor: colors.active }]}>
-                <Text style={styles.choiceText}>{label}</Text>
+              <Pressable
+                key={choice}
+                disabled={busy}
+                accessibilityRole={multi ? 'checkbox' : 'button'}
+                accessibilityState={multi ? { checked: on } : undefined}
+                onPress={() => (multi ? toggle(label) : send(label))}
+                style={({ pressed, hovered }: any) => [styles.choice, (pressed || hovered) && { backgroundColor: colors.active }, on && styles.choiceOn]}
+              >
+                {multi ? <View style={[styles.check, on && styles.checkOn]}>{on ? <Check size={13} color={colors.white} strokeWidth={3} /> : null}</View> : null}
+                <Text style={[styles.choiceText, { flex: 1 }]}>{label}</Text>
                 {recommended ? <Text style={styles.recommended}>Recommended</Text> : null}
               </Pressable>
             );
           })}
+          {multi ? (
+            <Button title={picked.length ? `Submit ${picked.length} selected` : 'Pick one or more'} disabled={!picked.length} loading={busy && !!picked.length} onPress={() => send(picked)} />
+          ) : null}
           <View style={styles.otherRow}>
             <TextInput
               value={other}
@@ -167,10 +185,13 @@ const styles = StyleSheet.create({
     borderRadius: radius.md, paddingHorizontal: 14, paddingVertical: 12,
   },
   choiceText: { color: colors.text, fontFamily: fonts.medium, fontSize: 15 },
+  choiceOn: { borderWidth: 1, borderColor: colors.accent, backgroundColor: colors.accentSoft },
+  check: { width: 20, height: 20, borderRadius: 6, borderWidth: 2, borderColor: colors.textMuted, marginRight: 10, alignItems: 'center', justifyContent: 'center' },
+  checkOn: { backgroundColor: colors.accent, borderColor: colors.accent },
   recommended: { color: colors.accent, fontFamily: fonts.bold, fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5 },
   otherRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   otherInput: {
-    flex: 1, backgroundColor: colors.rail, color: colors.text, fontFamily: fonts.regular, fontSize: 15, borderRadius: radius.md,
+    flex: 1, minWidth: 0, backgroundColor: colors.rail, color: colors.text, fontFamily: fonts.regular, fontSize: 15, borderRadius: radius.md,
     paddingHorizontal: 12, paddingVertical: 9,
   },
 });
