@@ -21,12 +21,13 @@ class FakeResponse:
 
 
 class FakeHTTP:
-    def __init__(self):
+    def __init__(self, status=201):
         self.posts = []
+        self.status = status
 
     async def post(self, url, **kwargs):
         self.posts.append((url, kwargs))
-        return FakeResponse()
+        return FakeResponse(self.status)
 
     async def aclose(self):
         pass
@@ -445,3 +446,15 @@ async def test_each_phone_gets_its_own_ntfy_topic(client, hub):
     assert topic_a != topic_b and again_a == topic_a
     await client.delete("/api/me", headers={"Authorization": f"Bearer {b}"})
     assert [s["data"]["topic"] for s in hub.store.list_push_subs("ntfy")] == [topic_a]
+
+
+async def test_push_test_reports_failures_honestly(client, hub):
+    token = await pair(client, hub)
+    auth = {"Authorization": f"Bearer {token}"}
+    hub.store.add_push_sub("dev", "ntfy", "https://ntfy.sh/t", {"server": "https://ntfy.sh", "topic": "t"})
+    hub._http.status = 500
+    data = await (await client.post("/api/push/test", headers=auth)).json()
+    assert data["ok"] is False and data["failed"] == 1 and data["accepted"] == 0
+    hub._http.status = 200
+    data = await (await client.post("/api/push/test", headers=auth)).json()
+    assert data["ok"] is True and data["accepted"] == 1

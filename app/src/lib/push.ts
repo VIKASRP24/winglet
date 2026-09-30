@@ -63,9 +63,20 @@ export async function enableWebPush(server: Server): Promise<PushState> {
   return 'granted';
 }
 
-export async function sendTestPush(server: Server): Promise<boolean> {
-  const res = await api<{ ok: boolean }>(server, '/api/push/test', { method: 'POST' });
-  return res.ok;
+export type TestPushResult = { ok: boolean; accepted: number; failed: number; expired: number };
+
+export async function sendTestPush(server: Server): Promise<TestPushResult> {
+  return api<TestPushResult>(server, '/api/push/test', { method: 'POST' });
+}
+
+/** What to tell the user after a test push. "Accepted" means the push service took it, not that it showed. */
+export function describeTestPush(r: TestPushResult): string {
+  if (!r.accepted && !r.failed && !r.expired) return 'No devices are set up for notifications yet.';
+  const parts = [];
+  if (r.accepted) parts.push(`Sent to ${r.accepted} device${r.accepted === 1 ? '' : 's'}. It should arrive in a moment.`);
+  if (r.failed) parts.push(`${r.failed} couldn't be delivered (check the server logs).`);
+  if (r.expired) parts.push(`${r.expired} registration${r.expired === 1 ? ' had' : 's had'} expired; turn notifications on again on that device.`);
+  return parts.join(' ');
 }
 
 /** Android: notifications arrive through the free ntfy app, subscribed to this server's private topic. */

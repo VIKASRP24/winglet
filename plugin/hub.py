@@ -551,33 +551,41 @@ class Hub:
         return f"/chat/{quote(self.server_id(), safe='')}/{quote(chat_id, safe='')}"
 
     async def push_now(self, note: Dict[str, Any], *, tag: str, urgency: str = "normal",
-                       item: Optional[Dict[str, Any]] = None) -> int:
-        """Send ``note`` to every subscription; returns how many deliveries were attempted."""
+                       item: Optional[Dict[str, Any]] = None) -> Dict[str, int]:
+        """Send ``note`` to every subscription. Returns counts of deliveries the push services
+        accepted, rejected, and dropped as expired (accepted is not proof the phone showed it)."""
+        result = {"accepted": 0, "failed": 0, "expired": 0}
         subs = self.store.list_push_subs()
         if not subs:
-            return 0
+            return result
         client = await self._client()
         note = {**note, "tag": tag, "server_id": self.server_id()}
         if item is not None and item["kind"] == "approval":
             note["actions"] = [{"action": c, "title": item["payload"].get("labels", {}).get(c, c.title()),
                                 "sig": self.action_signature(item["id"], c)}
                                for c in item["payload"].get("choices", []) if c in ("once", "deny")]
-        attempts = 0
         for sub in subs:
-            attempts += 1
             try:
                 if sub["kind"] == "webpush":
                     status = await webpush.send(client, sub["data"], note, self.vapid_private_key(), PUSH_SUBJECT,
                                                 urgency=urgency, topic=tag)
-                    if status in (404, 410):
-                        self.store.remove_push_sub(endpoint=sub["endpoint"])
-                    elif status >= 400:
-                        logger.warning("[winglet] web push rejected with HTTP %s", status)
                 elif sub["kind"] == "ntfy":
-                    await self._send_ntfy(client, sub["data"], note)
+                    status = await self._send_ntfy(client, sub["data"], note)
+                else:
+                    continue
             except Exception as exc:
                 logger.warning("[winglet] push delivery failed: %s", exc)
-        return attempts
+                result["failed"] += 1
+                continue
+            if status in (404, 410) and sub["kind"] == "webpush":
+                self.store.remove_push_sub(endpoint=sub["endpoint"])
+                result["expired"] += 1
+            elif status >= 300:
+                logger.warning("[winglet] %s push rejected with HTTP %s", sub["kind"], status)
+                result["failed"] += 1
+            else:
+                result["accepted"] += 1
+        return result
 
     async def _client(self):
         if self._http is None:
@@ -633,7 +641,7 @@ class Hub:
         return _json({"server": self.ntfy_server, "topic": topic,
                       "subscribe_url": f"{self.ntfy_server}/{topic}"})
 
-    async def _send_ntfy(self, client, data: Dict[str, Any], note: Dict[str, Any]) -> None:
+    async def _send_ntfy(self, client, data: Dict[str, Any], note: Dict[str, Any]) -> int:
         # ntfy topics transit a third-party server, so only generic text is sent there.
         generic = {"approval": "needs your approval", "question": "has a question for you"}.get(
             note.get("kind", ""), "sent you a message")
@@ -641,13 +649,14 @@ class Hub:
                    "tags": ["winglet"], "priority": 4 if note.get("kind") in ("approval", "question") else 3,
                    # Opens the Android app on the same route the web notification uses.
                    "click": f"winglet:/{note.get('url') or '/'}"}
-        await client.post(data["server"], json=payload, timeout=15.0)
+        resp = await client.post(data["server"], json=payload, timeout=15.0)
+        return resp.status_code
 
     async def h_push_test(self, request: web.Request) -> web.Response:
         self._require(request)
-        attempts = await self.push_now({"title": self.bot()["title"], "body": "Notifications are working 🎉",
-                                        "url": "/", "kind": "test"}, tag="test")
-        return _json({"ok": attempts > 0, "attempts": attempts})
+        result = await self.push_now({"title": self.bot()["title"], "body": "Notifications are working 🎉",
+                                      "url": "/", "kind": "test"}, tag="test")
+        return _json({"ok": result["accepted"] > 0, **result})
 
     # -- static web app -----------------------------------------------------------------------
 
