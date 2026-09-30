@@ -189,6 +189,8 @@ class Hub:
             body = await request.json()
         except Exception:
             return _error(400, "invalid JSON")
+        if not isinstance(body, dict):
+            return _error(400, "expected a JSON object")
         if not self.store.redeem_pair_code(str(body.get("code") or "")):
             self._pair_failures[peer] = recent + [now]
             return _error(403, "This pairing code is invalid or expired. Run `hermes winglet pair` for a new one.")
@@ -609,9 +611,14 @@ class Hub:
         device = self._require(request)
         body = await self._body(request)
         sub = body.get("subscription") or body
-        endpoint = str(sub.get("endpoint") or "")
-        keys = sub.get("keys") or {}
-        if not endpoint.startswith("https://") or not keys.get("p256dh") or not keys.get("auth"):
+        endpoint = str(sub.get("endpoint") or "") if isinstance(sub, dict) else ""
+        keys = (sub.get("keys") if isinstance(sub, dict) else None) or {}
+        try:
+            valid = (endpoint.startswith("https://") and len(webpush.b64url_decode(keys["p256dh"])) == 65
+                     and len(webpush.b64url_decode(keys["auth"])) >= 16)
+        except Exception:
+            valid = False
+        if not valid:
             return _error(400, "invalid push subscription")
         self.store.add_push_sub(device["id"], "webpush", endpoint,
                                 {"endpoint": endpoint, "keys": {"p256dh": keys["p256dh"], "auth": keys["auth"]}})

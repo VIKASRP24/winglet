@@ -458,3 +458,11 @@ async def test_push_test_reports_failures_honestly(client, hub):
     hub._http.status = 200
     data = await (await client.post("/api/push/test", headers=auth)).json()
     assert data["ok"] is True and data["accepted"] == 1
+
+
+async def test_malformed_input_is_rejected_cleanly(client, hub):
+    assert (await client.post("/api/pair", json=["not", "an", "object"])).status == 400
+    token = await pair(client, hub)
+    bad = {"subscription": {"endpoint": "https://push.example/x", "keys": {"p256dh": "short", "auth": "x"}}}
+    resp = await client.post("/api/push/webpush", json=bad, headers={"Authorization": f"Bearer {token}"})
+    assert resp.status == 400

@@ -9,6 +9,7 @@ jobs:
   plugin:
     name: Plugin tests
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -22,6 +23,7 @@ jobs:
   app:
     name: App typecheck + web build
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: app
