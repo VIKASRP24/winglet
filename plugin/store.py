@@ -298,6 +298,15 @@ class Store:
                 rows = self._all("SELECT id FROM inbox WHERE kind = ? AND status = 'pending'", (kind,))
             return [item for r in rows if (item := self.resolve_inbox(r["id"], "expired"))]
 
+    def pending_items(self, kind: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Every pending item, however old: these are the ones that still need an answer."""
+        if kind:
+            rows = self._all("SELECT * FROM inbox WHERE status = 'pending' AND kind = ? ORDER BY created_at DESC",
+                             (kind,))
+        else:
+            rows = self._all("SELECT * FROM inbox WHERE status = 'pending' ORDER BY created_at DESC")
+        return [self._inbox(r) for r in rows]
+
     def pending_count(self) -> int:
         row = self._one("SELECT COUNT(*) AS n FROM inbox WHERE status = 'pending'")
         return int(row["n"]) if row else 0

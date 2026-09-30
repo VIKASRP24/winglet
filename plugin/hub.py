@@ -311,6 +311,13 @@ class Hub:
         await self.broadcast({"type": "inbox.update", "item": item, "pending": self.store.pending_count()})
         return ok, item
 
+    async def expire_item(self, item_id: str, note: str = "") -> Optional[Dict[str, Any]]:
+        """Mark a pending card dead (its request ended without an answer from Winglet)."""
+        item = self.store.resolve_inbox(item_id, "expired", note[:500])
+        if item is not None:
+            await self.broadcast({"type": "inbox.update", "item": item, "pending": self.store.pending_count()})
+        return item
+
     async def add_inbox(self, kind: str, chat_id: str, title: str, body: str, payload: Dict[str, Any], *,
                         push: bool = True) -> Dict[str, Any]:
         # Results are informational: they land in the inbox history but never count as "needs you".

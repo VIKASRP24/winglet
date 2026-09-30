@@ -15,6 +15,7 @@ Config (``.env`` or ``config.yaml`` ``platforms.winglet.extra``):
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
@@ -25,7 +26,7 @@ from gateway.platforms._shared import extra_or_secret, get_scoped_secret, seed_e
 from gateway.platforms.base import BasePlatformAdapter, ExecApprovalPrompt, SendResult
 from gateway.platforms.event import MessageEvent, MessageType
 
-from . import cli
+from . import bridge, cli
 from .hub import HOME_CHAT_ID, Hub
 from .store import Store
 
@@ -35,6 +36,7 @@ PLATFORM = "winglet"
 OWNER_ID = "winglet-owner"
 DEFAULT_PORT = 8787
 GENERAL_CHAT_ID = "general"
+RECONCILE_SECONDS = 5.0
 MAX_MESSAGE_LENGTH = 16_000
 _TRUTHY = ("1", "true", "yes", "on")
 
@@ -159,6 +161,7 @@ class WingletAdapter(BasePlatformAdapter):
         self._ntfy_server = str(extra_or_secret(extra, "ntfy_server", "WINGLET_NTFY_SERVER", "https://ntfy.sh"))
         self._hub: Optional[Hub] = None
         self._runner = None
+        self._reconcile_task: Optional[asyncio.Task] = None
 
     # -- lifecycle -------------------------------------------------------------------------
 
@@ -169,6 +172,10 @@ class WingletAdapter(BasePlatformAdapter):
         try:
             store = open_store()
             store.ensure_chat(GENERAL_CHAT_ID, "General")
+            # Hermes keeps waiting approvals/questions in memory: after a restart none of the old cards
+            # can be answered any more.
+            for kind in ("approval", "question"):
+                store.expire_pending(kind)
             hub = Hub(store, web_root=Path(__file__).parent / "web", bot_info=profile_info,
                       ntfy_server=self._ntfy_server)
             hub.on_user_message = self._on_user_message
@@ -184,6 +191,7 @@ class WingletAdapter(BasePlatformAdapter):
             self._set_fatal_error("winglet_bind_failed", f"Port {self._port} is unavailable: {exc}. "
                                   "Set WINGLET_PORT to a free port.", retryable=False)
             return False
+        self._reconcile_task = asyncio.ensure_future(self._reconcile_loop())
         self._mark_connected()
         self._wire_plugin_handlers(None)
         logger.info("[%s] Winglet is listening on %s:%s — pair a phone with `hermes winglet pair`",
@@ -193,6 +201,9 @@ class WingletAdapter(BasePlatformAdapter):
     async def disconnect(self) -> None:
         self._running = False
         self._mark_disconnected()
+        if self._reconcile_task is not None:
+            self._reconcile_task.cancel()
+            self._reconcile_task = None
         if self._runner is not None:
             await self._runner.cleanup()
             self._runner = None
@@ -216,9 +227,9 @@ class WingletAdapter(BasePlatformAdapter):
         await self.handle_message(event)
 
     async def _on_approval(self, item: Dict[str, Any], choice: str) -> bool:
-        from tools.approval import resolve_gateway_approval
-        session_key = item["payload"].get("session_key") or ""
-        return resolve_gateway_approval(session_key, choice) > 0
+        # Only the exact request this card was shown for; a stale card must never approve a newer one.
+        payload = item["payload"]
+        return bridge.resolve_approval(payload.get("session_key") or "", payload.get("request_id") or "", choice)
 
     async def _on_answer(self, item: Dict[str, Any], answer: str) -> bool:
         from tools.clarify_gateway import resolve_gateway_clarify
@@ -249,6 +260,11 @@ class WingletAdapter(BasePlatformAdapter):
         hub = self._hub
         if hub is None:
             return SendResult(success=False, error="Winglet is not running")
+        current = hub.store.get_message(message_id)
+        inbox_id = (current or {}).get("meta", {}).get("inbox_id")
+        if inbox_id:
+            # Hermes edits an approval card when its request times out: the card is dead from here on.
+            await hub.expire_item(inbox_id, _strip_cursor(content or ""))
         message = await hub.edit_message(message_id, _strip_cursor(content or ""), final=finalize)
         return SendResult(success=message is not None, message_id=message_id,
                           error=None if message else "message not found")
@@ -276,11 +292,18 @@ class WingletAdapter(BasePlatformAdapter):
             return SendResult(success=False, error="Winglet is not running")
         labels = {choice: label for label, choice, _style in prompt.actions}
         styles = {choice: style for _label, choice, style in prompt.actions}
+        claimed = {i["payload"].get("request_id") for i in hub.store.pending_items("approval")
+                   if i["payload"].get("session_key") == prompt.session_key}
+        request_id = bridge.pick_request_id(bridge.queued_approvals(prompt.session_key) or [], prompt.command,
+                                            {r for r in claimed if r})
+        if request_id is None:
+            logger.warning("[%s] could not match an approval request; answer it with /approve in the chat",
+                           self.name)
         item = await hub.add_inbox(
             "approval", prompt.chat_id, "Approval needed", prompt.command,
             {"command": prompt.command, "description": prompt.description, "choices": prompt.choices,
              "labels": labels, "styles": styles, "session_key": prompt.session_key,
-             "smart_denied": prompt.smart_denied})
+             "request_id": request_id, "smart_denied": prompt.smart_denied})
         message = await hub.post_message(prompt.chat_id, prompt.description or "Approval needed", role="system",
                                          meta={"inbox_id": item["id"], "kind": "approval"}, push=False)
         return SendResult(success=True, message_id=message["id"])
@@ -310,10 +333,33 @@ class WingletAdapter(BasePlatformAdapter):
         hub = self._hub
         if hub is None:
             return
-        for item in hub.store.list_inbox(status="pending"):
-            if item["kind"] == "question" and item["payload"].get("clarify_id") == clarify_id:
-                updated = hub.store.resolve_inbox(item["id"], "expired", notice or "")
-                await hub.broadcast({"type": "inbox.update", "item": updated, "pending": hub.store.pending_count()})
+        for item in hub.store.pending_items("question"):
+            if item["payload"].get("clarify_id") == clarify_id:
+                await hub.expire_item(item["id"], notice or "")
+
+    async def _reconcile_loop(self) -> None:
+        """Expire cards whose request ended elsewhere (timeout, /stop, answered in another client)."""
+        while True:
+            await asyncio.sleep(RECONCILE_SECONDS)
+            try:
+                await self._reconcile_once()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.debug("[%s] inbox reconcile failed", self.name, exc_info=True)
+
+    async def _reconcile_once(self) -> None:
+        hub = self._hub
+        if hub is None:
+            return
+        for item in hub.store.pending_items():
+            payload = item["payload"]
+            if item["kind"] == "approval":
+                queued = bridge.queued_approvals(payload.get("session_key") or "")
+                if queued is not None and payload.get("request_id") not in {e.get("request_id") for e in queued}:
+                    await hub.expire_item(item["id"])
+            elif item["kind"] == "question" and bridge.clarify_pending(payload.get("clarify_id") or "") is False:
+                await hub.expire_item(item["id"])
 
     # -- media ------------------------------------------------------------------------------------
 
