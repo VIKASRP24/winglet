@@ -9,6 +9,8 @@ import sys
 import urllib.request
 from typing import Optional
 
+from .dependencies import ensure_ready
+
 DEFAULT_PORT = 8787
 
 
@@ -113,12 +115,9 @@ def _running() -> Optional[dict]:
 
 
 def _print_qr(text: str) -> None:
-    try:
-        import qrcode
-    except ImportError:
-        print("(install `qrcode` to see a scannable code here: pip install qrcode)")
-        return
-    qr = qrcode.QRCode(border=2)
+    import qrcode
+
+    qr = qrcode.QRCode(border=4)
     qr.add_data(text)
     qr.make(fit=True)
     qr.print_ascii(invert=True)
@@ -142,12 +141,15 @@ def _print_connection_help(url: str) -> None:
 
 
 def cmd_setup(args: argparse.Namespace) -> int:
+    if not ensure_ready(install=True):
+        return 1
     from hermes_cli.config import save_env_value
     save_env_value("WINGLET_ENABLED", "true")
     if args.port:
         save_env_value("WINGLET_PORT", str(args.port))
     if args.public_url:
         save_env_value("WINGLET_PUBLIC_URL", args.public_url.rstrip("/"))
+    print("Dependencies: ready (server, push notifications, QR pairing).")
     print("🪽 Winglet is enabled for this profile.\n")
     info = _running()
     print("Gateway: running locally." if info else "Gateway: not answering locally yet. Pairing is not ready.")
@@ -165,6 +167,8 @@ def cmd_pair(args: argparse.Namespace) -> int:
         print("Pairing is not ready: Winglet isn't answering locally.")
         print("Run `hermes winglet setup`, then `hermes gateway restart` (or `hermes gateway run`).")
         print("If the gateway is already running, check its Winglet startup logs and configured port.")
+        return 1
+    if not ensure_ready():
         return 1
     from .adapter import open_store
     store = open_store()

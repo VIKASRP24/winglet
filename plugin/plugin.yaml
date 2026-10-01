@@ -7,6 +7,11 @@ description: >
   messaging platform, with QR pairing, push notifications, and one-tap
   approvals. Serves the installable web app for iPhone and desktop.
 author: VIKASRP24
+python_dependencies:
+  - "aiohttp>=3.9,<4"
+  - "cryptography>=41,<51"
+  - "httpx>=0.27,<1"
+  - "qrcode>=7.4.2,<9"
 requires_env: []
 optional_env:
   - name: WINGLET_ENABLED

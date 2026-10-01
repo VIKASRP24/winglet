@@ -85,6 +85,48 @@ def test_setup_preserves_https_url_and_port(config, monkeypatch, capsys):
     assert "HTTPS: not configured" not in capsys.readouterr().out
 
 
+def test_setup_failure_does_not_enable_or_change_settings(config, monkeypatch, capsys):
+    config.update(WINGLET_PORT="8787", WINGLET_PUBLIC_URL="https://old.example.com")
+    original = config.copy()
+    def fail(*, install=False):
+        assert install is True
+        return False
+    monkeypatch.setattr(cli, "ensure_ready", fail)
+    assert cli.cmd_setup(argparse.Namespace(port=9000, public_url="https://new.example.com")) == 1
+    assert config == original
+    assert "enabled for this profile" not in capsys.readouterr().out
+
+
+def test_pair_with_missing_dependencies_does_not_create_code(monkeypatch, capsys):
+    monkeypatch.setattr(cli, "_running", lambda: {"app": "winglet", "server_id": "s1"})
+    monkeypatch.setattr(cli, "ensure_ready", lambda: False)
+    module = ModuleType("plugin.adapter")
+    module.open_store = lambda: pytest.fail("No code should be created without QR support")
+    monkeypatch.setitem(sys.modules, "plugin.adapter", module)
+    assert cli.cmd_pair(argparse.Namespace(public_url=None)) == 1
+    assert "Link:" not in capsys.readouterr().out
+
+
+def test_pair_prints_actual_qr_link_and_redeemable_code(config, monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(cli, "_running", lambda: {"app": "winglet", "server_id": "s1"})
+    module = ModuleType("plugin.adapter")
+    path = tmp_path / "qr.db"
+    module.open_store = lambda: Store(path)
+    monkeypatch.setitem(sys.modules, "plugin.adapter", module)
+    assert cli.cmd_pair(argparse.Namespace(public_url="https://winglet.example.com")) == 0
+    output = capsys.readouterr().out
+    assert "█" in output or "▀" in output or "▄" in output
+    assert "install `qrcode`" not in output
+    link = next(line.split("Link:", 1)[1].strip() for line in output.splitlines() if "Link:" in line)
+    code = link.split("#pair=", 1)[1]
+    assert code and f"Code:  {code[:4]}-{code[4:]}" in output
+    store = Store(path)
+    try:
+        assert store.redeem_pair_code(code)
+    finally:
+        store.close()
+
+
 @pytest.mark.parametrize("host, expected", [("", "127.0.0.1"), ("0.0.0.0", "127.0.0.1"),
     (" 100.64.0.5 ", "100.64.0.5"), ("::", "[::1]"), ("fd7a:115c:a1e0::5", "[fd7a:115c:a1e0::5]"),
     ("[::1]", "[::1]")])

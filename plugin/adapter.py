@@ -19,7 +19,7 @@ import asyncio
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Coroutine, Dict, Optional
+from typing import TYPE_CHECKING, Any, Coroutine, Dict, Optional
 
 from gateway.config import Platform, PlatformConfig
 from gateway.platforms._shared import extra_or_secret, get_scoped_secret, seed_extra_from_env
@@ -27,8 +27,11 @@ from gateway.platforms.base import BasePlatformAdapter, ExecApprovalPrompt, Send
 from gateway.platforms.event import MessageEvent, MessageType
 
 from . import bridge, cli
-from .hub import HOME_CHAT_ID, Hub
+from .dependencies import missing_dependencies
 from .store import Store
+
+if TYPE_CHECKING:
+    from .hub import Hub
 
 logger = logging.getLogger(__name__)
 
@@ -81,12 +84,7 @@ def profile_info() -> Dict[str, Any]:
 
 
 def check_requirements() -> bool:
-    try:
-        import aiohttp  # noqa: F401
-        import cryptography  # noqa: F401
-        return True
-    except ImportError:
-        return False
+    return not missing_dependencies()
 
 
 def validate_config(config) -> bool:
@@ -108,7 +106,7 @@ def _env_enablement() -> Optional[dict]:
         ("WINGLET_PORT", "port", int),
         ("WINGLET_PUBLIC_URL", "public_url", lambda v: v.rstrip("/")),
         ("WINGLET_NTFY_SERVER", "ntfy_server", lambda v: v.rstrip("/")),
-    ), home_env="WINGLET_HOME_CHANNEL", home_default=HOME_CHAT_ID)
+    ), home_env="WINGLET_HOME_CHANNEL", home_default="home")
     return {"enabled": True, **seed}
 
 
@@ -167,8 +165,10 @@ class WingletAdapter(BasePlatformAdapter):
 
     async def connect(self, *, is_reconnect: bool = False) -> bool:
         if not check_requirements():
-            logger.warning("[%s] aiohttp/cryptography missing: pip install aiohttp cryptography", self.name)
+            logger.warning("[%s] Winglet dependencies unavailable; run hermes winglet setup", self.name)
             return False
+        from .hub import Hub
+
         try:
             store = open_store()
             store.ensure_chat(GENERAL_CHAT_ID, "General")
@@ -436,7 +436,7 @@ def register(ctx) -> None:
     ctx.register_platform(
         name=PLATFORM, label="Winglet", adapter_factory=lambda cfg: WingletAdapter(cfg),
         check_fn=check_requirements, validate_config=validate_config, is_connected=is_connected,
-        required_env=[], install_hint="pip install aiohttp  # included in hermes-agent[messaging]",
+        required_env=[], install_hint="hermes winglet setup",
         env_enablement_fn=_env_enablement, cron_deliver_env_var="WINGLET_HOME_CHANNEL",
         max_message_length=MAX_MESSAGE_LENGTH, emoji="🪽", pii_safe=True, allow_update_command=True,
         platform_hint=PLATFORM_HINT)

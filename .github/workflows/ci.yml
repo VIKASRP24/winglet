@@ -15,7 +15,14 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install aiohttp cryptography httpx pytest pytest-aiohttp http_ece
+      - run: pip install pytest pytest-aiohttp http_ece pyyaml packaging
+      - name: Install the plugin's declared dependencies
+        run: |
+          python - <<'PY'
+          import pathlib, subprocess, sys, yaml
+          manifest = yaml.safe_load(pathlib.Path('plugin/plugin.yaml').read_text())
+          subprocess.check_call([sys.executable, '-m', 'pip', 'install', *manifest['python_dependencies']])
+          PY
       - run: pytest -q
       - name: Bundled web app is complete
         run: python scripts/check_web_bundle.py

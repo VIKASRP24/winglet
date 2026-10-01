@@ -1,6 +1,7 @@
 """Exercise the real adapter with small Hermes interface doubles, without installing the gateway."""
 
 import asyncio
+import builtins
 import copy
 import importlib.util
 import sys
@@ -84,6 +85,26 @@ def prompt(**overrides):
               "metadata": {}, "actions": [("Allow once", "once", "primary"), ("Deny", "deny", "danger")],
               "choices": ["once", "deny"], "smart_denied": False}
     return SimpleNamespace(**(values | overrides))
+
+
+def test_registration_still_exposes_setup_when_server_dependencies_are_missing(adapter, monkeypatch):
+    original_import = builtins.__import__
+    def guarded_import(name, *args, **kwargs):
+        if name == "hub" or name.split(".")[0] in {"aiohttp", "cryptography", "httpx", "qrcode"}:
+            raise ModuleNotFoundError(name)
+        return original_import(name, *args, **kwargs)
+    monkeypatch.setattr(builtins, "__import__", guarded_import)
+    spec = importlib.util.spec_from_file_location("plugin._dependency_test_adapter",
+                                                 Path(__file__).parents[1] / "plugin" / "adapter.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    registrations = {}
+    context = SimpleNamespace(
+        register_platform=lambda **kwargs: registrations.update(platform=kwargs),
+        register_cli_command=lambda **kwargs: registrations.update(cli=kwargs))
+    module.register(context)
+    assert registrations["cli"]["name"] == "winglet"
+    assert registrations["platform"]["install_hint"] == "hermes winglet setup"
 
 
 async def test_missing_or_withdrawn_identity_never_creates_an_actionable_card(adapter, monkeypatch):
