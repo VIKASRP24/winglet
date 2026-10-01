@@ -6,7 +6,7 @@ Hermes already does (sessions, approvals, questions, routines) reaches your phon
 
 What it adds on your server:
 
-- A small HTTPS/WebSocket server for the app (default port `8787`)
+- A small HTTP/WebSocket server for the app (default port `8787`)
 - QR-code pairing (`hermes winglet pair`)
 - Push notifications: Web Push for the iPhone/desktop web app, ntfy for Android
 - One-tap approvals and answers to the agent's questions
@@ -25,6 +25,19 @@ hermes winglet setup
 hermes gateway restart        # or: hermes gateway run
 hermes winglet pair           # scan the QR code with your phone
 ```
+
+Hermes prepares the declared server, push and QR-code dependencies when installing/enabling
+the plugin. Accept its dependency preparation prompt. You do not need a separate `pip install`.
+`setup` checks every dependency before enabling Winglet and prepares missing packages through
+Hermes's package manager. If Hermes needs a fresh process after preparing them, setup tells
+you to rerun it and does not report success prematurely.
+
+For an existing installation, run `hermes plugins update winglet` before setup so Hermes can
+read the new dependency declaration. Restart the gateway after updating. Updating the plugin
+does not update an installed Android APK; install a newer APK separately when available.
+
+Dependency readiness does not establish remote access. The pairing address still needs to be
+reachable from the phone; see [remote access](../docs/REMOTE_ACCESS.md) for HTTPS options.
 
 ## Commands
 
