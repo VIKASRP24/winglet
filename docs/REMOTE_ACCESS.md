@@ -6,12 +6,18 @@
 hermes winglet setup
 ```
 
-Setup prepares the plugin dependencies and downloads a pinned `cloudflared` release from
-Cloudflare's GitHub repository, verifies its SHA-256 digest, and stores it in the active Hermes
+On a fresh or previously unpaired install, setup prepares the plugin dependencies and downloads
+a pinned `cloudflared` release from Cloudflare's GitHub repository, verifies its SHA-256 digest, and stores it in the active Hermes
 profile. It starts/restarts that profile's gateway and prints a QR only after the public HTTPS
 `/api/info` response identifies the same Winglet server. No account, domain, admin rights,
 firewall opening or phone VPN is required. Outbound HTTPS (downloads, tunnel creation and ntfy)
 and Cloudflare's TCP port 7844 must still be permitted by the network.
+
+Re-running setup preserves a saved connection mode or custom HTTPS address. An older install
+without a saved mode keeps direct access if any phones are already paired; setup prints a hint
+instead of changing their route. To opt into Cloudflare, run `hermes winglet setup --connection quick`
+and re-pair existing phones using the new QR. An unreadable device store stops setup before
+connection settings change, so it cannot mistake an existing install for a fresh one.
 
 The gateway owns the tunnel, retries failed starts with backoff, clears unavailable addresses,
 and recreates the tunnel if its client exits. A parent-lifetime pipe stops the tunnel client even
@@ -32,6 +38,13 @@ are for testing/development: no uptime guarantee, changing hostnames, at most 20
 requests, and no Server-Sent Events. Winglet uses WebSockets rather than SSE. Cloudflare
 terminates HTTPS and can see the HTTP/WebSocket traffic, including messages and device tokens;
 this is transport encryption through a provider, not end-to-end encryption against that provider.
+Setup prints this privacy disclosure before preparing the tunnel client.
+
+Pairing attempts through the automatic loopback tunnel are limited by Cloudflare's client IP,
+so another visitor's wrong codes do not exhaust your phone's allowance. Winglet only trusts
+that header on local requests bearing the tunnel's private origin Host marker; direct requests
+and malformed headers retain the socket-address limit. Explicit non-loopback binds retain the
+socket-address limit as well.
 
 Android address recovery is separate from notifications and requires the updated APK. Each
 paired Android device receives its own random ntfy topic and AES-256-GCM key over the paired

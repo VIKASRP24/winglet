@@ -216,6 +216,80 @@ def test_no_start_setup_and_existing_https_endpoint_are_preserved(config, monkey
     assert config["WINGLET_CONNECTION"] == "direct"
 
 
+@pytest.mark.parametrize("address", [None, "http://192.168.1.20:9000"])
+def test_legacy_paired_setup_keeps_direct_route_and_device_token(config, monkeypatch, tmp_path, capsys, address):
+    tunnel = automatic_setup(config, monkeypatch, tmp_path)
+    config.update(WINGLET_HOST="0.0.0.0", WINGLET_PORT="9000")
+    if address:
+        config["WINGLET_PUBLIC_URL"] = address
+    original = config.copy()
+    store = Store(tmp_path / "data.db")
+    try:
+        device, token = store.add_device("Existing phone", "android")
+        monkeypatch.setattr(tunnel, "install", lambda _: pytest.fail("Do not download a tunnel for paired LAN users"))
+        monkeypatch.setattr(cli, "_start_gateway", lambda: pytest.fail("Do not change the running route"))
+        monkeypatch.setattr(cli, "_running", lambda: {"app": "winglet", "server_id": "s1"})
+        links = []
+        monkeypatch.setattr(cli, "_print_qr", links.append)
+        assert cli.cmd_setup(argparse.Namespace(port=None, public_url=None)) == 0
+        assert config == {**original, "WINGLET_CONNECTION": "direct", "WINGLET_ENABLED": "true"}
+        output = capsys.readouterr().out
+        assert "Keeping your existing direct connection" in output
+        assert "--connection quick" in output and "re-pair existing phones" in output
+        assert "Traffic passes through Cloudflare" not in output
+        assert cli.cmd_pair(argparse.Namespace(public_url=None)) == 0
+        expected = address or "http://173.249.54.31:9000"
+        assert links[0].startswith(expected + "/#pair=")
+        assert store.device_for_token(token)["id"] == device["id"]
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize("source", ["env", "yaml"])
+@pytest.mark.parametrize("mode", ["direct", "quick"])
+def test_setup_preserves_saved_mode_even_with_no_phones(config, monkeypatch, tmp_path, source, mode):
+    tunnel = automatic_setup(config, monkeypatch, tmp_path)
+    if source == "env":
+        config["WINGLET_CONNECTION"] = mode
+    else:
+        monkeypatch.setattr(sys.modules["hermes_cli.config"], "load_config_readonly", lambda: {
+            "platforms": {"winglet": {"extra": {"connection": mode}}}}, raising=False)
+    if mode == "direct":
+        monkeypatch.setattr(tunnel, "install", lambda _: pytest.fail("Saved direct mode must survive setup"))
+    monkeypatch.setattr(cli, "_running", lambda: None)
+    monkeypatch.setattr(cli, "_start_gateway", lambda: pytest.fail("--no-start must not restart"))
+    assert cli.cmd_setup(argparse.Namespace(port=None, public_url=None, no_start=True)) == 0
+    assert config["WINGLET_CONNECTION"] == mode
+
+
+def test_explicit_quick_can_switch_paired_legacy_install_and_discloses_privacy(config, monkeypatch, tmp_path, capsys):
+    tunnel = automatic_setup(config, monkeypatch, tmp_path)
+    store = Store(tmp_path / "data.db")
+    store.add_device("Existing phone", "android")
+    store.close()
+    def install(_):
+        # The disclosure must appear before starting/downloading the third-party client.
+        assert "Traffic passes through Cloudflare, which can read it" in capsys.readouterr().out
+        return tmp_path / "cloudflared"
+    monkeypatch.setattr(tunnel, "install", install)
+    monkeypatch.setattr(cli, "_running", lambda: None)
+    assert cli.cmd_setup(argparse.Namespace(port=None, public_url=None, connection="quick", no_start=True)) == 0
+    assert config["WINGLET_CONNECTION"] == "quick"
+
+
+def test_unreadable_device_store_does_not_change_connection_settings(config, monkeypatch, tmp_path, capsys):
+    tunnel = automatic_setup(config, monkeypatch, tmp_path)
+    config["WINGLET_PUBLIC_URL"] = "http://192.168.1.20:8787"
+    original = config.copy()
+    def fail():
+        raise OSError("device store unavailable")
+    monkeypatch.setattr(sys.modules["plugin.adapter"], "open_store", fail)
+    monkeypatch.setattr(tunnel, "install", lambda _: pytest.fail("Never assume an unreadable store is fresh"))
+    assert cli.cmd_setup(argparse.Namespace(port=None, public_url=None)) == 1
+    assert config == original
+    assert "Connection settings were not changed" in capsys.readouterr().out
+
+
 @pytest.mark.parametrize("profile", ["named", "default"])
 def test_restart_launcher_preserves_active_profile_and_is_hidden(config, monkeypatch, tmp_path, profile):
     automatic_setup(config, monkeypatch, tmp_path)

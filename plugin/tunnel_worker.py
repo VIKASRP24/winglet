@@ -9,12 +9,14 @@ import threading
 
 
 def main():
-    binary, origin, config = sys.argv[1:]
+    binary, origin, config, host_header = sys.argv[1:]
     options = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
     env = {k: v for k, v in os.environ.items() if not k.startswith("TUNNEL_")
            and k not in ("NO_TLS_VERIFY", "NO_AUTOUPDATE")}
+    origin_options = ["--http-host-header", host_header] if host_header else []
     child = subprocess.Popen([binary, "--no-autoupdate", "--config", config, "tunnel",
-                              "--protocol", "http2", "--metrics", "127.0.0.1:0", "--loglevel", "info", "--url", origin],
+                              "--protocol", "http2", "--metrics", "127.0.0.1:0", "--loglevel", "info",
+                              *origin_options, "--url", origin],
                              stdin=subprocess.DEVNULL, stdout=sys.stdout, stderr=sys.stdout, env=env, **options)
 
     def stop():

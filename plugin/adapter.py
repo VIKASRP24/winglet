@@ -195,7 +195,7 @@ class WingletAdapter(BasePlatformAdapter):
             if self._connection == "quick":
                 from .tunnel import QuickTunnel, origin_url
                 self._tunnel = QuickTunnel(data_dir(), origin_url(self._host, self._port), hub.server_id(),
-                                           hub.set_connection)
+                                           hub.set_connection, host_header=hub.tunnel_host)
                 self._tunnel.start()
         except OSError as exc:
             logger.error("[%s] could not listen on %s:%s: %s", self.name, self._host, self._port, exc)

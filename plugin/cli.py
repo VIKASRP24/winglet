@@ -26,7 +26,7 @@ def setup_parser(parser: argparse.ArgumentParser) -> None:
     p_setup.add_argument("--public-url", default=None,
                          help="URL your phone uses to reach this machine, e.g. https://box.tailnet.ts.net")
     p_setup.add_argument("--connection", choices=("quick", "direct"), default=None,
-                         help="Automatic Cloudflare HTTPS (default), or your own LAN/VPN/public URL")
+                         help="Automatic Cloudflare HTTPS for new installs, or your own LAN/VPN/public URL")
     p_setup.add_argument("--no-start", action="store_true", help="Prepare settings without starting/restarting the gateway")
     p_pair = subs.add_parser("pair", help="Show a QR code to pair a phone")
     p_pair.add_argument("--public-url", default=None, help="Override the URL encoded in the QR code")
@@ -222,15 +222,41 @@ def cmd_setup(args: argparse.Namespace) -> int:
         if parsed.scheme not in ("https", "http") or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
             print("--public-url must be an HTTP(S) address without credentials, query, or fragment.")
             return 1
-    # Preserve an existing explicit HTTPS endpoint. Older HTTP autodetected VPS addresses migrate
-    # to automatic HTTPS when setup is run without options.
+    # Setup is also an upgrade command: never silently change an existing phone's route.
     configured = str(_setting("public_url", "WINGLET_PUBLIC_URL") or "")
-    mode = mode or ("direct" if args.public_url or (configured.startswith("https://") and
-                   _setting("connection", "WINGLET_CONNECTION") != "quick") else "quick")
+    saved_mode = _setting("connection", "WINGLET_CONNECTION")
+    preserved_legacy = False
+    if not mode:
+        if args.public_url:
+            mode = "direct"
+        elif saved_mode in ("direct", "quick"):
+            mode = saved_mode
+        elif saved_mode:
+            print("Unknown saved connection mode. Choose --connection direct or --connection quick.")
+            return 1
+        elif configured.lower().startswith("https://"):
+            mode = "direct"
+        else:
+            from .adapter import open_store
+            try:
+                store = open_store()
+                try:
+                    preserved_legacy = bool(store.list_devices())
+                finally:
+                    store.close()
+            except Exception as exc:
+                print(f"Could not check paired phones: {exc}")
+                print("Connection settings were not changed. Fix the device store and retry setup.")
+                return 1
+            mode = "direct" if preserved_legacy else "quick"
+    if preserved_legacy:
+        print("Keeping your existing direct connection because phones are already paired.")
+        print("To switch explicitly: hermes winglet setup --connection quick (then re-pair existing phones).")
     if mode == "quick":
         from .adapter import data_dir
         from .tunnel import install
         print("Preparing automatic HTTPS (Cloudflare Quick Tunnel)...")
+        print("Traffic passes through Cloudflare, which can read it, including messages and device tokens.")
         try:
             install(data_dir())
         except Exception as exc:

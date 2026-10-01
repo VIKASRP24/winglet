@@ -92,15 +92,18 @@ hermes plugins enable winglet
 hermes winglet setup          # prepares HTTPS, starts the gateway, then shows the QR
 ```
 
-`setup` installs the dependencies and a checksum-verified Cloudflare tunnel client in your
-Hermes profile, starts/restarts the gateway, and checks the public HTTPS address against your
+For a new or previously unpaired install, `setup` installs the dependencies and a checksum-verified
+Cloudflare tunnel client in your Hermes profile, starts/restarts the gateway, and checks the public HTTPS address against your
 server's identity before showing a QR. No Cloudflare account, domain, administrator rights,
 inbound port opening, or phone VPN is needed. The server still needs outbound internet access.
 
 The free Quick Tunnel is an early-preview convenience: it has no uptime guarantee and changes
 address when recreated. The updated Android app recovers the new address when reconnecting;
 iPhone users need a new QR and home-screen installation after an address change. An existing
-explicit HTTPS configuration is preserved. See [remote access](docs/REMOTE_ACCESS.md) for
+explicit HTTPS configuration and any saved connection mode are preserved. Older installs with
+paired phones keep their direct address and listener, so re-running setup during an upgrade
+does not disconnect them or route their traffic through Cloudflare. To switch explicitly, run
+`hermes winglet setup --connection quick`, then re-pair those phones. See [remote access](docs/REMOTE_ACCESS.md) for
 limits, provider privacy, and permanent-address alternatives.
 
 For live-typing replies, add this to `~/.hermes/config.yaml`:

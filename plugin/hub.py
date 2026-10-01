@@ -17,6 +17,7 @@ import asyncio
 import contextlib
 import hashlib
 import hmac
+import ipaddress
 import json
 import logging
 import mimetypes
@@ -78,6 +79,9 @@ class Hub:
         self._pair_failures: Dict[str, List[float]] = {}
         self._alive_cache: Dict[str, tuple] = {}
         self.connection = {"mode": "direct", "url": None}
+        # cloudflared overrides Host with this private marker on origin requests. Never expose
+        # it in /api/info: client-IP headers from ordinary/direct callers are untrusted.
+        self.tunnel_host = "winglet-" + secrets.token_hex(24) + ".invalid"
         self._recovery_task = None
         self._recovery_due = {}
         self._recovery_wake = asyncio.Event()
@@ -186,8 +190,18 @@ class Hub:
                       "connection": self.connection,
                       "features": {"webpush": True, "ntfy": True, "approvals": True, "questions": True}})
 
-    async def h_pair(self, request: web.Request) -> web.Response:
+    def _pair_peer(self, request: web.Request) -> str:
         peer = request.remote or "?"
+        try:
+            if (self.connection["mode"] == "quick" and ipaddress.ip_address(peer).is_loopback
+                    and request.headers.get("Host") == self.tunnel_host):
+                return str(ipaddress.ip_address(request.headers.get("CF-Connecting-IP", "")))
+        except ValueError:
+            pass  # Missing/malformed proxy headers use the socket's address.
+        return peer
+
+    async def h_pair(self, request: web.Request) -> web.Response:
+        peer = self._pair_peer(request)
         now = time.monotonic()
         recent = [t for t in self._pair_failures.get(peer, []) if now - t < 60]
         if len(recent) >= PAIR_FAILURES_PER_MINUTE:

@@ -40,7 +40,8 @@ async def check(directory: Path, cache: Path):
     async def reply(chat, text, device, message):
         await hub.post_message(chat["id"], "Tunnel reply: " + text, push=False)
     hub.on_user_message = reply
-    tunnel = QuickTunnel(cache, f"http://127.0.0.1:{port}", hub.server_id(), changed)
+    tunnel = QuickTunnel(cache, f"http://127.0.0.1:{port}", hub.server_id(), changed,
+                         host_header=hub.tunnel_host)
     try:
         tunnel.start()
         await asyncio.wait_for(ready.wait(), 160)
@@ -48,6 +49,17 @@ async def check(directory: Path, cache: Path):
             first_url = hub.connection["url"]
             info = (await client.get(first_url + "/api/info")).json()
             assert info["server_id"] == hub.server_id()
+            assert hub.tunnel_host not in json.dumps(info)
+            # Cloudflare must reject or replace a forged visitor-IP header; rate limits should
+            # use the actual visitor, not the local proxy socket or the supplied documentation IP.
+            response = await client.post(first_url + "/api/pair", json={"code": "WRONG123"},
+                                         headers={"CF-Connecting-IP": "192.0.2.1"})
+            assert response.status_code == 403
+            assert "192.0.2.1" not in hub._pair_failures
+            response = await client.post(first_url + "/api/pair", json={"code": "WRONG123"})
+            assert response.status_code == 403 and "invalid or expired" in response.json()["error"]
+            assert len(hub._pair_failures) == 1
+            assert not set(hub._pair_failures) & {"127.0.0.1", "192.0.2.1"}
             response = await client.post(first_url + "/api/pair", json={
                 "code": store.create_pair_code(), "platform": "android"})
             response.raise_for_status()
@@ -66,7 +78,7 @@ async def check(directory: Path, cache: Path):
                             break
                     else:
                         raise AssertionError("Reply did not reach WebSocket")
-            print("PASS: public HTTPS health, pairing, authenticated API and WebSocket message/reply.", flush=True)
+            print("PASS: public HTTPS, trusted pairing client IP, authenticated API and WebSocket message/reply.", flush=True)
             await tunnel.stop()
             ready.clear()
             tunnel.start()
@@ -74,18 +86,25 @@ async def check(directory: Path, cache: Path):
             assert hub.connection["url"] != first_url
             await hub.publish_addresses()
             recovery = paired["recovery"]
-            response = await client.get(recovery["server"] + "/" + recovery["topic"] + "/json?poll=1&since=all")
-            response.raise_for_status()
             decode = lambda s: base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
-            updates = []
-            for line in response.text.splitlines():
-                event = json.loads(line)
-                if event.get("event") == "message":
-                    envelope = json.loads(event["message"])
-                    aad = f"winglet.connection.v1:{hub.server_id()}:{paired['device']['id']}".encode()
-                    updates.append(json.loads(AESGCM(decode(recovery["key"])).decrypt(
-                        decode(envelope["nonce"]), decode(envelope["ciphertext"]), aad)))
-            assert any(u["url"] == hub.connection["url"] and u["revision"] > recovery["revision"] for u in updates)
+            # Publication acceptance and visibility to a subscriber are not necessarily instant.
+            deadline = asyncio.get_running_loop().time() + 30
+            while True:
+                response = await client.get(recovery["server"] + "/" + recovery["topic"] + "/json?poll=1&since=all",
+                                            headers={"Cache-Control": "no-cache"})
+                response.raise_for_status()
+                updates = []
+                for line in response.text.splitlines():
+                    event = json.loads(line)
+                    if event.get("event") == "message":
+                        envelope = json.loads(event["message"])
+                        aad = f"winglet.connection.v1:{hub.server_id()}:{paired['device']['id']}".encode()
+                        updates.append(json.loads(AESGCM(decode(recovery["key"])).decrypt(
+                            decode(envelope["nonce"]), decode(envelope["ciphertext"]), aad)))
+                if any(u["url"] == hub.connection["url"] and u["revision"] > recovery["revision"] for u in updates):
+                    break
+                assert asyncio.get_running_loop().time() < deadline, "Rotated address did not reach ntfy subscribers"
+                await asyncio.sleep(1)
             assert (await client.get(hub.connection["url"] + "/api/me", headers=auth)).status_code == 200
             store.remove_device(paired["device"]["id"])
             assert (await client.get(hub.connection["url"] + "/api/me", headers=auth)).status_code == 401

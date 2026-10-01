@@ -34,6 +34,9 @@ you to rerun it and does not report success prematurely.
 For an existing installation, run `hermes plugins update winglet` before setup so Hermes can
 read the new dependency declaration. Restart the gateway after updating. Updating the plugin
 does not update an installed Android APK; install a newer APK separately when available.
+Re-running setup preserves a saved connection mode and older direct installs with paired phones.
+To switch those installs to automatic HTTPS, use `hermes winglet setup --connection quick` and
+re-pair existing phones. Fresh and previously unpaired installs default to automatic HTTPS.
 
 Setup verifies the automatic HTTPS address before pairing. Quick Tunnel addresses change on
 recreation: the updated Android app recovers through encrypted ntfy announcements; the iPhone
@@ -44,10 +47,11 @@ for Cloudflare's limits and permanent-address alternatives.
 
 | Command | What it does |
 |---|---|
-| `hermes winglet setup [--port N]` | Prepare automatic HTTPS, start/restart this profile's gateway, show QR |
+| `hermes winglet setup [--port N]` | Prepare dependencies; new/unpaired installs get automatic HTTPS and QR; existing routes are preserved |
 | `hermes winglet setup --no-start` | Prepare automatic HTTPS without restarting the gateway |
 | `hermes winglet setup --public-url URL` | Use your own address; restart the gateway after changing settings |
 | `hermes winglet setup --connection direct` | Opt out of Cloudflare and use LAN/VPN/custom access |
+| `hermes winglet setup --connection quick` | Explicitly switch to automatic HTTPS; re-pair existing direct connections |
 | `hermes winglet pair` | Show a QR code + one-time code (10 minutes) |
 | `hermes winglet devices` | List paired phones |
 | `hermes winglet unpair <id>` | Remove a phone |
@@ -61,7 +65,7 @@ Set in `~/.hermes/.env` (or per profile):
 |---|---|---|
 | `WINGLET_ENABLED` | – | `true` to start with the gateway |
 | `WINGLET_PORT` | `8787` | |
-| `WINGLET_CONNECTION` | `quick` after setup; `direct` on older unconfigured installs | Automatic Cloudflare or your own connection |
+| `WINGLET_CONNECTION` | `quick` on fresh/unpaired setup; `direct` for older paired installs | Saved modes are preserved on subsequent setup runs |
 | `WINGLET_HOST` | `127.0.0.1` in quick mode; `0.0.0.0` in direct mode | Explicit bind settings are respected |
 | `WINGLET_PUBLIC_URL` | `http://<lan-ip>:8787` in direct mode | Custom address; automatic mode uses the gateway's current verified URL |
 | `WINGLET_NTFY_SERVER` | `https://ntfy.sh` | For Android notifications |

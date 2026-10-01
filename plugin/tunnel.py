@@ -128,8 +128,9 @@ async def verify_url(url: str, server_id: str) -> bool:
 
 class QuickTunnel:
     def __init__(self, directory: Path, origin: str, server_id: str,
-                 changed: Callable[[str | None], Awaitable[None]]):
+                 changed: Callable[[str | None], Awaitable[None]], *, host_header: str = ""):
         self.directory, self.origin, self.server_id, self.changed = directory, origin, server_id, changed
+        self.host_header = host_header
         self.process = None
         self.task = None
 
@@ -163,7 +164,7 @@ class QuickTunnel:
         options = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
         self.process = await asyncio.create_subprocess_exec(
             sys.executable, str(Path(__file__).with_name("tunnel_worker.py")), str(executable), self.origin,
-            str(config), stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+            str(config), self.host_header, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT, **options)
         candidate = asyncio.get_running_loop().create_future()
 
