@@ -50,13 +50,41 @@ def _env(key: str) -> str:
 
 def _port() -> int:
     try:
-        return int(_env("WINGLET_PORT") or DEFAULT_PORT)
-    except ValueError:
+        return int(_setting("port", "WINGLET_PORT") or DEFAULT_PORT)
+    except (TypeError, ValueError):
         return DEFAULT_PORT
 
 
+def _setting(key: str, env: str):
+    """Match the adapter's env-before-YAML settings for the active profile."""
+    value = _env(env)
+    if value:
+        return value
+    try:
+        from hermes_cli.config import load_config_readonly
+        section = load_config_readonly().get("platforms", {}).get("winglet", {})
+        value = section.get("extra", {}).get(key, section.get(key))
+        return value if value is not None else ""
+    except Exception:
+        return ""
+
+
+def _probe_url() -> str:
+    host = str(_setting("host", "WINGLET_HOST") or "").strip().strip("[]")
+    if host in ("", "0.0.0.0"):
+        host = "127.0.0.1"
+    elif host == "::":
+        host = "::1"
+    if ":" in host:
+        host = f"[{host}]"
+    return f"http://{host}:{_port()}/api/info"
+
+
 def lan_ip() -> str:
-    """Best guess at this machine's LAN address (no packets are sent)."""
+    """Address selected by the local routing table; it can be a public or VPN IP, too.
+
+    No packets are sent and this does not check whether a phone can reach the address.
+    """
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
         try:
             sock.connect(("10.255.255.255", 1))
@@ -72,8 +100,14 @@ def public_url(override: Optional[str] = None) -> str:
 
 def _running() -> Optional[dict]:
     try:
-        with urllib.request.urlopen(f"http://127.0.0.1:{_port()}/api/info", timeout=2) as resp:
-            return json.loads(resp.read().decode("utf-8"))
+        # This probes a local listener even when it is restricted to a LAN/VPN address.
+        # Do not route the readiness check through an HTTP proxy configured for internet traffic.
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        with opener.open(_probe_url(), timeout=2) as resp:
+            info = json.loads(resp.read().decode("utf-8"))
+            if isinstance(info, dict) and info.get("app") == "winglet" and info.get("server_id"):
+                return info
+            return None
     except Exception:
         return None
 
@@ -90,6 +124,20 @@ def _print_qr(text: str) -> None:
     qr.print_ascii(invert=True)
 
 
+def _print_connection_help(url: str) -> None:
+    print(f"\nPhone URL: {url}")
+    print("Phone connectivity: not verified. Same Wi-Fi is not required.")
+    if url.lower().startswith("http://"):
+        print("HTTPS: not configured. Use HTTPS for remote access and iPhone features.")
+        print("Choose a remote access route:")
+        print("  Public HTTPS: a domain/reverse proxy or tunnel; no VPN needed on the phone.")
+        print("  Private Tailscale: connect BOTH the Hermes server and phone to the same tailnet.")
+        print("Guide: https://github.com/VIKASRP24/winglet/blob/main/docs/REMOTE_ACCESS.md")
+    else:
+        print("If this is a Tailscale URL, keep your phone connected to the same tailnet.")
+    print("--public-url changes the pairing address; it does not create HTTPS or open firewall ports.")
+
+
 # -- commands ----------------------------------------------------------------------------
 
 
@@ -101,19 +149,23 @@ def cmd_setup(args: argparse.Namespace) -> int:
     if args.public_url:
         save_env_value("WINGLET_PUBLIC_URL", args.public_url.rstrip("/"))
     print("🪽 Winglet is enabled for this profile.\n")
+    info = _running()
+    print("Gateway: running locally." if info else "Gateway: not answering locally yet. Pairing is not ready.")
     print("Next:")
     print("  1. Restart the gateway:   hermes gateway restart   (or start it: hermes gateway run)")
     print("  2. Pair your phone:       hermes winglet pair\n")
     print("Tip: for live-typing replies, add this to config.yaml:")
     print("  display:\n    platforms:\n      winglet:\n        streaming: true")
-    if not (args.public_url or _env("WINGLET_PUBLIC_URL")):
-        print(f"\nYour phone will connect to {public_url()} (same Wi-Fi only).")
-        print("For iPhone notifications and away-from-home access you need HTTPS, e.g. with Tailscale:")
-        print(f"  tailscale serve --bg {_port()}   then   hermes winglet setup --public-url https://<machine>.ts.net")
+    _print_connection_help(public_url(args.public_url))
     return 0
 
 
 def cmd_pair(args: argparse.Namespace) -> int:
+    if _running() is None:
+        print("Pairing is not ready: Winglet isn't answering locally.")
+        print("Run `hermes winglet setup`, then `hermes gateway restart` (or `hermes gateway run`).")
+        print("If the gateway is already running, check its Winglet startup logs and configured port.")
+        return 1
     from .adapter import open_store
     store = open_store()
     try:
@@ -126,11 +178,10 @@ def cmd_pair(args: argparse.Namespace) -> int:
     _print_qr(link)
     print(f"\n  Link:  {link}")
     print(f"  Code:  {code[:4]}-{code[4:]}   (expires in 10 minutes, works once)\n")
-    if _running() is None:
-        print("⚠️  Winglet isn't answering on this machine yet. Run `hermes winglet setup`, then restart the gateway.")
-    elif url.startswith("http://"):
-        print("Note: plain http works for the Android app on your Wi-Fi. iPhone needs an https URL"
-              " (see `hermes winglet setup --help`).")
+    if url.lower().startswith("http://"):
+        print("Note: Android can connect from any network that can reach this address; same Wi-Fi is not required.")
+        print("Use HTTPS for remote connections and iPhone camera/install/notification features"
+              " (see `hermes winglet setup`).")
     return 0
 
 
@@ -166,6 +217,8 @@ def cmd_status(args: argparse.Namespace) -> int:
     enabled = _env("WINGLET_ENABLED").lower() in ("1", "true", "yes", "on")
     info = _running()
     print(f"Enabled:  {'yes' if enabled else 'no  (run `hermes winglet setup`)'}")
-    print(f"Running:  {'yes — ' + info['bot']['title'] if info else 'no  (start the gateway: hermes gateway run)'}")
+    title = (info.get("bot") or {}).get("title", "Winglet") if info else ""
+    print(f"Running:  {'yes — ' + title if info else 'no  (start the gateway: hermes gateway run)'}")
     print(f"URL:      {public_url()}")
+    print("Phone connectivity: not verified from this machine.")
     return 0

@@ -94,6 +94,11 @@ hermes gateway restart        # or: hermes gateway run
 hermes winglet pair           # shows a QR code
 ```
 
+`setup` enables Winglet and checks whether it answers locally. `pair` creates a QR only when
+the local server is running. On a VPS or for access from other networks, the server also needs
+a reachable HTTPS address; Winglet v0.1 does not automatically provision one. Configure the
+remote access route below before scanning the QR from your phone.
+
 For live-typing replies, add this to `~/.hermes/config.yaml`:
 
 ```yaml
@@ -115,18 +120,24 @@ display:
 
 ### Reaching your server from anywhere (and HTTPS for iPhone)
 
-On the same Wi-Fi, the plain `http://<your-ip>:8787` address works for Android. For iPhone
-notifications and for access away from home, put Winglet behind HTTPS. The easiest way is
-[Tailscale](https://tailscale.com) (free for personal use):
+Winglet is not limited to the same Wi-Fi: the Android app can use any server address it can reach.
+Use HTTPS for remote connections and iPhone camera/install/notification features. For private
+remote access, install and connect [Tailscale](https://tailscale.com) on **both the Hermes server
+and your phone**, signed into the same tailnet. On the server:
 
 ```bash
-tailscale serve --bg 8787
+hermes gateway restart
+tailscale serve --bg http://127.0.0.1:8787
 hermes winglet setup --public-url https://<your-machine>.<your-tailnet>.ts.net
+hermes gateway restart
 hermes winglet pair
 ```
 
-A [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/)
-works too.
+Use the exact HTTPS URL printed by `tailscale serve`; keep Tailscale connected on the phone.
+Changing `--public-url` does not create HTTPS or update an already paired app connection.
+An HTTPS domain with a reverse proxy or a
+[Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/)
+works too. See the [remote access guide](docs/REMOTE_ACCESS.md) for setup and troubleshooting.
 
 ### Notifications
 
@@ -186,8 +197,8 @@ No. Winglet is MIT-licensed and needs no App Store or Play Store account. You ne
 machine that runs Hermes Agent and whatever model provider you choose (local models work).
 
 **Does my server need to be public on the internet?**
-Your phone needs to reach it. On the same Wi-Fi works; for away-from-home, use something
-like Tailscale or a Cloudflare Tunnel. Setup guides will come with v0.1.
+No. Your phone needs to reach it, which can be through a private VPN such as Tailscale or through
+an HTTPS reverse proxy/tunnel. See the [remote access guide](docs/REMOTE_ACCESS.md).
 
 **Is it safe to expose my agent like this?**
 Only paired devices can talk to it: pairing codes are single-use and expire after 10 minutes, and each
