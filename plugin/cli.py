@@ -50,9 +50,34 @@ def _env(key: str) -> str:
 
 def _port() -> int:
     try:
-        return int(_env("WINGLET_PORT") or DEFAULT_PORT)
-    except ValueError:
+        return int(_setting("port", "WINGLET_PORT") or DEFAULT_PORT)
+    except (TypeError, ValueError):
         return DEFAULT_PORT
+
+
+def _setting(key: str, env: str):
+    """Match the adapter's env-before-YAML settings for the active profile."""
+    value = _env(env)
+    if value:
+        return value
+    try:
+        from hermes_cli.config import load_config_readonly
+        section = load_config_readonly().get("platforms", {}).get("winglet", {})
+        value = section.get("extra", {}).get(key, section.get(key))
+        return value if value is not None else ""
+    except Exception:
+        return ""
+
+
+def _probe_url() -> str:
+    host = str(_setting("host", "WINGLET_HOST") or "").strip().strip("[]")
+    if host in ("", "0.0.0.0"):
+        host = "127.0.0.1"
+    elif host == "::":
+        host = "::1"
+    if ":" in host:
+        host = f"[{host}]"
+    return f"http://{host}:{_port()}/api/info"
 
 
 def lan_ip() -> str:
@@ -75,7 +100,10 @@ def public_url(override: Optional[str] = None) -> str:
 
 def _running() -> Optional[dict]:
     try:
-        with urllib.request.urlopen(f"http://127.0.0.1:{_port()}/api/info", timeout=2) as resp:
+        # This probes a local listener even when it is restricted to a LAN/VPN address.
+        # Do not route the readiness check through an HTTP proxy configured for internet traffic.
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        with opener.open(_probe_url(), timeout=2) as resp:
             info = json.loads(resp.read().decode("utf-8"))
             if isinstance(info, dict) and info.get("app") == "winglet" and info.get("server_id"):
                 return info
