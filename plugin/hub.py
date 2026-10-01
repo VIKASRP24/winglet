@@ -29,7 +29,7 @@ from urllib.parse import quote
 
 from aiohttp import WSMsgType, web
 
-from . import webpush
+from . import recovery, webpush
 from .store import Store
 
 logger = logging.getLogger(__name__)
@@ -77,6 +77,11 @@ class Hub:
         self._typing: Set[str] = set()
         self._pair_failures: Dict[str, List[float]] = {}
         self._alive_cache: Dict[str, tuple] = {}
+        self.connection = {"mode": "direct", "url": None}
+        self._recovery_task = None
+        self._recovery_due = {}
+        self._recovery_wake = asyncio.Event()
+        self._recovery_lock = asyncio.Lock()
         # Hermes-side callbacks, installed by the adapter.
         self.on_user_message: Optional[InboundFn] = None
         self.on_approval: Optional[ResolveFn] = None
@@ -92,6 +97,7 @@ class Hub:
         r.add_post("/api/pair", self.h_pair)
         r.add_get("/api/ws", self.h_ws)
         r.add_get("/api/me", self.h_me)
+        r.add_get("/api/connection", self.h_connection)
         r.add_delete("/api/me", self.h_unpair)
         r.add_get("/api/chats", self.h_chats)
         r.add_post("/api/chats", self.h_chat_create)
@@ -177,6 +183,7 @@ class Hub:
 
     async def h_info(self, request: web.Request) -> web.Response:
         return _json({"app": "winglet", "version": VERSION, "server_id": self.server_id(), "bot": self.bot(),
+                      "connection": self.connection,
                       "features": {"webpush": True, "ntfy": True, "approvals": True, "questions": True}})
 
     async def h_pair(self, request: web.Request) -> web.Response:
@@ -197,7 +204,77 @@ class Hub:
         self._pair_failures.pop(peer, None)
         device, token = self.store.add_device(str(body.get("device_name") or ""), str(body.get("platform") or ""))
         logger.info("[winglet] paired new device %s (%s)", device["name"], device["platform"] or "unknown")
-        return _json({"token": token, "device": device, "server_id": self.server_id(), "bot": self.bot()})
+        address = self._recovery_credentials(device) if device["platform"] == "android" else None
+        return _json({"token": token, "device": device, "server_id": self.server_id(), "bot": self.bot(),
+                      "recovery": address})
+
+    def _recovery_credentials(self, device: dict) -> Optional[dict]:
+        if self.connection["mode"] != "quick" or not self.ntfy_server.startswith("https://"):
+            return None
+        mine = next((s for s in self.store.list_push_subs("recovery") if s["device_id"] == device["id"]), None)
+        if mine is None:
+            data = recovery.credentials(self.ntfy_server)
+            self.store.add_push_sub(device["id"], "recovery", data["server"] + "/" + data["topic"], data)
+            self._recovery_wake.set()
+        else:
+            data = mine["data"]
+        # The revision at enrollment is already current. Only later addresses may replace it.
+        return {**data, "revision": int(self.store.get_kv("connection_revision") or 0)}
+
+    async def h_connection(self, request: web.Request) -> web.Response:
+        device = self._require(request)
+        return _json({"recovery": self._recovery_credentials(device) if device["platform"] == "android" else None})
+
+    async def set_connection(self, url: Optional[str]) -> None:
+        self.connection = {"mode": "quick", "url": url}
+        if url:
+            if self.store.get_kv("connection_url") != url:
+                self.store.set_kv("connection_revision", str(int(self.store.get_kv("connection_revision") or 0) + 1))
+                self.store.set_kv("connection_url", url)
+                self._recovery_due.clear()
+                self._recovery_wake.set()
+            if self._recovery_task is None:
+                self._recovery_task = asyncio.create_task(self._recovery_loop())
+
+    async def _recovery_loop(self) -> None:
+        while True:
+            self._recovery_wake.clear()
+            await self.publish_addresses()
+            try:
+                await asyncio.wait_for(self._recovery_wake.wait(), timeout=300)
+            except asyncio.TimeoutError:
+                pass
+
+    async def publish_addresses(self) -> None:
+        async with self._recovery_lock:
+            await self._publish_addresses()
+
+    async def _publish_addresses(self) -> None:
+        url = self.connection.get("url")
+        if not url or self.connection["mode"] != "quick":
+            return
+        revision = int(self.store.get_kv("connection_revision") or 0)
+        for sub in self.store.list_push_subs("recovery"):
+            if self.connection.get("url") != url:
+                return  # A rotated URL supersedes the remainder of this batch.
+            if self._recovery_due.get(sub["id"], 0) > time.monotonic():
+                continue
+            if not self.store.get_device(sub["device_id"]):
+                continue
+            try:
+                message = recovery.encrypt(sub["data"], self.server_id(), sub["device_id"], url, revision)
+                client = await self._client()
+                response = await client.post(sub["data"]["server"], json={
+                    "topic": sub["data"]["topic"], "message": message}, timeout=15)
+                # Refresh every six hours so phones returning after ntfy's cache expires can recover.
+                if self.connection.get("url") == url:
+                    self._recovery_due[sub["id"]] = time.monotonic() + (6 * 3600 if response.status_code < 300 else 300)
+                if response.status_code >= 300:
+                    logger.warning("[winglet] address recovery publish rejected: HTTP %s", response.status_code)
+            except Exception:
+                if self.connection.get("url") == url:
+                    self._recovery_due[sub["id"]] = time.monotonic() + 300
+                logger.warning("[winglet] address recovery publish failed; will retry")
 
     async def h_me(self, request: web.Request) -> web.Response:
         device = self._require(request)
@@ -600,6 +677,11 @@ class Hub:
         return self._http
 
     async def aclose(self) -> None:
+        if self._recovery_task:
+            self._recovery_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._recovery_task
+            self._recovery_task = None
         if self._http is not None:
             with contextlib.suppress(Exception):
                 await self._http.aclose()

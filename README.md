@@ -35,7 +35,7 @@ work on, memory, and a way to ping you when it needs a decision.
 Winglet brings that experience to [Hermes Agent](https://github.com/NousResearch/hermes-agent),
 the open-source agent by Nous Research, running on **your own machine or server**:
 
-- **Your hardware, your models, your data.** No vendor cloud in the loop.
+- **Your hardware and your models.** Hermes runs on your machine; automatic remote access uses Cloudflare.
 - **No app store needed.** Android gets an APK. iPhone gets an installable web app with push notifications.
 - **Not another chat window.** Winglet is built around your agents and what they're doing, not around a text box.
 
@@ -77,7 +77,7 @@ Winglet has two parts:
 2. **The plugin** (`plugin/`): a Hermes plugin that adds Winglet as a messaging platform, the same way
    Telegram or Discord plug into Hermes. Each Winglet chat is a Hermes session, and approvals,
    questions and routine results flow through Hermes' own mechanisms.
-   **No fork of Hermes, and no third-party relay.**
+   **No fork of Hermes.** Setup provides HTTPS through Cloudflare, or you can use your own connection.
 
 ## Install
 
@@ -89,15 +89,19 @@ messaging gateway (`hermes gateway`), the same one you'd use for Telegram or Dis
 ```bash
 hermes plugins install VIKASRP24/winglet/plugin
 hermes plugins enable winglet
-hermes winglet setup
-hermes gateway restart        # or: hermes gateway run
-hermes winglet pair           # shows a QR code
+hermes winglet setup          # prepares HTTPS, starts the gateway, then shows the QR
 ```
 
-`setup` enables Winglet and checks whether it answers locally. `pair` creates a QR only when
-the local server is running. On a VPS or for access from other networks, the server also needs
-a reachable HTTPS address; Winglet v0.1 does not automatically provision one. Configure the
-remote access route below before scanning the QR from your phone.
+`setup` installs the dependencies and a checksum-verified Cloudflare tunnel client in your
+Hermes profile, starts/restarts the gateway, and checks the public HTTPS address against your
+server's identity before showing a QR. No Cloudflare account, domain, administrator rights,
+inbound port opening, or phone VPN is needed. The server still needs outbound internet access.
+
+The free Quick Tunnel is an early-preview convenience: it has no uptime guarantee and changes
+address when recreated. The updated Android app recovers the new address when reconnecting;
+iPhone users need a new QR and home-screen installation after an address change. An existing
+explicit HTTPS configuration is preserved. See [remote access](docs/REMOTE_ACCESS.md) for
+limits, provider privacy, and permanent-address alternatives.
 
 For live-typing replies, add this to `~/.hermes/config.yaml`:
 
@@ -120,10 +124,13 @@ display:
 
 ### Reaching your server from anywhere (and HTTPS for iPhone)
 
-Winglet is not limited to the same Wi-Fi: the Android app can use any server address it can reach.
-Use HTTPS for remote connections and iPhone camera/install/notification features. For private
-remote access, install and connect [Tailscale](https://tailscale.com) on **both the Hermes server
-and your phone**, signed into the same tailnet. On the server:
+The default automatic HTTPS address works over Wi-Fi or mobile data. Run `hermes winglet pair`
+for another phone or a fresh QR. Cloudflare carries HTTP and WebSocket traffic and terminates
+HTTPS; this connection is **not end-to-end encrypted against Cloudflare**. Android address
+announcements are separately encrypted before being published through ntfy.
+
+For a permanent address or private access, use `--public-url`. For example, install and connect
+[Tailscale](https://tailscale.com) on both the Hermes server and phone, then on the server:
 
 ```bash
 hermes gateway restart

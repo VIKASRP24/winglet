@@ -7,9 +7,10 @@ translates between the two.
 
 Config (``.env`` or ``config.yaml`` ``platforms.winglet.extra``):
   WINGLET_ENABLED   true to start Winglet with the gateway
-  WINGLET_HOST      bind address (default 0.0.0.0)
+  WINGLET_HOST      bind address (default loopback for quick tunnels, 0.0.0.0 for direct access)
   WINGLET_PORT      port (default 8787)
   WINGLET_PUBLIC_URL  the URL your phone uses to reach this server (used in pairing QR codes)
+  WINGLET_CONNECTION quick for automatic Cloudflare HTTPS, direct for a custom connection
   WINGLET_NTFY_SERVER ntfy server for Android notifications (default https://ntfy.sh)
 """
 
@@ -105,6 +106,7 @@ def _env_enablement() -> Optional[dict]:
         ("WINGLET_HOST", "host", None),
         ("WINGLET_PORT", "port", int),
         ("WINGLET_PUBLIC_URL", "public_url", lambda v: v.rstrip("/")),
+        ("WINGLET_CONNECTION", "connection", None),
         ("WINGLET_NTFY_SERVER", "ntfy_server", lambda v: v.rstrip("/")),
     ), home_env="WINGLET_HOME_CHANNEL", home_default="home")
     return {"enabled": True, **seed}
@@ -151,7 +153,9 @@ class WingletAdapter(BasePlatformAdapter):
     def __init__(self, config: PlatformConfig):
         super().__init__(config=config, platform=Platform(PLATFORM))
         extra = config.extra or {}
-        self._host = str(extra_or_secret(extra, "host", "WINGLET_HOST", "0.0.0.0") or "0.0.0.0")
+        self._connection = str(extra_or_secret(extra, "connection", "WINGLET_CONNECTION", "direct") or "direct")
+        default_host = "127.0.0.1" if self._connection == "quick" else "0.0.0.0"
+        self._host = str(extra_or_secret(extra, "host", "WINGLET_HOST", default_host) or default_host)
         try:
             self._port = int(extra_or_secret(extra, "port", "WINGLET_PORT", DEFAULT_PORT) or DEFAULT_PORT)
         except (TypeError, ValueError):
@@ -159,6 +163,7 @@ class WingletAdapter(BasePlatformAdapter):
         self._ntfy_server = str(extra_or_secret(extra, "ntfy_server", "WINGLET_NTFY_SERVER", "https://ntfy.sh"))
         self._hub: Optional[Hub] = None
         self._runner = None
+        self._tunnel = None
         self._reconcile_task: Optional[asyncio.Task] = None
 
     # -- lifecycle -------------------------------------------------------------------------
@@ -178,6 +183,7 @@ class WingletAdapter(BasePlatformAdapter):
                 store.expire_pending(kind)
             hub = Hub(store, web_root=Path(__file__).parent / "web", bot_info=profile_info,
                       ntfy_server=self._ntfy_server)
+            hub.connection = {"mode": self._connection, "url": None}
             hub.on_user_message = self._on_user_message
             hub.on_approval = self._on_approval
             hub.on_answer = self._on_answer
@@ -186,6 +192,11 @@ class WingletAdapter(BasePlatformAdapter):
             self._runner = await bind_listener(self, hub.build_app(), self._host, self._port, "/api/ws",
                                                access_log=None)
             self._hub = hub
+            if self._connection == "quick":
+                from .tunnel import QuickTunnel, origin_url
+                self._tunnel = QuickTunnel(data_dir(), origin_url(self._host, self._port), hub.server_id(),
+                                           hub.set_connection)
+                self._tunnel.start()
         except OSError as exc:
             logger.error("[%s] could not listen on %s:%s: %s", self.name, self._host, self._port, exc)
             self._set_fatal_error("winglet_bind_failed", f"Port {self._port} is unavailable: {exc}. "
@@ -201,6 +212,9 @@ class WingletAdapter(BasePlatformAdapter):
     async def disconnect(self) -> None:
         self._running = False
         self._mark_disconnected()
+        if self._tunnel is not None:
+            await self._tunnel.stop()
+            self._tunnel = None
         if self._reconcile_task is not None:
             self._reconcile_task.cancel()
             self._reconcile_task = None

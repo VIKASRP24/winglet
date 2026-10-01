@@ -8,7 +8,10 @@ on:
 jobs:
   plugin:
     name: Plugin tests
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
@@ -17,6 +20,7 @@ jobs:
           python-version: "3.12"
       - run: pip install pytest pytest-aiohttp http_ece pyyaml packaging
       - name: Install the plugin's declared dependencies
+        shell: bash
         run: |
           python - <<'PY'
           import pathlib, subprocess, sys, yaml
@@ -45,3 +49,5 @@ jobs:
       - run: npx tsc --noEmit
       - run: npm test
       - run: npx expo export --platform web
+      - name: Android bundle and Hermes bytecode
+        run: npx expo export --platform android --output-dir dist-android

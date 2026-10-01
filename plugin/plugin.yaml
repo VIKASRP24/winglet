@@ -25,12 +25,16 @@ optional_env:
     prompt: "Winglet port"
     password: false
   - name: WINGLET_HOST
-    description: "Bind address (default 0.0.0.0)"
+    description: "Bind address (default 127.0.0.1 with automatic HTTPS; 0.0.0.0 for direct access)"
     prompt: "Winglet bind address"
     password: false
   - name: WINGLET_PUBLIC_URL
     description: "URL your phone uses to reach this machine, e.g. https://box.tailnet.ts.net (used in pairing QR codes)"
     prompt: "Winglet public URL (or empty)"
+    password: false
+  - name: WINGLET_CONNECTION
+    description: "quick: account-free automatic Cloudflare HTTPS; direct: use your own address. Setup defaults to quick."
+    prompt: "Winglet connection (quick/direct)"
     password: false
   - name: WINGLET_NTFY_SERVER
     description: "ntfy server for Android notifications (default https://ntfy.sh)"

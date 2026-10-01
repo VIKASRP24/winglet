@@ -4,9 +4,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+from pathlib import Path
 import socket
+import subprocess
 import sys
+import time
 import urllib.request
+from urllib.parse import urlsplit
 from typing import Optional
 
 from .dependencies import ensure_ready
@@ -20,6 +25,9 @@ def setup_parser(parser: argparse.ArgumentParser) -> None:
     p_setup.add_argument("--port", type=int, default=None, help=f"Port to listen on (default {DEFAULT_PORT})")
     p_setup.add_argument("--public-url", default=None,
                          help="URL your phone uses to reach this machine, e.g. https://box.tailnet.ts.net")
+    p_setup.add_argument("--connection", choices=("quick", "direct"), default=None,
+                         help="Automatic Cloudflare HTTPS (default), or your own LAN/VPN/public URL")
+    p_setup.add_argument("--no-start", action="store_true", help="Prepare settings without starting/restarting the gateway")
     p_pair = subs.add_parser("pair", help="Show a QR code to pair a phone")
     p_pair.add_argument("--public-url", default=None, help="Override the URL encoded in the QR code")
     subs.add_parser("devices", help="List paired phones")
@@ -96,8 +104,66 @@ def lan_ip() -> str:
 
 
 def public_url(override: Optional[str] = None) -> str:
+    if not override and _setting("connection", "WINGLET_CONNECTION") == "quick":
+        info = _running() or {}
+        return (info.get("connection") or {}).get("url") or ""
     url = (override or _env("WINGLET_PUBLIC_URL")).rstrip("/")
     return url or f"http://{lan_ip()}:{_port()}"
+
+
+def _start_gateway() -> None:
+    """Let Hermes use its own service/profile restart path, with a detached fallback."""
+    from hermes_constants import get_hermes_home
+    from .adapter import data_dir
+    directory = data_dir()
+    directory.mkdir(parents=True, exist_ok=True)
+    env = {**os.environ, "HERMES_HOME": str(get_hermes_home())}
+    # Hermes launchers may run a checkout directly instead of installing hermes_cli as a package.
+    # Carry its actual import root into the detached interpreter without changing the user's cwd.
+    import hermes_cli.config as config_module
+    if source := getattr(config_module, "__file__", None):
+        root = str(Path(source).resolve().parents[1])
+        env["PYTHONPATH"] = root + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
+    for key in list(env):
+        if key.startswith("WINGLET_"):
+            del env[key]
+    for key in ("WINGLET_ENABLED", "WINGLET_CONNECTION", "WINGLET_PORT", "WINGLET_HOST",
+                "WINGLET_PUBLIC_URL", "WINGLET_NTFY_SERVER", "WINGLET_HOME_CHANNEL"):
+        if value := _env(key):
+            env[key] = value
+    home = get_hermes_home()
+    selector = home.name if home.parent.name == "profiles" else "default"
+    options = ({"creationflags": subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS}
+               if os.name == "nt" else {"start_new_session": True})
+    # Some Hermes installations run the restart fallback in the foreground. Keep that child
+    # alive after this CLI exits, and put startup diagnostics in the active profile's data dir.
+    with (directory / "gateway-setup.log").open("ab") as output:
+        subprocess.Popen([sys.executable, "-m", "hermes_cli.main", "-p", selector, "gateway", "restart"],
+                         stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT, env=env, **options)
+
+
+def _wait_for_quick(timeout: float = 150) -> Optional[dict]:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        info = _running()
+        connection = (info or {}).get("connection") or {}
+        if connection.get("mode") == "quick" and connection.get("url"):
+            return info
+        time.sleep(1)
+    return None
+
+
+def _verify_public(url: str, server_id: str) -> bool:
+    class NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, *args, **kwargs):
+            return None
+    try:
+        opener = urllib.request.build_opener(NoRedirect())
+        with opener.open(url + "/api/info", timeout=8) as response:
+            info = json.loads(response.read(65537))
+        return isinstance(info, dict) and info.get("app") == "winglet" and info.get("server_id") == server_id
+    except Exception:
+        return False
 
 
 def _running() -> Optional[dict]:
@@ -141,9 +207,36 @@ def _print_connection_help(url: str) -> None:
 
 
 def cmd_setup(args: argparse.Namespace) -> int:
+    if args.port is not None and not 1 <= args.port <= 65535:
+        print("--port must be between 1 and 65535.")
+        return 1
     if not ensure_ready(install=True):
         return 1
     from hermes_cli.config import save_env_value
+    mode = getattr(args, "connection", None)
+    if mode == "quick" and args.public_url:
+        print("Choose automatic HTTPS or --public-url, not both.")
+        return 1
+    if args.public_url:
+        parsed = urlsplit(args.public_url)
+        if parsed.scheme not in ("https", "http") or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
+            print("--public-url must be an HTTP(S) address without credentials, query, or fragment.")
+            return 1
+    # Preserve an existing explicit HTTPS endpoint. Older HTTP autodetected VPS addresses migrate
+    # to automatic HTTPS when setup is run without options.
+    configured = str(_setting("public_url", "WINGLET_PUBLIC_URL") or "")
+    mode = mode or ("direct" if args.public_url or (configured.startswith("https://") and
+                   _setting("connection", "WINGLET_CONNECTION") != "quick") else "quick")
+    if mode == "quick":
+        from .adapter import data_dir
+        from .tunnel import install
+        print("Preparing automatic HTTPS (Cloudflare Quick Tunnel)...")
+        try:
+            install(data_dir())
+        except Exception as exc:
+            print(f"Could not prepare automatic HTTPS: {exc}")
+            return 1
+    save_env_value("WINGLET_CONNECTION", mode)
     save_env_value("WINGLET_ENABLED", "true")
     if args.port:
         save_env_value("WINGLET_PORT", str(args.port))
@@ -152,6 +245,27 @@ def cmd_setup(args: argparse.Namespace) -> int:
     print("Dependencies: ready (server, push notifications, QR pairing).")
     print("🪽 Winglet is enabled for this profile.\n")
     info = _running()
+    if mode == "quick":
+        print("Cloudflare Quick Tunnels are free, temporary, and have no uptime guarantee.")
+        print("Android follows address changes when reconnecting; iPhone needs a new QR after the address changes.")
+        if getattr(args, "no_start", False):
+            print("Ready. Start/restart the gateway, then run `hermes winglet pair`.")
+            return 0
+        try:
+            if ((info or {}).get("connection") or {}).get("mode") != "quick":
+                print("Starting/restarting the gateway for this profile...")
+                _start_gateway()
+        except Exception as exc:
+            print(f"Could not start the gateway: {exc}")
+            print("Run `hermes gateway restart` (or `hermes gateway run`), then `hermes winglet pair`.")
+            return 1
+        print("Waiting for the HTTPS address to answer with this Winglet server...")
+        if not _wait_for_quick():
+            print("Automatic HTTPS is not ready. No pairing code was created.")
+            print("Check the gateway's Winglet startup logs and plugin-data/winglet/gateway-setup.log.")
+            print("Outbound HTTPS and Cloudflare TCP port 7844 must be allowed. Then retry `hermes winglet pair`.")
+            return 1
+        return cmd_pair(argparse.Namespace(public_url=None))
     print("Gateway: running locally." if info else "Gateway: not answering locally yet. Pairing is not ready.")
     print("Next:")
     print("  1. Restart the gateway:   hermes gateway restart   (or start it: hermes gateway run)")
@@ -163,20 +277,27 @@ def cmd_setup(args: argparse.Namespace) -> int:
 
 
 def cmd_pair(args: argparse.Namespace) -> int:
-    if _running() is None:
+    info = _running()
+    if info is None:
         print("Pairing is not ready: Winglet isn't answering locally.")
         print("Run `hermes winglet setup`, then `hermes gateway restart` (or `hermes gateway run`).")
         print("If the gateway is already running, check its Winglet startup logs and configured port.")
         return 1
     if not ensure_ready():
         return 1
+    url = public_url(args.public_url)
+    if _setting("connection", "WINGLET_CONNECTION") == "quick" and not args.public_url:
+        from .tunnel import QUICK_URL
+        if not url or not QUICK_URL.fullmatch(url) or not _verify_public(url, info["server_id"]):
+            print("Pairing is not ready: automatic HTTPS isn't reachable yet. No code was created.")
+            print("Wait for the gateway's automatic HTTPS startup, then retry `hermes winglet pair`.")
+            return 1
     from .adapter import open_store
     store = open_store()
     try:
         code = store.create_pair_code()
     finally:
         store.close()
-    url = public_url(args.public_url)
     link = f"{url}/#pair={code}"
     print("\nScan this with your phone's camera (iPhone) or the Winglet app (Android):\n")
     _print_qr(link)
@@ -223,6 +344,11 @@ def cmd_status(args: argparse.Namespace) -> int:
     print(f"Enabled:  {'yes' if enabled else 'no  (run `hermes winglet setup`)'}")
     title = (info.get("bot") or {}).get("title", "Winglet") if info else ""
     print(f"Running:  {'yes — ' + title if info else 'no  (start the gateway: hermes gateway run)'}")
-    print(f"URL:      {public_url()}")
-    print("Phone connectivity: not verified from this machine.")
+    url = public_url()
+    print(f"URL:      {url or 'automatic HTTPS starting/unavailable'}")
+    if _setting("connection", "WINGLET_CONNECTION") == "quick":
+        verified = bool(url and info and _verify_public(url, info["server_id"]))
+        print(f"Automatic HTTPS: {'verified through Cloudflare' if verified else 'not ready'}")
+    else:
+        print("Phone connectivity: not verified from this machine.")
     return 0
