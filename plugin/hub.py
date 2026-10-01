@@ -34,7 +34,7 @@ from .store import Store
 
 logger = logging.getLogger(__name__)
 
-VERSION = "0.1.0"
+VERSION = "0.1.1"
 HOME_CHAT_ID = "home"
 PUSH_DEBOUNCE_SECONDS = 2.5
 MAX_TEXT = 16_000
