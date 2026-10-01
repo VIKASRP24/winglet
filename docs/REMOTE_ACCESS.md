@@ -33,6 +33,10 @@ Invoke-RestMethod http://127.0.0.1:8787/api/info
 tailscale serve --bg http://127.0.0.1:8787
 ```
 
+On Linux/macOS, use `curl http://127.0.0.1:8787/api/info` for the local check; the
+Hermes and Tailscale commands are the same. If you set `WINGLET_HOST` to a specific
+address, use that address instead of `127.0.0.1` for the check and Tailscale target.
+
 Follow Tailscale's prompts to enable HTTPS if needed. Copy the HTTPS URL it prints; do not use
 your VPS's public IP for this connection. Substitute that exact URL below:
 
