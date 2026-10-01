@@ -68,7 +68,7 @@ def test_unrelated_service_cannot_pass_gateway_readiness(config, monkeypatch, pa
 @pytest.mark.parametrize("running", [None, {"app": "winglet", "server_id": "s1"}])
 def test_setup_reports_readiness_without_claiming_phone_connectivity(config, monkeypatch, capsys, running):
     monkeypatch.setattr(cli, "_running", lambda: running)
-    assert cli.cmd_setup(argparse.Namespace(port=None, public_url=None)) == 0
+    assert cli.cmd_setup(argparse.Namespace(port=None, public_url=None, connection="direct")) == 0
     assert config["WINGLET_ENABLED"] == "true"
     output = capsys.readouterr().out
     expected = "Gateway: running locally." if running else "Pairing is not ready"
@@ -142,6 +142,170 @@ def test_probe_honors_yaml_listener_and_env_overrides(config, monkeypatch):
     assert cli._probe_url() == "http://100.64.0.5:9000/api/info"
     config.update(WINGLET_HOST="127.0.0.1", WINGLET_PORT="9001")
     assert cli._probe_url() == "http://127.0.0.1:9001/api/info"
+
+
+def test_direct_pairing_url_honors_yaml_with_env_override(config, monkeypatch):
+    monkeypatch.setattr(sys.modules["hermes_cli.config"], "load_config_readonly", lambda: {
+        "platforms": {"winglet": {"extra": {"public_url": "https://configured.example"}}}}, raising=False)
+    assert cli.public_url() == "https://configured.example"
+    config["WINGLET_PUBLIC_URL"] = "https://override.example"
+    assert cli.public_url() == "https://override.example"
+
+
+def automatic_setup(config, monkeypatch, tmp_path):
+    from plugin import tunnel
+    module = ModuleType("plugin.adapter")
+    module.data_dir = lambda: tmp_path
+    module.open_store = lambda: Store(tmp_path / "data.db")
+    monkeypatch.setitem(sys.modules, "plugin.adapter", module)
+    monkeypatch.setattr(tunnel, "install", lambda path: tmp_path / "cloudflared")
+    return tunnel
+
+
+def test_default_setup_prepares_tunnel_starts_gateway_and_prints_verified_qr(config, monkeypatch, tmp_path):
+    automatic_setup(config, monkeypatch, tmp_path)
+    started, links = [], []
+    ready = {"app": "winglet", "server_id": "s", "connection": {"mode": "quick", "url": "https://ready.trycloudflare.com"}}
+    monkeypatch.setattr(cli, "_running", lambda: ready if started else None)
+    monkeypatch.setattr(cli, "_start_gateway", lambda: started.append(True))
+    monkeypatch.setattr(cli, "_verify_public", lambda url, identity: url == ready["connection"]["url"] and identity == "s")
+    monkeypatch.setattr(cli, "_print_qr", links.append)
+    assert cli.cmd_setup(argparse.Namespace(port=None, public_url=None)) == 0
+    assert config["WINGLET_CONNECTION"] == "quick" and config["WINGLET_ENABLED"] == "true"
+    assert started == [True] and links[0].startswith("https://ready.trycloudflare.com/#pair=")
+
+
+def test_tunnel_install_failure_does_not_change_configuration(config, monkeypatch, tmp_path):
+    tunnel = automatic_setup(config, monkeypatch, tmp_path)
+    def failure(path):
+        raise RuntimeError("checksum failure")
+    monkeypatch.setattr(tunnel, "install", failure)
+    config["WINGLET_PUBLIC_URL"] = "http://old"
+    old = config.copy()
+    assert cli.cmd_setup(argparse.Namespace(port=None, public_url=None)) == 1
+    assert config == old
+
+
+def test_setup_timeout_creates_no_code_and_reports_failed_https(config, monkeypatch, tmp_path, capsys):
+    automatic_setup(config, monkeypatch, tmp_path)
+    monkeypatch.setattr(cli, "_running", lambda: None)
+    monkeypatch.setattr(cli, "_start_gateway", lambda: None)
+    monkeypatch.setattr(cli, "_wait_for_quick", lambda: None)
+    monkeypatch.setattr(cli, "_print_qr", lambda _: pytest.fail("No QR on failed HTTPS"))
+    assert cli.cmd_setup(argparse.Namespace(port=None, public_url=None)) == 1
+    assert "No pairing code was created" in capsys.readouterr().out
+
+
+def test_quick_pair_does_not_fall_back_to_stale_http_or_create_code(config, monkeypatch, tmp_path):
+    automatic_setup(config, monkeypatch, tmp_path)
+    config.update(WINGLET_CONNECTION="quick", WINGLET_PUBLIC_URL="http://old:8787")
+    monkeypatch.setattr(cli, "_running", lambda: {"app": "winglet", "server_id": "s", "connection": {"mode": "quick", "url": None}})
+    assert cli.public_url() == ""
+    assert cli.cmd_pair(argparse.Namespace(public_url=None)) == 1
+    assert not (tmp_path / "data.db").exists()
+
+
+def test_no_start_setup_and_existing_https_endpoint_are_preserved(config, monkeypatch, tmp_path):
+    automatic_setup(config, monkeypatch, tmp_path)
+    monkeypatch.setattr(cli, "_running", lambda: None)
+    monkeypatch.setattr(cli, "_start_gateway", lambda: pytest.fail("Must not start"))
+    assert cli.cmd_setup(argparse.Namespace(port=None, public_url=None, no_start=True)) == 0
+    assert config["WINGLET_CONNECTION"] == "quick"
+    config.update(WINGLET_CONNECTION="direct", WINGLET_PUBLIC_URL="https://existing.example.com")
+    assert cli.cmd_setup(argparse.Namespace(port=None, public_url=None)) == 0
+    assert config["WINGLET_CONNECTION"] == "direct"
+
+
+@pytest.mark.parametrize("address", [None, "http://192.168.1.20:9000"])
+def test_legacy_paired_setup_keeps_direct_route_and_device_token(config, monkeypatch, tmp_path, capsys, address):
+    tunnel = automatic_setup(config, monkeypatch, tmp_path)
+    config.update(WINGLET_HOST="0.0.0.0", WINGLET_PORT="9000")
+    if address:
+        config["WINGLET_PUBLIC_URL"] = address
+    original = config.copy()
+    store = Store(tmp_path / "data.db")
+    try:
+        device, token = store.add_device("Existing phone", "android")
+        monkeypatch.setattr(tunnel, "install", lambda _: pytest.fail("Do not download a tunnel for paired LAN users"))
+        monkeypatch.setattr(cli, "_start_gateway", lambda: pytest.fail("Do not change the running route"))
+        monkeypatch.setattr(cli, "_running", lambda: {"app": "winglet", "server_id": "s1"})
+        links = []
+        monkeypatch.setattr(cli, "_print_qr", links.append)
+        assert cli.cmd_setup(argparse.Namespace(port=None, public_url=None)) == 0
+        assert config == {**original, "WINGLET_CONNECTION": "direct", "WINGLET_ENABLED": "true"}
+        output = capsys.readouterr().out
+        assert "Keeping your existing direct connection" in output
+        assert "--connection quick" in output and "re-pair existing phones" in output
+        assert "Traffic passes through Cloudflare" not in output
+        assert cli.cmd_pair(argparse.Namespace(public_url=None)) == 0
+        expected = address or "http://173.249.54.31:9000"
+        assert links[0].startswith(expected + "/#pair=")
+        assert store.device_for_token(token)["id"] == device["id"]
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize("source", ["env", "yaml"])
+@pytest.mark.parametrize("mode", ["direct", "quick"])
+def test_setup_preserves_saved_mode_even_with_no_phones(config, monkeypatch, tmp_path, source, mode):
+    tunnel = automatic_setup(config, monkeypatch, tmp_path)
+    if source == "env":
+        config["WINGLET_CONNECTION"] = mode
+    else:
+        monkeypatch.setattr(sys.modules["hermes_cli.config"], "load_config_readonly", lambda: {
+            "platforms": {"winglet": {"extra": {"connection": mode}}}}, raising=False)
+    if mode == "direct":
+        monkeypatch.setattr(tunnel, "install", lambda _: pytest.fail("Saved direct mode must survive setup"))
+    monkeypatch.setattr(cli, "_running", lambda: None)
+    monkeypatch.setattr(cli, "_start_gateway", lambda: pytest.fail("--no-start must not restart"))
+    assert cli.cmd_setup(argparse.Namespace(port=None, public_url=None, no_start=True)) == 0
+    assert config["WINGLET_CONNECTION"] == mode
+
+
+def test_explicit_quick_can_switch_paired_legacy_install_and_discloses_privacy(config, monkeypatch, tmp_path, capsys):
+    tunnel = automatic_setup(config, monkeypatch, tmp_path)
+    store = Store(tmp_path / "data.db")
+    store.add_device("Existing phone", "android")
+    store.close()
+    def install(_):
+        # The disclosure must appear before starting/downloading the third-party client.
+        assert "Traffic passes through Cloudflare, which can read it" in capsys.readouterr().out
+        return tmp_path / "cloudflared"
+    monkeypatch.setattr(tunnel, "install", install)
+    monkeypatch.setattr(cli, "_running", lambda: None)
+    assert cli.cmd_setup(argparse.Namespace(port=None, public_url=None, connection="quick", no_start=True)) == 0
+    assert config["WINGLET_CONNECTION"] == "quick"
+
+
+def test_unreadable_device_store_does_not_change_connection_settings(config, monkeypatch, tmp_path, capsys):
+    tunnel = automatic_setup(config, monkeypatch, tmp_path)
+    config["WINGLET_PUBLIC_URL"] = "http://192.168.1.20:8787"
+    original = config.copy()
+    def fail():
+        raise OSError("device store unavailable")
+    monkeypatch.setattr(sys.modules["plugin.adapter"], "open_store", fail)
+    monkeypatch.setattr(tunnel, "install", lambda _: pytest.fail("Never assume an unreadable store is fresh"))
+    assert cli.cmd_setup(argparse.Namespace(port=None, public_url=None)) == 1
+    assert config == original
+    assert "Connection settings were not changed" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("profile", ["named", "default"])
+def test_restart_launcher_preserves_active_profile_and_is_hidden(config, monkeypatch, tmp_path, profile):
+    automatic_setup(config, monkeypatch, tmp_path)
+    constants = ModuleType("hermes_constants")
+    constants.get_hermes_home = lambda: tmp_path / "profiles" / profile if profile != "default" else tmp_path
+    monkeypatch.setitem(sys.modules, "hermes_constants", constants)
+    sys.modules["hermes_cli.config"].__file__ = str(tmp_path / "hermes-source" / "hermes_cli" / "config.py")
+    calls = []
+    monkeypatch.setattr(cli.subprocess, "Popen", lambda argv, **kwargs: calls.append((argv, kwargs)))
+    cli._start_gateway()
+    argv, options = calls[0]
+    assert argv == [sys.executable, "-m", "hermes_cli.main", "-p", profile, "gateway", "restart"]
+    assert options["env"]["HERMES_HOME"] == str(constants.get_hermes_home())
+    assert options["env"]["PYTHONPATH"].startswith(str(tmp_path / "hermes-source"))
+    if cli.os.name == "nt":
+        assert options["creationflags"] & cli.subprocess.CREATE_NO_WINDOW
 
 
 @pytest.mark.parametrize("source", ["env", "yaml"])

@@ -1,4 +1,6 @@
 import { create } from 'zustand';
+import { Platform } from 'react-native';
+import { recoverAddress } from './recovery';
 import { api, ApiError, wsUrl } from './api';
 import { markFailed, mergeMessages } from './messages';
 import { getJSON, setJSON } from './storage';
@@ -167,6 +169,11 @@ export const useApp = create<AppState>((set, get) => {
     const conn = new Connection(server, {
       onEvent: (ev) => handleEvent(server.id, ev),
       onStatus: (status) => patch(server.id, () => ({ status })),
+      onServer: async (updated) => {
+        if (connections.get(server.id) !== conn || !get().servers.some(s => s.id === server.id)) return;
+        set(state => ({ servers: state.servers.map(s => s.id === server.id ? updated : s) }));
+        await persist();
+      },
     });
     connections.set(server.id, conn);
     conn.open();
@@ -347,11 +354,14 @@ class Connection {
   private timer?: ReturnType<typeof setTimeout>;
   private pingTimer?: ReturnType<typeof setInterval>;
   private visible = true;
+  private recovering = false;
 
-  constructor(private server: Server, private cb: { onEvent: (ev: any) => void; onStatus: (s: ConnStatus) => void }) {}
+  constructor(private server: Server, private cb: { onEvent: (ev: any) => void; onStatus: (s: ConnStatus) => void;
+    onServer: (server: Server) => Promise<void> }) {}
 
   open() {
     if (this.closed) return;
+    if (Platform.OS === 'android' && this.attempt === 0) this.recover();
     this.cb.onStatus('connecting');
     let ws: WebSocket;
     try {
@@ -369,7 +379,9 @@ class Connection {
     };
     ws.onmessage = (e) => {
       try {
-        this.cb.onEvent(JSON.parse(String(e.data)));
+        const event = JSON.parse(String(e.data));
+        this.cb.onEvent(event);
+        if (event.type === 'hello' && Platform.OS === 'android' && !this.server.recovery) this.enrollRecovery();
       } catch {
         // ignore malformed frames
       }
@@ -394,19 +406,50 @@ class Connection {
     clearTimeout(this.timer);
     const delay = Math.min(30000, 1000 * 2 ** this.attempt) * (0.7 + Math.random() * 0.6);
     this.attempt += 1;
-    if (this.attempt > 3) this.probeAuth();
+    if (this.attempt > 1) this.probeAuth();
     this.timer = setTimeout(() => this.open(), delay);
   }
 
   private async probeAuth() {
+    const before = this.server;
     try {
-      await api(this.server, '/api/me');
+      await api(before, '/api/me');
     } catch (e) {
+      if (this.closed || this.server !== before) return;
       if (e instanceof ApiError && e.status === 401) {
         this.closed = true;
         this.cb.onStatus('unauthorized');
+      } else if (Platform.OS === 'android') {
+        await this.recover();
       }
     }
+  }
+
+  private async enrollRecovery() {
+    try {
+      const result = await api<{ recovery: Server['recovery'] }>(this.server, '/api/connection');
+      if (this.closed || !result.recovery) return;
+      this.server = { ...this.server, recovery: result.recovery };
+      await this.cb.onServer(this.server);
+    } catch { /* Older or direct-only servers have no recovery endpoint. */ }
+  }
+
+  private async recover() {
+    if (this.closed || this.recovering || !this.server.recovery) return;
+    this.recovering = true;
+    const before = this.server;
+    try {
+      const updated = await recoverAddress(before);
+      if (!updated || this.closed || this.server !== before) return;
+      this.server = updated;
+      await this.cb.onServer(updated);
+      clearTimeout(this.timer);
+      this.ws?.close();
+      this.ws = undefined;
+      this.attempt = 0;
+      this.open();
+    } catch { /* Stay offline and retry; never adopt an unverified endpoint. */ }
+    finally { this.recovering = false; }
   }
 
   ensureOpen() {
@@ -415,6 +458,7 @@ class Connection {
       this.attempt = 0;
       this.open();
     }
+    if (Platform.OS === 'android') this.recover();
   }
 
   send(data: unknown) {

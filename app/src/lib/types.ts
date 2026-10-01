@@ -7,6 +7,7 @@ export type Server = {
   deviceId: string;
   bot: Bot;
   addedAt: number;
+  recovery?: { server: string; topic: string; key: string; revision: number };
 };
 
 export type Chat = {
