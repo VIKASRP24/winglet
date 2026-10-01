@@ -34,7 +34,7 @@ async function request<T>(url: string, init: RequestInit & { token?: string } = 
   try {
     resp = await fetch(url, { ...init, headers: { ...headers, ...(init.headers as Record<string, string>) } });
   } catch {
-    throw new ApiError("Can't reach the server. Check the address and that you're on the same network.", 0);
+    throw new ApiError("Can't reach your Hermes server. Check that the gateway is running and the address is accessible from your phone. If you use Tailscale, connect it on this phone.", 0);
   }
   let data: any = null;
   try {
