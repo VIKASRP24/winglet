@@ -107,7 +107,7 @@ def public_url(override: Optional[str] = None) -> str:
     if not override and _setting("connection", "WINGLET_CONNECTION") == "quick":
         info = _running() or {}
         return (info.get("connection") or {}).get("url") or ""
-    url = (override or _env("WINGLET_PUBLIC_URL")).rstrip("/")
+    url = str(override or _setting("public_url", "WINGLET_PUBLIC_URL") or "").rstrip("/")
     return url or f"http://{lan_ip()}:{_port()}"
 
 

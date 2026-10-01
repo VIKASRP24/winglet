@@ -144,6 +144,14 @@ def test_probe_honors_yaml_listener_and_env_overrides(config, monkeypatch):
     assert cli._probe_url() == "http://127.0.0.1:9001/api/info"
 
 
+def test_direct_pairing_url_honors_yaml_with_env_override(config, monkeypatch):
+    monkeypatch.setattr(sys.modules["hermes_cli.config"], "load_config_readonly", lambda: {
+        "platforms": {"winglet": {"extra": {"public_url": "https://configured.example"}}}}, raising=False)
+    assert cli.public_url() == "https://configured.example"
+    config["WINGLET_PUBLIC_URL"] = "https://override.example"
+    assert cli.public_url() == "https://override.example"
+
+
 def automatic_setup(config, monkeypatch, tmp_path):
     from plugin import tunnel
     module = ModuleType("plugin.adapter")

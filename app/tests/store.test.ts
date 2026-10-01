@@ -154,3 +154,14 @@ test('removing a server during recovery prevents a stale result from reconnectin
   assert.equal(h.store.getState().servers.length, 0);
   assert.equal(h.sockets.length, 2);
 });
+
+test('returning to foreground recovers a new address even when the old socket appears open', async () => {
+  const h = harness('android');
+  await h.connect();
+  await new Promise(resolve => setImmediate(resolve));
+  h.setRecovery(async (s: any) => ({ ...s, url: 'https://new.trycloudflare.com' }));
+  h.store.getState().setForeground(true);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(h.store.getState().servers[0].url, 'https://new.trycloudflare.com');
+  assert.equal(h.sockets.at(-1), 'https://new.trycloudflare.com');
+});

@@ -361,6 +361,7 @@ class Connection {
 
   open() {
     if (this.closed) return;
+    if (Platform.OS === 'android' && this.attempt === 0) this.recover();
     this.cb.onStatus('connecting');
     let ws: WebSocket;
     try {
@@ -456,8 +457,8 @@ class Connection {
       clearTimeout(this.timer);
       this.attempt = 0;
       this.open();
-      if (Platform.OS === 'android') this.recover();
     }
+    if (Platform.OS === 'android') this.recover();
   }
 
   send(data: unknown) {

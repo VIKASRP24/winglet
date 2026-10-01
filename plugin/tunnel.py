@@ -201,6 +201,7 @@ class QuickTunnel:
                 try:
                     executable = await asyncio.to_thread(install, self.directory, download=False)
                     await self._session(executable)
+                    delay = 2  # A healthy session resets startup-failure backoff before reconnecting.
                 except (OSError, RuntimeError, asyncio.TimeoutError) as exc:
                     logger.warning("[winglet] Automatic HTTPS unavailable: %s; retrying in %ss", exc, delay)
                 finally:
