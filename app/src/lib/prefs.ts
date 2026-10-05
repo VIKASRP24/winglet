@@ -11,10 +11,12 @@ export type Prefs = {
   motion: 'system' | 'reduce' | 'full';
   transparency: 'system' | 'reduce' | 'full';
   haptics: boolean;
+  /** What a message sent while the agent works does: guide it, wait for it, or interrupt it. */
+  busyMode: 'steer' | 'queue' | 'interrupt';
 };
 
 export const DEFAULT_PREFS: Prefs = {
-  theme: 'system', accent: 'iris', layout: 'bubbles', motion: 'system', transparency: 'system', haptics: true,
+  theme: 'system', accent: 'iris', layout: 'bubbles', motion: 'system', transparency: 'system', haptics: true, busyMode: 'steer',
 };
 
 const KEY = 'winglet.prefs';

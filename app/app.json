@@ -46,6 +46,22 @@
         }
       ],
       [
+        "expo-image-picker",
+        {
+          "photosPermission": "Winglet lets you pick photos and videos to send to your agent.",
+          "cameraPermission": "Winglet uses the camera to take a photo to send to your agent.",
+          "microphonePermission": "Winglet records a voice note while you hold the mic button."
+        }
+      ],
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "Winglet records a voice note while you hold the mic button.",
+          "enableBackgroundRecording": false,
+          "enableBackgroundPlayback": false
+        }
+      ],
+      [
         "expo-build-properties",
         {
           "android": {

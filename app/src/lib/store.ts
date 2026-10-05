@@ -5,7 +5,7 @@ import { api, ApiError, wsUrl } from './api';
 import { cacheGet, cacheRemove, cacheSet } from './cache';
 import { markFailed, mergeMessages } from './messages';
 import { getJSON, setJSON } from './storage';
-import type { Chat, ConnStatus, InboxItem, Message, Server, ServerInfo } from './types';
+import type { Attachment, Chat, ConnStatus, DraftFile, InboxItem, Message, ReplyRef, Server, ServerInfo } from './types';
 
 const SERVERS_KEY = 'winglet.servers';
 const SELECTION_KEY = 'winglet.selection';
@@ -25,7 +25,12 @@ export type ConnDetail = {
   history: { t: number; status: string; note?: string }[];
 };
 
-export type OutboxEntry = { client_id: string; chat_id: string; text: string; created_at: number; failed?: boolean };
+export type OutboxEntry = {
+  client_id: string; chat_id: string; text: string; created_at: number; failed?: boolean;
+  attachments?: Attachment[]; reply_to?: ReplyRef;
+};
+
+export type SendOptions = { retryClientId?: string; attachments?: Attachment[]; replyTo?: ReplyRef };
 
 export type ServerState = {
   status: ConnStatus;
@@ -55,6 +60,10 @@ type AppState = {
   foreground: boolean;
   network: boolean;
   drafts: Record<string, string>;
+  /** Files attached in each chat's composer, by draftKey. */
+  draftFiles: Record<string, DraftFile[]>;
+  /** The message each chat's composer is replying to, by draftKey. */
+  replyTo: Record<string, ReplyRef>;
   visibleChat?: { serverId: string; chatId: string };
   init: () => Promise<void>;
   addServer: (server: Server) => Promise<void>;
@@ -67,7 +76,9 @@ type AppState = {
   hydrateChat: (serverId: string, chatId: string) => Promise<void>;
   loadMessages: (serverId: string, chatId: string, older?: boolean) => Promise<void>;
   loadInbox: (serverId: string) => Promise<void>;
-  sendMessage: (serverId: string, chatId: string, text: string, retryClientId?: string) => Promise<void>;
+  sendMessage: (serverId: string, chatId: string, text: string, opts?: string | SendOptions) => Promise<void>;
+  updateDraftFiles: (serverId: string, chatId: string, fn: (files: DraftFile[]) => DraftFile[]) => void;
+  setReplyTo: (serverId: string, chatId: string, ref?: ReplyRef) => void;
   discardMessage: (serverId: string, chatId: string, clientId: string) => void;
   setDraft: (serverId: string, chatId: string, text: string) => void;
   respond: (serverId: string, itemId: string, reply: { choice?: string; answer?: string | string[] }) => Promise<void>;
@@ -171,7 +182,11 @@ export const useApp = create<AppState>((set, get) => {
     setLocalStatus(serverId, entry.chat_id, entry.client_id, 'pending');
     try {
       const data = await api<{ message: Message }>(server, `/api/chats/${encodeURIComponent(entry.chat_id)}/messages`, {
-        method: 'POST', body: JSON.stringify({ text: entry.text, client_id: entry.client_id }),
+        method: 'POST', body: JSON.stringify({
+          text: entry.text, client_id: entry.client_id,
+          ...(entry.attachments?.length ? { attachments: entry.attachments.map((a) => a.id).filter(Boolean) } : {}),
+          ...(entry.reply_to ? { reply_to: entry.reply_to.id } : {}),
+        }),
       });
       upsertMessage(serverId, entry.chat_id, data.message);
       updateOutbox(serverId, (o) => o.filter((x) => x.client_id !== entry.client_id));
@@ -204,7 +219,9 @@ export const useApp = create<AppState>((set, get) => {
 
   const localMessage = (entry: OutboxEntry): Message => ({
     id: entry.client_id, chat_id: entry.chat_id, role: 'user', text: entry.text, status: entry.failed ? 'failed' : 'queued',
-    meta: { client_id: entry.client_id }, created_at: entry.created_at, updated_at: entry.created_at,
+    meta: { client_id: entry.client_id, ...(entry.attachments?.length ? { attachments: entry.attachments } : {}),
+      ...(entry.reply_to ? { reply_to: entry.reply_to } : {}) },
+    created_at: entry.created_at, updated_at: entry.created_at,
   });
 
   const handleEvent = (serverId: string, ev: any) => {
@@ -351,15 +368,18 @@ export const useApp = create<AppState>((set, get) => {
     foreground: true,
     network: true,
     drafts: {},
+    draftFiles: {},
+    replyTo: {},
 
     init: async () => {
       if (get().ready) return;
       const servers = await getJSON<Server[]>(SERVERS_KEY, []);
       const selection = await getJSON<Selection>(SELECTION_KEY, {});
       const drafts = await cacheGet<Record<string, string>>('drafts', {});
+      const draftFiles = await cacheGet<Record<string, DraftFile[]>>('draftFiles', {});
       const runtime: Record<string, ServerState> = {};
       for (const s of servers) runtime[s.id] = emptyRuntime();
-      set({ servers, runtime, drafts, selection: selection.serverId ? selection : { serverId: servers[0]?.id }, ready: true });
+      set({ servers, runtime, drafts, draftFiles, selection: selection.serverId ? selection : { serverId: servers[0]?.id }, ready: true });
       await Promise.all(servers.map((s) => hydrateServer(s.id)));
       servers.forEach(connect);
     },
@@ -482,14 +502,17 @@ export const useApp = create<AppState>((set, get) => {
       }
     },
 
-    sendMessage: async (serverId, chatId, text, retryClientId) => {
+    sendMessage: async (serverId, chatId, text, opts) => {
+      const o: SendOptions = typeof opts === 'string' ? { retryClientId: opts } : opts ?? {};
+      const retryClientId = o.retryClientId;
       const server = get().servers.find((s) => s.id === serverId);
-      if (!server || !text.trim()) return;
+      if (!server || (!text.trim() && !o.attachments?.length && !retryClientId)) return;
       // A retry reuses the original id so the server can tell it already has the message.
       const clientId = retryClientId ?? `c-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
-      const existing = get().runtime[serverId]?.outbox.find((o) => o.client_id === clientId);
+      const existing = get().runtime[serverId]?.outbox.find((x) => x.client_id === clientId);
       const entry: OutboxEntry = existing ? { ...existing, failed: false }
-        : { client_id: clientId, chat_id: chatId, text: text.trim(), created_at: Date.now() / 1000 };
+        : { client_id: clientId, chat_id: chatId, text: text.trim(), created_at: Date.now() / 1000,
+          ...(o.attachments?.length ? { attachments: o.attachments } : {}), ...(o.replyTo ? { reply_to: o.replyTo } : {}) };
       updateOutbox(serverId, (o) => [...o.filter((x) => x.client_id !== clientId), entry]);
       upsertMessage(serverId, chatId, { ...localMessage(entry), status: get().runtime[serverId]?.status === 'online' ? 'pending' : 'queued' });
       if (retryClientId) sendPaused.delete(serverId);
@@ -501,6 +524,27 @@ export const useApp = create<AppState>((set, get) => {
       patch(serverId, (s) => ({
         messages: { ...s.messages, [chatId]: (s.messages[chatId] ?? []).filter((m) => !(m.id === clientId && isLocal(m))) },
       }));
+    },
+
+    updateDraftFiles: (serverId, chatId, fn) => {
+      const key = draftKey(serverId, chatId);
+      set((state) => {
+        const next = fn(state.draftFiles[key] ?? []);
+        const draftFiles = { ...state.draftFiles };
+        if (next.length) draftFiles[key] = next;
+        else delete draftFiles[key];
+        return { draftFiles };
+      });
+    },
+
+    setReplyTo: (serverId, chatId, ref) => {
+      const key = draftKey(serverId, chatId);
+      set((state) => {
+        const replyTo = { ...state.replyTo };
+        if (ref) replyTo[key] = ref;
+        else delete replyTo[key];
+        return { replyTo };
+      });
     },
 
     setDraft: (serverId, chatId, text) => {

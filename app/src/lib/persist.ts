@@ -22,6 +22,13 @@ export function attachPersistence(): () => void {
         cacheSet('drafts', state.drafts);
         continue;
       }
+      if (key === 'draftFiles') {
+        // Only finished uploads are worth keeping: the server holds them for a day.
+        const ready = Object.fromEntries(Object.entries(state.draftFiles)
+          .map(([k, files]) => [k, files.filter((f) => f.status === 'ready' && !f.autoSend)]).filter(([, files]) => files.length));
+        cacheSet('draftFiles', ready);
+        continue;
+      }
       const [kind, serverId, chatId] = key.split('|');
       const rt = state.runtime[serverId];
       if (!rt) continue; // removed meanwhile; removeServer clears its cache
@@ -36,6 +43,7 @@ export function attachPersistence(): () => void {
 
   return useApp.subscribe((state) => {
     if (state.drafts !== prev.drafts) dirty.add('drafts');
+    if (state.draftFiles !== prev.draftFiles) dirty.add('draftFiles');
     for (const [serverId, rt] of Object.entries(state.runtime)) {
       const before = prev.runtime[serverId];
       if (!before || rt === before) continue;
