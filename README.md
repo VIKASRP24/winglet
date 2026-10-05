@@ -191,14 +191,29 @@ hermes -p researcher winglet pair
 - [x] Inbox + push notifications (Web Push for iPhone/desktop, ntfy for Android)
 - [x] Approvals and answers to the agent's questions, from the phone
 
-**v0.2: The wow**
-- [ ] Live screen: watch and take over a bot's computer
-- [ ] Call your bot (real-time voice)
+**v0.2: New look**
+- [ ] Light and true-black dark themes, accent colors
+- [ ] Glass surfaces, smooth animations and haptics
+- [ ] New home screen and tab navigation
 
-**v0.3: Daily driver**
-- [ ] Goals, routines and activity timeline
-- [ ] Multiple servers
-- [ ] Widgets / shortcuts where the platform allows
+**v0.3: Chat essentials**
+- [ ] Send photos, files and voice notes
+- [ ] Full-screen media viewer, copy, reply and retry
+- [ ] One tidy activity card per task instead of a stream of tool messages
+
+**v0.4: Your agent**
+- [ ] Model picker per chat, default model, reasoning effort
+- [ ] Add model providers from the phone
+- [ ] Persona, memory, and an animated pet
+
+**v0.5: Control center**
+- [ ] Server health, restart, and Hermes and Winglet updates
+- [ ] Logs, devices, scheduled tasks, skills and tools
+
+**Later**
+- [ ] Goals, live screen, real-time voice, widgets
+
+The full plan, with priorities and the work behind each item, is in [docs/APP_PLAN.md](docs/APP_PLAN.md).
 
 ## FAQ
 
