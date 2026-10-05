@@ -1,8 +1,11 @@
+import * as Clipboard from 'expo-clipboard';
 import { Lexer, type Token, type Tokens } from 'marked';
-import { memo, type ReactNode } from 'react';
-import { Linking, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { memo, useState, type ReactNode } from 'react';
+import { Linking, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Image } from 'expo-image';
 import { colors, fonts, radius } from '../lib/theme';
+import { Check, Copy } from './icons';
+import { tap } from './ui';
 
 type Props = { text: string; resolveUrl?: (url: string) => string; dim?: boolean };
 
@@ -12,7 +15,7 @@ export const Markdown = memo(function Markdown({ text, resolveUrl, dim }: Props)
   try {
     tokens = new Lexer({ gfm: true, breaks: true }).lex(text || '');
   } catch {
-    return <Text style={[styles.p, dim && styles.dim]}>{text}</Text>;
+    return <Text selectable style={[styles.p, dim && styles.dim]}>{text}</Text>;
   }
   return <View style={styles.root}>{renderBlocks(tokens, { resolveUrl, dim })}</View>;
 });
@@ -32,7 +35,7 @@ function renderBlock(token: Token, key: number, ctx: Ctx): ReactNode {
       const onlyImage = t.tokens?.length === 1 && t.tokens[0].type === 'image';
       if (onlyImage) return <MdImage key={key} token={t.tokens[0] as Tokens.Image} ctx={ctx} />;
       return (
-        <Text key={key} style={[styles.p, ctx.dim && styles.dim]}>
+        <Text key={key} selectable style={[styles.p, ctx.dim && styles.dim]}>
           {renderInline(t.tokens ?? [], ctx)}
         </Text>
       );
@@ -41,7 +44,7 @@ function renderBlock(token: Token, key: number, ctx: Ctx): ReactNode {
       const t = token as Tokens.Heading;
       const size = t.depth === 1 ? 22 : t.depth === 2 ? 19 : 16.5;
       return (
-        <Text key={key} style={[styles.h, { fontSize: size, lineHeight: size * 1.3 }]}>
+        <Text key={key} selectable style={[styles.h, { fontSize: size, lineHeight: size * 1.3 }]}>
           {renderInline(t.tokens ?? [], ctx)}
         </Text>
       );
@@ -50,7 +53,10 @@ function renderBlock(token: Token, key: number, ctx: Ctx): ReactNode {
       const t = token as Tokens.Code;
       return (
         <View key={key} style={styles.codeBlock}>
-          {t.lang ? <Text style={styles.codeLang}>{t.lang}</Text> : null}
+          <View style={styles.codeHead}>
+            <Text style={styles.codeLang}>{t.lang || 'code'}</Text>
+            <CopyButton text={t.text} />
+          </View>
           <ScrollView horizontal showsHorizontalScrollIndicator={false}>
             <Text selectable style={styles.codeText}>{t.text}</Text>
           </ScrollView>
@@ -79,7 +85,7 @@ function renderBlock(token: Token, key: number, ctx: Ctx): ReactNode {
               <View style={{ flex: 1 }}>
                 {item.tokens.map((child, ci) =>
                   child.type === 'text' ? (
-                    <Text key={ci} style={[styles.p, ctx.dim && styles.dim]}>
+                    <Text key={ci} selectable style={[styles.p, ctx.dim && styles.dim]}>
                       {renderInline((child as Tokens.Text).tokens ?? [child], ctx)}
                     </Text>
                   ) : (
@@ -99,13 +105,13 @@ function renderBlock(token: Token, key: number, ctx: Ctx): ReactNode {
           <View>
             <View style={[styles.tr, styles.thead]}>
               {t.header.map((cell, ci) => (
-                <Text key={ci} style={[styles.td, styles.th]}>{renderInline(cell.tokens, ctx)}</Text>
+                <Text key={ci} selectable style={[styles.td, styles.th]}>{renderInline(cell.tokens, ctx)}</Text>
               ))}
             </View>
             {t.rows.map((row, ri) => (
               <View key={ri} style={styles.tr}>
                 {row.map((cell, ci) => (
-                  <Text key={ci} style={styles.td}>{renderInline(cell.tokens, ctx)}</Text>
+                  <Text key={ci} selectable style={styles.td}>{renderInline(cell.tokens, ctx)}</Text>
                 ))}
               </View>
             ))}
@@ -118,12 +124,12 @@ function renderBlock(token: Token, key: number, ctx: Ctx): ReactNode {
     case 'html':
     case 'text':
       return (
-        <Text key={key} style={[styles.p, ctx.dim && styles.dim]}>
+        <Text key={key} selectable style={[styles.p, ctx.dim && styles.dim]}>
           {'tokens' in token && token.tokens ? renderInline(token.tokens, ctx) : (token as Tokens.Text).text}
         </Text>
       );
     default:
-      return 'raw' in token ? <Text key={key} style={styles.p}>{(token as Tokens.Generic).raw}</Text> : null;
+      return 'raw' in token ? <Text key={key} selectable style={styles.p}>{(token as Tokens.Generic).raw}</Text> : null;
   }
 }
 
@@ -162,6 +168,28 @@ function renderInline(tokens: Token[], ctx: Ctx): ReactNode[] {
         return <Text key={i}>{decode((token as Tokens.Generic).raw ?? '')}</Text>;
     }
   });
+}
+
+/** Copies the exact code block, then confirms with a check mark for a moment. */
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={copied ? 'Copied' : 'Copy code'}
+      hitSlop={10}
+      style={({ pressed }) => [styles.copy, pressed && { opacity: 0.6 }]}
+      onPress={async () => {
+        tap();
+        await Clipboard.setStringAsync(text);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1600);
+      }}
+    >
+      {copied ? <Check size={14} color={colors.green} /> : <Copy size={14} color={colors.textMuted} />}
+      <Text style={[styles.copyText, copied && { color: colors.green }]}>{copied ? 'Copied' : 'Copy'}</Text>
+    </Pressable>
+  );
 }
 
 function MdImage({ token, ctx }: { token: Tokens.Image; ctx: Ctx }) {
@@ -209,7 +237,10 @@ const styles = StyleSheet.create({
     backgroundColor: colors.codeBg, borderRadius: radius.md, borderWidth: 1, borderColor: colors.divider,
     padding: 12, marginVertical: 2,
   },
-  codeLang: { color: colors.textFaint, fontFamily: fonts.semibold, fontSize: 11, marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.6 },
+  codeHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 },
+  codeLang: { color: colors.textFaint, fontFamily: fonts.semibold, fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.6 },
+  copy: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingVertical: 2, paddingHorizontal: 4 },
+  copyText: { color: colors.textMuted, fontFamily: fonts.semibold, fontSize: 12 },
   codeText: { fontFamily: fonts.mono, fontSize: 13.5, lineHeight: 19, color: '#E3E5E8' },
   quote: { flexDirection: 'row', gap: 10 },
   quoteBar: { width: 4, borderRadius: 4, backgroundColor: colors.border },
