@@ -1,176 +1,350 @@
 import { LinearGradient } from 'expo-linear-gradient';
-import * as Haptics from 'expo-haptics';
-import { useState, type ReactNode } from 'react';
-import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, TextInput, View, type PressableProps, type StyleProp, type TextInputProps, type ViewStyle } from 'react-native';
-import { colors, fonts, gradients, radius } from '../lib/theme';
+import { useEffect, useState, type ReactNode } from 'react';
+import {
+  ActivityIndicator, Platform, Pressable, Switch, Text, TextInput, View,
+  type AccessibilityRole, type PressableProps, type StyleProp, type TextInputProps, type ViewStyle,
+} from 'react-native';
+import Animated, {
+  cancelAnimation, useAnimatedStyle, useSharedValue, withRepeat, withSequence, withSpring, withTiming,
+} from 'react-native-reanimated';
+import { haptic } from '../lib/haptics';
+import { FIXED } from '../lib/theme';
+import { spring, useReducedMotion } from '../lib/motion';
+import { makeStyles, useTheme } from '../lib/themeContext';
+import { ChevronRight } from './icons';
 
-export function tap() {
-  if (Platform.OS !== 'web') Haptics.selectionAsync().catch(() => undefined);
+const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
+
+type TapProps = Omit<PressableProps, 'style'> & {
+  style?: StyleProp<ViewStyle> | ((state: { pressed: boolean; hovered?: boolean }) => StyleProp<ViewStyle>);
+  /** How much it shrinks while pressed. */
+  scaleTo?: number;
+  feedback?: 'selection' | 'light' | 'none';
+  children?: ReactNode;
+};
+
+/** A pressable that gives way slightly under the finger. Acts on release, so a touch can slide off. */
+export function Tap({ style, scaleTo = 0.97, feedback = 'none', onPressIn, onPressOut, onPress, children, ...rest }: TapProps) {
+  const reduced = useReducedMotion();
+  const scale = useSharedValue(1);
+  const [hovered, setHovered] = useState(false);
+  const [pressed, setPressed] = useState(false);
+  const animated = useAnimatedStyle(() => ({ transform: [{ scale: scale.value }] }));
+  return (
+    <AnimatedPressable
+      accessibilityRole="button"
+      {...rest}
+      onHoverIn={() => setHovered(true)}
+      onHoverOut={() => setHovered(false)}
+      onPressIn={(e) => {
+        setPressed(true);
+        if (!reduced) scale.value = withSpring(scaleTo, spring.snappy);
+        onPressIn?.(e);
+      }}
+      onPressOut={(e) => {
+        setPressed(false);
+        scale.value = reduced ? 1 : withSpring(1, spring.snappy);
+        onPressOut?.(e);
+      }}
+      onPress={(e) => {
+        if (feedback === 'selection') haptic.selection();
+        else if (feedback === 'light') haptic.light();
+        onPress?.(e);
+      }}
+      style={[typeof style === 'function' ? style({ pressed, hovered }) : style, animated]}
+    >
+      {children}
+    </AnimatedPressable>
+  );
 }
 
 type ButtonProps = {
   title: string;
   onPress?: () => void;
-  variant?: 'primary' | 'secondary' | 'danger' | 'ghost' | 'success';
+  variant?: 'primary' | 'secondary' | 'tonal' | 'ghost' | 'danger';
+  size?: 'sm' | 'md' | 'lg';
   icon?: ReactNode;
   loading?: boolean;
   disabled?: boolean;
   style?: StyleProp<ViewStyle>;
-  size?: 'md' | 'lg' | 'sm';
+  accessibilityLabel?: string;
+  feedback?: 'selection' | 'light' | 'none';
 };
 
-export function Button({ title, onPress, variant = 'primary', icon, loading, disabled, style, size = 'md' }: ButtonProps) {
-  const [hover, setHover] = useState(false);
-  const height = size === 'lg' ? 52 : size === 'sm' ? 34 : 42;
-  const bg = {
-    primary: hover ? colors.accentHover : colors.accent,
-    secondary: hover ? '#6D6F78' : '#4E5058',
-    danger: hover ? '#C03537' : '#DA373C',
-    success: hover ? '#1A8B4A' : colors.green,
-    ghost: hover ? colors.hover : 'transparent',
-  }[variant];
-  return (
-    <Pressable
-      onPress={() => {
-        tap();
-        onPress?.();
-      }}
-      onHoverIn={() => setHover(true)}
-      onHoverOut={() => setHover(false)}
-      disabled={disabled || loading}
-      style={({ pressed }) => [
-        styles.button,
-        { height, backgroundColor: bg, opacity: disabled ? 0.5 : 1, transform: [{ scale: pressed ? 0.98 : 1 }] },
-        size === 'sm' && { paddingHorizontal: 12 },
-        style,
-      ]}
-    >
-      {loading ? <ActivityIndicator color={colors.white} /> : icon}
-      {!loading || !icon ? (
-        <Text style={[styles.buttonText, size === 'sm' && { fontSize: 13.5 }, size === 'lg' && { fontSize: 16 }]}>{title}</Text>
-      ) : null}
-    </Pressable>
+export function Button({ title, onPress, variant = 'primary', size = 'md', icon, loading, disabled, style, accessibilityLabel, feedback = 'selection' }: ButtonProps) {
+  const t = useTheme();
+  const s = useStyles();
+  const c = t.colors;
+  const height = size === 'lg' ? 54 : size === 'sm' ? 38 : 46;
+  const fg = { primary: c.onAccent, secondary: c.text, tonal: c.onAccentSoft, ghost: c.accent, danger: c.danger }[variant];
+  const bg = { primary: 'transparent', secondary: c.surfaceSunken, tonal: c.accentSoft, ghost: 'transparent', danger: c.dangerSoft }[variant];
+  const inner = (
+    <>
+      {loading ? <ActivityIndicator color={fg} /> : icon}
+      {title ? <Text style={[s.buttonText, { color: fg }, size === 'sm' && { fontSize: 14 }, size === 'lg' && { fontSize: 16.5 }]} numberOfLines={1}>{title}</Text> : null}
+    </>
   );
-}
-
-export function GradientButton({ title, onPress, icon, loading, disabled, style }: ButtonProps) {
   return (
-    <Pressable
-      onPress={() => {
-        tap();
-        onPress?.();
-      }}
-      disabled={disabled || loading}
-      style={({ pressed }) => [{ borderRadius: radius.md, overflow: 'hidden', opacity: disabled ? 0.5 : 1, transform: [{ scale: pressed ? 0.98 : 1 }] }, style]}
-    >
-      <LinearGradient colors={gradients.accent} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={[styles.button, { height: 52 }]}>
-        {loading ? <ActivityIndicator color={colors.white} /> : icon}
-        <Text style={[styles.buttonText, { fontSize: 16 }]}>{title}</Text>
-      </LinearGradient>
-    </Pressable>
-  );
-}
-
-export function Row({ children, onPress, active, style, onLongPress }: {
-  children: ReactNode; onPress?: () => void; active?: boolean; style?: StyleProp<ViewStyle>; onLongPress?: PressableProps['onLongPress'];
-}) {
-  const [hover, setHover] = useState(false);
-  return (
-    <Pressable
+    <Tap
+      feedback={feedback}
+      accessibilityLabel={accessibilityLabel ?? title}
+      accessibilityState={{ disabled: !!(disabled || loading), busy: !!loading }}
       onPress={onPress}
-      onLongPress={onLongPress}
-      onHoverIn={() => setHover(true)}
-      onHoverOut={() => setHover(false)}
-      style={({ pressed }) => [
-        styles.row,
-        (hover || pressed) && { backgroundColor: colors.hover },
-        active && { backgroundColor: colors.active },
-        style,
-      ]}
+      disabled={disabled || loading}
+      style={[s.buttonShell, { minHeight: height, opacity: disabled ? 0.45 : 1, backgroundColor: bg }, style]}
+    >
+      {variant === 'primary' ? (
+        <LinearGradient colors={[c.accentFillLight, c.accentFill]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+          style={[s.buttonInner, { minHeight: height }, size === 'sm' && { paddingHorizontal: 14 }]}>
+          {inner}
+        </LinearGradient>
+      ) : (
+        <View style={[s.buttonInner, { minHeight: height }, size === 'sm' && { paddingHorizontal: 14 }]}>{inner}</View>
+      )}
+    </Tap>
+  );
+}
+
+export function IconButton({ children, onPress, label, style, variant = 'plain', size = 40, badge }: {
+  children: ReactNode; onPress?: () => void; label: string; style?: StyleProp<ViewStyle>;
+  variant?: 'plain' | 'filled' | 'tonal'; size?: number; badge?: number;
+}) {
+  const t = useTheme();
+  const bg = variant === 'filled' ? t.colors.surfaceSunken : variant === 'tonal' ? t.colors.accentSoft : 'transparent';
+  // Small visual buttons still get a 48dp touch target.
+  const slop = Math.max(0, (48 - size) / 2);
+  return (
+    <Tap
+      feedback="selection"
+      accessibilityLabel={label}
+      hitSlop={slop}
+      onPress={onPress}
+      scaleTo={0.92}
+      style={({ pressed, hovered }) => [{
+        width: size, height: size, borderRadius: size / 2, alignItems: 'center', justifyContent: 'center',
+        backgroundColor: pressed || hovered ? t.colors.pressed : bg,
+      }, style]}
     >
       {children}
-    </Pressable>
+      {badge ? <Badge count={badge} style={{ position: 'absolute', top: -3, right: -3 }} /> : null}
+    </Tap>
   );
 }
 
-export function Field(props: TextInputProps & { label?: string; hint?: string }) {
-  const [focus, setFocus] = useState(false);
-  const { label, hint, style, ...rest } = props;
-  return (
-    <View style={{ gap: 8 }}>
-      {label ? <Text style={styles.label}>{label}</Text> : null}
-      <TextInput
-        placeholderTextColor={colors.textFaint}
-        {...rest}
-        onFocus={(e) => {
-          setFocus(true);
-          rest.onFocus?.(e);
-        }}
-        onBlur={(e) => {
-          setFocus(false);
-          rest.onBlur?.(e);
-        }}
-        style={[styles.input, focus && { borderColor: colors.accent }, style]}
-      />
-      {hint ? <Text style={styles.hint}>{hint}</Text> : null}
-    </View>
-  );
-}
-
-export function Badge({ count, style }: { count: number; style?: StyleProp<ViewStyle> }) {
+export function Badge({ count, style, dot }: { count: number; style?: StyleProp<ViewStyle>; dot?: boolean }) {
+  const s = useStyles();
+  const t = useTheme();
   if (!count) return null;
+  if (dot) return <View style={[s.dot, { backgroundColor: t.colors.danger }, style]} />;
   return (
-    <View style={[styles.badge, style]}>
-      <Text style={styles.badgeText}>{count > 99 ? '99+' : count}</Text>
+    <View style={[s.badge, style]} accessibilityLabel={`${count} waiting`}>
+      <Text style={s.badgeText}>{count > 99 ? '99+' : count}</Text>
     </View>
   );
 }
 
-export function SectionLabel({ children, right }: { children: ReactNode; right?: ReactNode }) {
+export function SectionHeader({ title, right, style }: { title: string; right?: ReactNode; style?: StyleProp<ViewStyle> }) {
+  const s = useStyles();
   return (
-    <View style={styles.section}>
-      <Text style={styles.sectionText}>{children}</Text>
+    <View style={[s.section, style]} accessibilityRole="header">
+      <Text style={s.sectionText}>{title}</Text>
       {right}
     </View>
   );
 }
 
-export function IconButton({ children, onPress, label, style }: { children: ReactNode; onPress?: () => void; label: string; style?: StyleProp<ViewStyle> }) {
-  const [hover, setHover] = useState(false);
+/** A grouped list, like iOS settings: rows inside one rounded card, divided by hairlines. */
+export function ListGroup({ children, style }: { children: ReactNode; style?: StyleProp<ViewStyle> }) {
+  const s = useStyles();
+  const items = (Array.isArray(children) ? children.flat() : [children]).filter(Boolean);
   return (
-    <Pressable
-      accessibilityLabel={label}
-      onPress={() => {
-        tap();
-        onPress?.();
-      }}
-      onHoverIn={() => setHover(true)}
-      onHoverOut={() => setHover(false)}
-      hitSlop={8}
-      style={({ pressed }) => [styles.iconButton, (hover || pressed) && { backgroundColor: colors.hover }, style]}
-    >
-      {children}
-    </Pressable>
+    <View style={[s.group, style]}>
+      {items.map((child, i) => (
+        <View key={i}>
+          {i > 0 ? <View style={s.hairline} /> : null}
+          {child}
+        </View>
+      ))}
+    </View>
   );
 }
 
-const styles = StyleSheet.create({
-  button: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, borderRadius: radius.md, paddingHorizontal: 18,
-  },
-  buttonText: { color: colors.white, fontFamily: fonts.semibold, fontSize: 15 },
-  row: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 10, paddingVertical: 9, borderRadius: radius.sm + 2 },
-  label: { color: colors.textMuted, fontFamily: fonts.bold, fontSize: 12, letterSpacing: 0.5, textTransform: 'uppercase' },
-  hint: { color: colors.textFaint, fontFamily: fonts.regular, fontSize: 13, lineHeight: 18 },
-  input: {
-    backgroundColor: colors.rail, color: colors.text, fontFamily: fonts.medium, fontSize: 16, borderRadius: radius.md,
-    paddingHorizontal: 14, paddingVertical: 13, borderWidth: 1, borderColor: 'transparent',
-  },
+export function ListRow({ icon, iconColor, title, subtitle, value, right, onPress, chevron = !!onPress, destructive, accessibilityRole, disabled }: {
+  icon?: ReactNode; iconColor?: string; title: string; subtitle?: string; value?: string; right?: ReactNode;
+  onPress?: () => void; chevron?: boolean; destructive?: boolean; accessibilityRole?: AccessibilityRole; disabled?: boolean;
+}) {
+  const t = useTheme();
+  const s = useStyles();
+  const body = (
+    <>
+      {icon ? <View style={[s.rowIcon, { backgroundColor: iconColor ? `${iconColor}22` : t.colors.accentSoft }]}>{icon}</View> : null}
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <Text style={[s.rowTitle, destructive && { color: t.colors.danger }]}>{title}</Text>
+        {subtitle ? <Text style={s.rowSubtitle}>{subtitle}</Text> : null}
+      </View>
+      {value ? <Text style={s.rowValue} numberOfLines={1}>{value}</Text> : null}
+      {right}
+      {chevron ? <ChevronRight size={18} color={t.colors.textTertiary} /> : null}
+    </>
+  );
+  if (!onPress) return <View style={s.row}>{body}</View>;
+  return (
+    <Tap feedback="selection" scaleTo={0.99} disabled={disabled} accessibilityRole={accessibilityRole ?? 'button'} accessibilityLabel={title}
+      onPress={onPress} style={({ pressed, hovered }) => [s.row, (pressed || hovered) && { backgroundColor: t.colors.pressed }, disabled && { opacity: 0.5 }]}>
+      {body}
+    </Tap>
+  );
+}
+
+export function Toggle({ value, onValueChange, label }: { value: boolean; onValueChange: (v: boolean) => void; label: string }) {
+  const t = useTheme();
+  return (
+    <Switch
+      accessibilityLabel={label}
+      value={value}
+      onValueChange={(v) => {
+        haptic.selection();
+        onValueChange(v);
+      }}
+      trackColor={{ false: t.colors.borderStrong, true: t.colors.accentFill }}
+      thumbColor={FIXED.white}
+      {...(Platform.OS === 'web' ? ({ activeThumbColor: FIXED.white } as object) : {})}
+    />
+  );
+}
+
+/** A row of options with a sliding highlight. */
+export function Segmented<T extends string>({ options, value, onChange, label }: {
+  options: { value: T; label: string; icon?: ReactNode }[]; value: T; onChange: (v: T) => void; label: string;
+}) {
+  const t = useTheme();
+  const s = useStyles();
+  const [width, setWidth] = useState(0);
+  const index = Math.max(0, options.findIndex((o) => o.value === value));
+  const x = useSharedValue(0);
+  const reduced = useReducedMotion();
+  const each = width ? (width - 8) / options.length : 0;
+  useEffect(() => {
+    x.value = reduced ? index * each : withSpring(index * each, spring.snappy);
+  }, [index, each, reduced, x]);
+  const pill = useAnimatedStyle(() => ({ transform: [{ translateX: x.value }] }));
+  return (
+    <View accessibilityRole="radiogroup" accessibilityLabel={label} style={s.segmented} onLayout={(e) => setWidth(e.nativeEvent.layout.width)}>
+      {each ? <Animated.View style={[s.segmentPill, { width: each }, pill]} /> : null}
+      {options.map((o) => {
+        const on = o.value === value;
+        return (
+          <Pressable key={o.value} accessibilityRole="radio" accessibilityState={{ selected: on }} accessibilityLabel={o.label}
+            style={s.segment} onPress={() => { if (!on) { haptic.selection(); onChange(o.value); } }}>
+            {o.icon}
+            <Text style={[s.segmentText, { color: on ? t.colors.text : t.colors.textSecondary }]} numberOfLines={1}>{o.label}</Text>
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+}
+
+export function Chip({ label, icon, selected, onPress, accessibilityLabel }: {
+  label: string; icon?: ReactNode; selected?: boolean; onPress?: () => void; accessibilityLabel?: string;
+}) {
+  const t = useTheme();
+  const s = useStyles();
+  return (
+    <Tap feedback="selection" onPress={onPress} accessibilityLabel={accessibilityLabel ?? label}
+      accessibilityState={selected === undefined ? undefined : { selected }}
+      style={({ hovered }) => [s.chip, selected ? { backgroundColor: t.colors.accentSoft, borderColor: 'transparent' } : hovered && { backgroundColor: t.colors.pressed }]}>
+      {icon}
+      <Text style={[s.chipText, { color: selected ? t.colors.onAccentSoft : t.colors.text }]} numberOfLines={1}>{label}</Text>
+    </Tap>
+  );
+}
+
+export function Field(props: TextInputProps & { label?: string; hint?: string }) {
+  const t = useTheme();
+  const s = useStyles();
+  const [focus, setFocus] = useState(false);
+  const { label, hint, style, ...rest } = props;
+  return (
+    <View style={{ gap: 8 }}>
+      {label ? <Text style={s.fieldLabel}>{label}</Text> : null}
+      <TextInput
+        placeholderTextColor={t.colors.textTertiary}
+        accessibilityLabel={label}
+        {...rest}
+        onFocus={(e) => { setFocus(true); rest.onFocus?.(e); }}
+        onBlur={(e) => { setFocus(false); rest.onBlur?.(e); }}
+        style={[s.input, focus && { borderColor: t.colors.accent }, style]}
+      />
+      {hint ? <Text style={s.hint}>{hint}</Text> : null}
+    </View>
+  );
+}
+
+/** A placeholder block that shimmers while content loads (still when motion is reduced). */
+export function Skeleton({ width, height = 14, radius = 8, style }: { width?: number | `${number}%`; height?: number; radius?: number; style?: StyleProp<ViewStyle> }) {
+  const t = useTheme();
+  const reduced = useReducedMotion();
+  const o = useSharedValue(0.55);
+  useEffect(() => {
+    if (reduced) return;
+    o.value = withRepeat(withSequence(withTiming(1, { duration: 700 }), withTiming(0.55, { duration: 700 })), -1);
+    return () => cancelAnimation(o);
+  }, [reduced, o]);
+  const anim = useAnimatedStyle(() => ({ opacity: o.value }));
+  return <Animated.View style={[{ width: width ?? '100%', height, borderRadius: radius, backgroundColor: t.colors.surfaceSunken }, anim, style]} />;
+}
+
+export function Card({ children, style, onPress, accessibilityLabel }: { children: ReactNode; style?: StyleProp<ViewStyle>; onPress?: () => void; accessibilityLabel?: string }) {
+  const s = useStyles();
+  const t = useTheme();
+  if (!onPress) return <View style={[s.card, style]}>{children}</View>;
+  return (
+    <Tap feedback="selection" scaleTo={0.98} onPress={onPress} accessibilityLabel={accessibilityLabel}
+      style={({ hovered }) => [s.card, hovered && { borderColor: t.colors.borderStrong }, style]}>
+      {children}
+    </Tap>
+  );
+}
+
+const useStyles = makeStyles((t) => ({
+  buttonShell: { borderRadius: t.radius.pill, overflow: 'hidden' },
+  buttonInner: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingHorizontal: 20 },
+  buttonText: { fontFamily: t.fonts.semibold, fontSize: 15.5 },
   badge: {
-    minWidth: 18, height: 18, paddingHorizontal: 5, borderRadius: 9, backgroundColor: colors.red, alignItems: 'center', justifyContent: 'center',
+    minWidth: 20, height: 20, paddingHorizontal: 6, borderRadius: 10, backgroundColor: t.colors.danger,
+    alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: t.colors.bg,
   },
-  badgeText: { color: colors.white, fontFamily: fonts.bold, fontSize: 11 },
-  section: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 10, paddingTop: 18, paddingBottom: 6 },
-  sectionText: { color: colors.textMuted, fontFamily: fonts.bold, fontSize: 12, letterSpacing: 0.4, textTransform: 'uppercase' },
-  iconButton: { width: 36, height: 36, borderRadius: radius.sm + 2, alignItems: 'center', justifyContent: 'center' },
-});
+  badgeText: { color: t.colors.onDanger, fontFamily: t.fonts.bold, fontSize: 11 },
+  dot: { width: 9, height: 9, borderRadius: 5 },
+  section: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 4, paddingTop: 22, paddingBottom: 10 },
+  sectionText: { ...t.type.heading, color: t.colors.text },
+  group: { backgroundColor: t.colors.surface, borderRadius: t.radius.lg, borderWidth: 1, borderColor: t.colors.border, overflow: 'hidden' },
+  hairline: { height: 1, backgroundColor: t.colors.border, marginLeft: 60 },
+  row: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 16, paddingVertical: 13, minHeight: 56 },
+  rowIcon: { width: 32, height: 32, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+  rowTitle: { ...t.type.body, fontFamily: t.fonts.medium, color: t.colors.text },
+  rowSubtitle: { ...t.type.callout, color: t.colors.textSecondary, marginTop: 1 },
+  rowValue: { ...t.type.callout, color: t.colors.textSecondary, maxWidth: 160 },
+  segmented: { flexDirection: 'row', backgroundColor: t.colors.surfaceSunken, borderRadius: t.radius.pill, padding: 4 },
+  segmentPill: {
+    position: 'absolute', top: 4, bottom: 4, left: 4, borderRadius: t.radius.pill, backgroundColor: t.colors.surfaceHigh,
+    borderWidth: 1, borderColor: t.colors.border,
+    shadowColor: t.colors.shadow, shadowOpacity: t.scheme === 'light' ? 0.08 : 0, shadowRadius: 6, shadowOffset: { width: 0, height: 2 },
+  },
+  segment: { flex: 1, minHeight: 40, flexDirection: 'row', gap: 6, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 8 },
+  segmentText: { fontFamily: t.fonts.semibold, fontSize: 14 },
+  chip: {
+    flexDirection: 'row', alignItems: 'center', gap: 6, minHeight: 38, paddingHorizontal: 14, borderRadius: t.radius.pill,
+    borderWidth: 1, borderColor: t.colors.border, backgroundColor: t.colors.surface,
+  },
+  chipText: { fontFamily: t.fonts.medium, fontSize: 14 },
+  fieldLabel: { ...t.type.label, color: t.colors.textSecondary },
+  hint: { ...t.type.caption, fontFamily: t.fonts.regular, color: t.colors.textSecondary },
+  input: {
+    backgroundColor: t.colors.surfaceSunken, color: t.colors.text, fontFamily: t.fonts.medium, fontSize: 16, borderRadius: t.radius.md,
+    paddingHorizontal: 16, paddingVertical: 14, borderWidth: 1, borderColor: 'transparent',
+    ...(Platform.OS === 'web' ? ({ outlineStyle: 'none' } as object) : {}),
+  },
+  card: { backgroundColor: t.colors.surface, borderRadius: t.radius.lg, borderWidth: 1, borderColor: t.colors.border, padding: 16 },
+}));
