@@ -1,49 +1,63 @@
 import { BlurTargetView } from 'expo-blur';
-import { Image } from 'expo-image';
+import * as Clipboard from 'expo-clipboard';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { FlatList, KeyboardAvoidingView, Platform, Pressable, Text, TextInput, View } from 'react-native';
+import { FlatList, KeyboardAvoidingView, Platform, Pressable, Share as SystemShare, StyleSheet, Text, View } from 'react-native';
+import { Gesture, GestureDetector, ScrollView } from 'react-native-gesture-handler';
 import Animated, {
-  cancelAnimation, FadeIn, FadeInDown, useAnimatedStyle, useSharedValue, withDelay, withRepeat, withSequence, withTiming, ZoomIn,
+  cancelAnimation, FadeIn, FadeInDown, FadeOut, runOnJS, useAnimatedStyle, useSharedValue, withDelay, withRepeat, withSequence,
+  withSpring, withTiming, ZoomIn,
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { moodOf } from '../lib/agent';
 import { mediaUrl } from '../lib/api';
 import { connectionView } from '../lib/connection';
+import { exportChat } from '../lib/exportChat';
 import { haptic } from '../lib/haptics';
-import { useReducedMotion } from '../lib/motion';
+import { spring, useReducedMotion } from '../lib/motion';
 import { usePrefs } from '../lib/prefs';
-import { draftKey, isTyping, useApp } from '../lib/store';
+import { mutedUntil, usePushPrefs } from '../lib/pushPrefs';
+import { isTyping, useApp } from '../lib/store';
+import { plainText } from '../lib/text';
+import { FIXED } from '../lib/theme';
 import { makeStyles, useTheme } from '../lib/themeContext';
-import type { InboxItem, Message, Server } from '../lib/types';
+import type { InboxItem, Message, ReplyRef, Server } from '../lib/types';
 import { BotAvatar, botColor, UserAvatar } from './BotAvatar';
+import { Composer } from './Composer';
 import { ConnectionBanner } from './ConnectionBanner';
 import { Glass } from './Glass';
-import { Activity, ArrowUp, ChevronLeft, Clock, FileText, MoreHorizontal, Pencil, RotateCcw, Square, Trash2 } from './icons';
+import {
+  Activity, ArrowDown, Bell, BellOff, ChevronLeft, Clock, Copy, Download, FileText, Info, MoreHorizontal, Pencil, Reply,
+  RotateCcw, Share, Trash2,
+} from './icons';
 import { InboxCard } from './InboxCards';
 import { Markdown } from './Markdown';
+import { MessageAttachments } from './MessageAttachments';
 import { Sheet, SheetAction } from './Sheet';
-import { Button, Chip, Field, IconButton, Tap } from './ui';
+import { Badge, Button, Chip, Field, IconButton, Tap } from './ui';
 
 const GROUP_WINDOW_S = 7 * 60;
-/** One line of body text plus the input's vertical padding. */
-const MIN_INPUT = 41;
-const COMMANDS = [
-  { cmd: '/new', hint: 'Start a fresh conversation' },
-  { cmd: '/stop', hint: 'Stop what the agent is doing' },
-  { cmd: '/retry', hint: 'Retry the last reply' },
-  { cmd: '/undo', hint: 'Remove the last exchange' },
-  { cmd: '/model', hint: 'Show or switch the model' },
-  { cmd: '/compress', hint: 'Compress the conversation context' },
-  { cmd: '/usage', hint: 'Token usage for this session' },
-  { cmd: '/help', hint: 'Everything Hermes can do' },
-];
 const SUGGESTIONS = ['What can you do?', "What's on my plate today?", 'Check disk space on this machine'];
+/** Scrolled further up than this, the jump-to-latest button appears. */
+const AWAY_PX = 480;
+
+/**
+ * Touch screens get the phone gestures: long-press for the message menu (text isn't selectable in
+ * place, "Select text" opens it in a sheet) and swipe right to reply. A mouse gets selectable text
+ * and a small toolbar on hover.
+ */
+const TOUCH = Platform.OS !== 'web' || !!globalThis.matchMedia?.('(hover: none)').matches;
 
 type Row =
   | { kind: 'msg'; key: string; m: Message; first: boolean; last: boolean; live: boolean; fresh: boolean }
   | { kind: 'day'; key: string; label: string };
+
+type Actions = {
+  open: (m: Message) => void;
+  reply: (m: Message) => void;
+  jump: (id: string) => void;
+};
 
 export function ChatView({ server, chatId, showBack, embedded }: { server: Server; chatId: string; showBack?: boolean; embedded?: boolean }) {
   const t = useTheme();
@@ -54,6 +68,7 @@ export function ChatView({ server, chatId, showBack, embedded }: { server: Serve
   const loadMessages = useApp((st) => st.loadMessages);
   const hydrateChat = useApp((st) => st.hydrateChat);
   const setVisibleChat = useApp((st) => st.setVisibleChat);
+  const setReplyTo = useApp((st) => st.setReplyTo);
   const chat = runtime?.chats[chatId];
   const messages = runtime?.messages[chatId];
   const loaded = runtime?.loaded[chatId];
@@ -61,6 +76,8 @@ export function ChatView({ server, chatId, showBack, embedded }: { server: Serve
   const [headerH, setHeaderH] = useState(insets.top + 64);
   const [composerH, setComposerH] = useState(80);
   const [menu, setMenu] = useState(false);
+  const [selected, setSelected] = useState<Message | null>(null);
+  const [selectText, setSelectText] = useState<string | null>(null);
   const target = useRef<View>(null);
   const typing = isTyping(runtime, chatId);
 
@@ -85,6 +102,11 @@ export function ChatView({ server, chatId, showBack, embedded }: { server: Serve
     return () => clearInterval(id);
   }, [typing]);
 
+  const reply = useCallback((m: Message) => {
+    haptic.selection();
+    setReplyTo(server.id, chatId, toReplyRef(m));
+  }, [server.id, chatId, setReplyTo]);
+
   if (runtime?.status === 'online' && !chat) {
     return (
       <View style={[s.root, s.center, { paddingTop: insets.top }]}>
@@ -104,7 +126,7 @@ export function ChatView({ server, chatId, showBack, embedded }: { server: Serve
     <KeyboardAvoidingView style={s.root} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <BlurTargetView ref={target} style={{ flex: 1 }}>
         <MessageList server={server} chatId={chatId} messages={messages ?? []} loaded={!!loaded || !!messages?.length}
-          typing={typing} top={headerH} bottom={composerH} />
+          typing={typing} top={headerH} bottom={composerH} onOpen={setSelected} onReply={reply} />
       </BlurTargetView>
       <View style={s.headerWrap} onLayout={(e) => setHeaderH(e.nativeEvent.layout.height)} pointerEvents="box-none">
         <Glass target={target} borderless style={[s.header, { paddingTop: topPad + 8 }]}>
@@ -127,18 +149,38 @@ export function ChatView({ server, chatId, showBack, embedded }: { server: Serve
         <ConnectionBanner server={server} compact />
       </View>
       <Composer server={server} chatId={chatId} busy={typing} bottomInset={embedded ? 12 : insets.bottom} target={target}
-        onHeight={setComposerH} placeholder={chatId === 'general' ? `Message ${server.bot.title}` : chat?.kind === 'home' ? `Message ${server.bot.title}` : `Message #${chat?.title ?? 'chat'}`} />
-      <ChatMenu server={server} chatId={chatId} visible={menu} onClose={() => setMenu(false)} />
+        onHeight={setComposerH} placeholder={chatId === 'general' || chat?.kind === 'home' ? `Message ${server.bot.title}` : `Message #${chat?.title ?? 'chat'}`} />
+      <ChatMenu server={server} chatId={chatId} title={title} visible={menu} onClose={() => setMenu(false)} />
+      <MessageMenu server={server} message={selected} busy={typing} onClose={() => setSelected(null)}
+        onReply={reply} onSelectText={setSelectText} />
+      <Sheet visible={selectText !== null} onClose={() => setSelectText(null)} title="Select text">
+        <ScrollView style={{ maxHeight: 420 }} contentContainerStyle={{ paddingHorizontal: 8, paddingBottom: 8 }}>
+          <Text selectable style={s.selectText}>{selectText}</Text>
+        </ScrollView>
+      </Sheet>
     </KeyboardAvoidingView>
   );
 }
 
-function MessageList({ server, chatId, messages, loaded, typing, top, bottom }: {
+function toReplyRef(m: Message): ReplyRef {
+  const first = m.meta?.attachments?.[0];
+  const text = m.text ? plainText(m.text).slice(0, 240)
+    : first ? (first.kind === 'voice' ? 'Voice note' : first.kind === 'image' ? 'Photo' : first.name) : '';
+  return { id: m.id, role: m.role, text };
+}
+
+function MessageList({ server, chatId, messages, loaded, typing, top, bottom, onOpen, onReply }: {
   server: Server; chatId: string; messages: Message[]; loaded: boolean; typing: boolean; top: number; bottom: number;
+  onOpen: (m: Message) => void; onReply: (m: Message) => void;
 }) {
+  const t = useTheme();
+  const s = useStyles();
   const loadMessages = useApp((st) => st.loadMessages);
   const inbox = useApp((st) => st.runtime[server.id]?.inbox);
   const layout = usePrefs((st) => st.prefs.layout);
+  const list = useRef<FlatList<Row>>(null);
+  const [away, setAway] = useState<number | null>(null);
+  const [flash, setFlash] = useState<string | null>(null);
   // Messages already here when the chat opened don't animate in; only new arrivals do.
   const seen = useRef<Set<string> | null>(null);
   if (seen.current === null && loaded) seen.current = new Set(messages.map((m) => m.id));
@@ -165,28 +207,64 @@ function MessageList({ server, chatId, messages, loaded, typing, top, bottom }: 
     return out.reverse(); // inverted: newest at the bottom without manual scrolling
   }, [messages, typing]);
 
+  const rowsRef = useRef(rows);
+  rowsRef.current = rows;
+  const jump = useCallback((id: string) => {
+    const index = rowsRef.current.findIndex((r) => r.kind === 'msg' && r.m.id === id);
+    if (index < 0) return;
+    haptic.selection();
+    list.current?.scrollToIndex({ index, viewPosition: 0.5, animated: true });
+    setFlash(id);
+    setTimeout(() => setFlash((f) => (f === id ? null : f)), 1600);
+  }, []);
+  const actions = useMemo<Actions>(() => ({ open: onOpen, reply: onReply, jump }), [onOpen, onReply, jump]);
+
   if (loaded && messages.length === 0) return <EmptyChat server={server} chatId={chatId} top={top} bottom={bottom} />;
 
+  const newSince = away === null ? 0 : messages.filter((m) => m.role !== 'user').length - away;
   return (
-    <FlatList
-      inverted
-      style={{ flex: 1 }}
-      contentContainerStyle={{ paddingTop: bottom + 10, paddingBottom: top + 10 }}
-      data={rows}
-      keyExtractor={(r) => r.key}
-      renderItem={({ item }) => item.kind === 'day' ? <DayChip label={item.label} /> : (
-        <MessageRow server={server} message={item.m} first={item.first} last={item.last} live={item.live} fresh={item.fresh}
-          layout={layout} inboxItem={item.m.meta?.inbox_id ? inbox?.[item.m.meta.inbox_id] : undefined} />
-      )}
-      onEndReached={() => messages.length >= 60 && loadMessages(server.id, chatId, true)}
-      onEndReachedThreshold={0.4}
-      ListHeaderComponent={typing ? <TypingRow server={server} /> : null}
-      keyboardShouldPersistTaps="handled"
-      initialNumToRender={18}
-      maxToRenderPerBatch={12}
-      windowSize={11}
-      removeClippedSubviews={Platform.OS === 'android'}
-    />
+    <View style={{ flex: 1 }}>
+      <FlatList
+        ref={list}
+        inverted
+        style={{ flex: 1 }}
+        contentContainerStyle={{ paddingTop: bottom + 10, paddingBottom: top + 10 }}
+        data={rows}
+        keyExtractor={(r) => r.key}
+        renderItem={({ item }) => item.kind === 'day' ? <DayChip label={item.label} /> : (
+          <MessageRow server={server} message={item.m} first={item.first} last={item.last} live={item.live} fresh={item.fresh}
+            layout={layout} flash={flash === item.m.id} actions={actions}
+            inboxItem={item.m.meta?.inbox_id ? inbox?.[item.m.meta.inbox_id] : undefined} />
+        )}
+        onScroll={(e) => {
+          const far = e.nativeEvent.contentOffset.y > AWAY_PX;
+          if (far && away === null) setAway(messages.filter((m) => m.role !== 'user').length);
+          else if (!far && away !== null) setAway(null);
+        }}
+        scrollEventThrottle={100}
+        onScrollToIndexFailed={(info) => {
+          list.current?.scrollToOffset({ offset: info.averageItemLength * info.index, animated: true });
+          setTimeout(() => list.current?.scrollToIndex({ index: info.index, viewPosition: 0.5, animated: true }), 300);
+        }}
+        onEndReached={() => messages.length >= 60 && loadMessages(server.id, chatId, true)}
+        onEndReachedThreshold={0.4}
+        ListHeaderComponent={typing ? <TypingRow server={server} /> : null}
+        keyboardShouldPersistTaps="handled"
+        initialNumToRender={18}
+        maxToRenderPerBatch={12}
+        windowSize={11}
+        removeClippedSubviews={Platform.OS === 'android'}
+      />
+      {away !== null ? (
+        <Animated.View entering={ZoomIn.springify().damping(16)} exiting={FadeOut.duration(140)} style={[s.jump, { bottom: bottom + 12 }]}>
+          <Tap feedback="light" accessibilityLabel={newSince > 0 ? `Jump to latest, ${newSince} new` : 'Jump to latest'}
+            onPress={() => list.current?.scrollToOffset({ offset: 0, animated: true })} style={s.jumpBtn} scaleTo={0.9}>
+            <ArrowDown size={20} color={t.colors.text} />
+          </Tap>
+          {newSince > 0 ? <Badge count={newSince} style={s.jumpBadge} /> : null}
+        </Animated.View>
+      ) : null}
+    </View>
   );
 }
 
@@ -218,55 +296,63 @@ function DayChip({ label }: { label: string }) {
   );
 }
 
-const MessageRow = memo(function MessageRow({ server, message, first, last, live, fresh, layout, inboxItem }: {
-  server: Server; message: Message; first: boolean; last: boolean; live?: boolean; fresh: boolean; layout: 'bubbles' | 'compact'; inboxItem?: InboxItem;
+const MessageRow = memo(function MessageRow({ server, message, first, last, live, fresh, layout, flash, actions, inboxItem }: {
+  server: Server; message: Message; first: boolean; last: boolean; live?: boolean; fresh: boolean; layout: 'bubbles' | 'compact';
+  flash: boolean; actions: Actions; inboxItem?: InboxItem;
 }) {
   const t = useTheme();
   const s = useStyles();
   const resolve = useCallback((url: string) => mediaUrl(server, url), [server]);
   const entering = fresh ? FadeInDown.springify().damping(18).stiffness(180) : undefined;
+  const [hover, setHover] = useState(false);
 
   if (message.role === 'system') {
     if (message.meta?.inbox_id && inboxItem) {
-      return <Animated.View entering={entering} style={s.systemCard}><InboxCard serverId={server.id} item={inboxItem} /></Animated.View>;
+      return <Animated.View entering={entering} style={[s.lane, s.systemCard]}><InboxCard serverId={server.id} item={inboxItem} /></Animated.View>;
+    }
+    if (message.meta?.status_key) {
+      return (
+        <View style={s.statusWrap} accessibilityLiveRegion="polite">
+          <View style={s.statusPill}>
+            <Info size={13} color={t.colors.textSecondary} />
+            <Text style={s.statusText}>{message.text}</Text>
+          </View>
+        </View>
+      );
     }
     return <View style={s.systemLine}><Text style={s.systemText}>{message.text}</Text></View>;
   }
 
   const isBot = message.role === 'bot';
+  const mine = !isBot && layout === 'bubbles';
   const attachments = message.meta?.attachments ?? [];
-  const body = (onAccent: boolean) => (
+  const replyTo = message.meta?.reply_to;
+  const sendable = message.status === 'final';
+  const quote = (onAccent: boolean) => replyTo ? <ReplyQuote server={server} reply={replyTo} onAccent={onAccent} onPress={() => actions.jump(replyTo.id)} /> : null;
+  const text = (onAccent: boolean) => (
     <>
-      {message.text ? <Markdown text={message.text} resolveUrl={resolve} tone={onAccent ? 'onAccent' : 'default'} /> : null}
+      {message.text ? <Markdown text={message.text} resolveUrl={resolve} tone={onAccent ? 'onAccent' : 'default'} selectable={!TOUCH} /> : null}
       {message.status === 'streaming' && live ? <Cursor onAccent={onAccent} /> : null}
-      {attachments.map((a) => a.kind === 'image' ? (
-        <Image key={a.url} source={{ uri: mediaUrl(server, a.url) }} style={s.attachmentImage} contentFit="cover" accessibilityLabel={a.name} />
-      ) : (
-        <Pressable key={a.url} accessibilityRole="link" accessibilityLabel={`Open ${a.name}`} style={s.file} onPress={() => openUrl(mediaUrl(server, a.url))}>
-          <View style={s.fileIcon}><FileText size={20} color={t.colors.onAccentSoft} /></View>
-          <View style={{ flex: 1 }}>
-            <Text style={s.fileName} numberOfLines={1}>{a.name}</Text>
-            <Text style={s.fileSize}>{formatSize(a.size)}</Text>
-          </View>
-        </Pressable>
-      ))}
     </>
   );
+  const files = attachments.length ? <MessageAttachments items={attachments} resolve={resolve} mine={mine} /> : null;
   const footer = (
     <>
       {message.status === 'queued' ? (
-        <View style={[s.state, !isBot && layout === 'bubbles' && s.stateRight]}>
+        <View style={[s.state, mine && s.stateRight]}>
           <Clock size={12} color={t.colors.textSecondary} />
           <Text style={s.stateText}>Queued · sends when {server.bot.title} is reachable</Text>
         </View>
       ) : null}
-      {message.status === 'failed' ? <FailedActions server={server} message={message} right={!isBot && layout === 'bubbles'} /> : null}
+      {message.status === 'failed' ? <FailedActions server={server} message={message} right={mine} /> : null}
     </>
   );
+  const toolbar = !TOUCH && hover && sendable ? <HoverBar message={message} actions={actions} /> : null;
 
+  let content;
   if (layout === 'compact') {
-    return (
-      <Animated.View entering={entering} style={[s.compact, first ? { marginTop: 14 } : { marginTop: 2 }]}>
+    content = (
+      <View style={[s.compact, first ? { marginTop: 14 } : { marginTop: 2 }]}>
         <View style={s.gutter}>{first ? (isBot ? <BotAvatar name={server.bot.name} size={36} /> : <UserAvatar size={36} />) : null}</View>
         <View style={{ flex: 1, minWidth: 0 }}>
           {first ? (
@@ -275,16 +361,14 @@ const MessageRow = memo(function MessageRow({ server, message, first, last, live
               <Text style={s.time}>{timeOf(message.created_at)}</Text>
             </View>
           ) : null}
-          <View style={{ opacity: message.status === 'pending' ? 0.6 : 1 }}>{body(false)}</View>
+          <View style={{ opacity: message.status === 'pending' ? 0.6 : 1 }}>{quote(false)}{text(false)}{files}</View>
           {footer}
         </View>
-      </Animated.View>
+      </View>
     );
-  }
-
-  if (isBot) {
-    return (
-      <Animated.View entering={entering} style={[s.botRow, first ? { marginTop: 16 } : { marginTop: 4 }]}>
+  } else if (isBot) {
+    content = (
+      <View style={[s.botRow, first ? { marginTop: 16 } : { marginTop: 4 }]}>
         {first ? (
           <View style={s.botHead}>
             <BotAvatar name={server.bot.name} size={26} />
@@ -292,23 +376,171 @@ const MessageRow = memo(function MessageRow({ server, message, first, last, live
             <Text style={s.time}>{timeOf(message.created_at)}</Text>
           </View>
         ) : null}
-        <View style={s.botBody}>{body(false)}</View>
+        <View style={s.botBody}>{quote(false)}{text(false)}{files}</View>
         {footer}
-      </Animated.View>
+      </View>
+    );
+  } else {
+    content = (
+      <View style={[s.userRow, first ? { marginTop: 14 } : { marginTop: 3 }, { opacity: message.status === 'pending' ? 0.75 : 1 }]}>
+        {!message.text ? quote(false) : null}
+        {files}
+        {message.text ? (
+          <LinearGradient colors={[t.colors.accentFillLight, t.colors.accentFill]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+            style={[s.bubble, last && s.bubbleTail, files ? { marginTop: 4 } : null]}>
+            {quote(true)}
+            {text(true)}
+          </LinearGradient>
+        ) : null}
+        {last && sendable ? <Text style={[s.time, { marginTop: 4, marginRight: 6 }]}>{timeOf(message.created_at)}</Text> : null}
+        {footer}
+      </View>
     );
   }
 
   return (
-    <Animated.View entering={entering} style={[s.userRow, first ? { marginTop: 14 } : { marginTop: 3 }]}>
-      <LinearGradient colors={[t.colors.accentFillLight, t.colors.accentFill]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
-        style={[s.bubble, last && s.bubbleTail, { opacity: message.status === 'pending' ? 0.75 : 1 }]}>
-        {body(true)}
-      </LinearGradient>
-      {last && message.status === 'final' ? <Text style={[s.time, { marginTop: 4, marginRight: 6 }]}>{timeOf(message.created_at)}</Text> : null}
-      {footer}
+    <Animated.View entering={entering} style={s.lane}>
+      <Flash on={flash} />
+      <SwipeToReply enabled={TOUCH && Platform.OS !== 'web' && sendable && !/```|\|\s*-{3}/.test(message.text)} onReply={() => actions.reply(message)}>
+        <Pressable
+          onLongPress={TOUCH && sendable ? () => { haptic.light(); actions.open(message); } : undefined}
+          delayLongPress={320}
+          onHoverIn={() => setHover(true)}
+          onHoverOut={() => setHover(false)}
+          accessibilityActions={sendable ? [{ name: 'longpress', label: 'Message options' }, { name: 'reply', label: 'Reply' }] : undefined}
+          onAccessibilityAction={(e) => (e.nativeEvent.actionName === 'reply' ? actions.reply(message) : actions.open(message))}
+          style={Platform.OS === 'web' ? ({ cursor: 'auto' } as object) : undefined}
+        >
+          {content}
+          {toolbar}
+        </Pressable>
+      </SwipeToReply>
     </Animated.View>
   );
 });
+
+/** A short highlight when you jump to a message from a reply. */
+function Flash({ on }: { on: boolean }) {
+  const t = useTheme();
+  const o = useSharedValue(0);
+  useEffect(() => {
+    if (on) o.value = withSequence(withTiming(1, { duration: 160 }), withDelay(500, withTiming(0, { duration: 700 })));
+  }, [on, o]);
+  const style = useAnimatedStyle(() => ({ opacity: o.value }));
+  return <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFill, { backgroundColor: t.colors.accentSoft }, style]} />;
+}
+
+/** Drag a message to the right to reply to it, like every phone messenger. */
+function SwipeToReply({ enabled, onReply, children }: { enabled: boolean; onReply: () => void; children: React.ReactNode }) {
+  const t = useTheme();
+  const s = useStyles();
+  const x = useSharedValue(0);
+  const armed = useSharedValue(false);
+  const pan = Gesture.Pan()
+    .enabled(enabled)
+    .activeOffsetX(16)
+    .failOffsetY([-12, 12])
+    .onUpdate((e) => {
+      x.value = Math.max(0, Math.min(96, e.translationX * 0.55));
+      if (x.value > 58 && !armed.value) {
+        armed.value = true;
+        runOnJS(haptic.selection)();
+      } else if (x.value <= 58 && armed.value) {
+        armed.value = false;
+      }
+    })
+    .onEnd(() => {
+      if (armed.value) runOnJS(onReply)();
+      armed.value = false;
+      x.value = withSpring(0, spring.snappy);
+    });
+  const row = useAnimatedStyle(() => ({ transform: [{ translateX: x.value }] }));
+  const icon = useAnimatedStyle(() => ({ opacity: Math.min(1, x.value / 58), transform: [{ scale: 0.6 + Math.min(0.4, x.value / 145) }] }));
+  if (!enabled) return <>{children}</>;
+  return (
+    <GestureDetector gesture={pan}>
+      <Animated.View>
+        <Animated.View style={[s.swipeIcon, icon]} pointerEvents="none"><Reply size={18} color={t.colors.accent} /></Animated.View>
+        <Animated.View style={row}>{children}</Animated.View>
+      </Animated.View>
+    </GestureDetector>
+  );
+}
+
+/** The message a reply answers, shown above it. Tap to scroll to the original. */
+function ReplyQuote({ server, reply, onAccent, onPress }: { server: Server; reply: ReplyRef; onAccent: boolean; onPress: () => void }) {
+  const t = useTheme();
+  const s = useStyles();
+  return (
+    <Pressable accessibilityRole="button" accessibilityLabel={`Reply to: ${reply.text}. Show the original`} onPress={onPress}
+      style={({ pressed }) => [s.quote, onAccent ? s.quoteOnAccent : null, pressed && { opacity: 0.7 }]}>
+      <View style={[s.quoteBar, onAccent && { backgroundColor: t.colors.onAccent }]} />
+      <View style={{ flexShrink: 1 }}>
+        <Text style={[s.quoteWho, onAccent && { color: t.colors.onAccent }]}>{reply.role === 'bot' ? server.bot.title : 'You'}</Text>
+        <Text style={[s.quoteText, onAccent && { color: t.colors.onAccent }]} numberOfLines={2}>{plainText(reply.text) || 'Attachment'}</Text>
+      </View>
+    </Pressable>
+  );
+}
+
+/** With a mouse: reply, copy and more, on hover. */
+function HoverBar({ message, actions }: { message: Message; actions: Actions }) {
+  const t = useTheme();
+  const s = useStyles();
+  const [copied, setCopied] = useState(false);
+  return (
+    <View style={s.hoverBar}>
+      <IconButton label="Reply" size={32} onPress={() => actions.reply(message)}><Reply size={16} color={t.colors.textSecondary} /></IconButton>
+      {message.text ? (
+        <IconButton label={copied ? 'Copied' : 'Copy'} size={32} onPress={async () => {
+          await Clipboard.setStringAsync(message.text);
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1400);
+        }}><Copy size={16} color={copied ? t.colors.success : t.colors.textSecondary} /></IconButton>
+      ) : null}
+      <IconButton label="More" size={32} onPress={() => actions.open(message)}><MoreHorizontal size={16} color={t.colors.textSecondary} /></IconButton>
+    </View>
+  );
+}
+
+/** Long-press menu for one message. */
+function MessageMenu({ server, message, busy, onClose, onReply, onSelectText }: {
+  server: Server; message: Message | null; busy: boolean; onClose: () => void; onReply: (m: Message) => void; onSelectText: (text: string) => void;
+}) {
+  const t = useTheme();
+  const s = useStyles();
+  const [last, setLast] = useState(message);
+  if (message && message !== last) setLast(message);
+  const m = message ?? last;
+  const latestBot = useApp((st) => {
+    const list = m ? st.runtime[server.id]?.messages[m.chat_id] : undefined;
+    return list ? [...list].reverse().find((x) => x.role === 'bot')?.id : undefined;
+  });
+  if (!m) return null;
+  const run = (fn: () => void) => () => { onClose(); fn(); };
+  return (
+    <Sheet visible={!!message} onClose={onClose}>
+      {m.text ? <Text style={s.menuPreview} numberOfLines={2}>{plainText(m.text)}</Text> : null}
+      <SheetAction icon={<Reply size={20} color={t.colors.text} />} label="Reply" onPress={run(() => onReply(m))} />
+      {m.text ? <SheetAction icon={<Copy size={20} color={t.colors.text} />} label="Copy text" onPress={run(() => {
+        Clipboard.setStringAsync(m.text);
+        useApp.getState().toast({ serverId: server.id, title: 'Copied', body: '' });
+      })} /> : null}
+      {m.text && TOUCH ? <SheetAction icon={<FileText size={20} color={t.colors.text} />} label="Select text" onPress={run(() => onSelectText(m.text))} /> : null}
+      {m.text ? <SheetAction icon={<Share size={20} color={t.colors.text} />} label="Share" onPress={run(() => {
+        if (Platform.OS === 'web') (globalThis.navigator as Navigator).share?.({ text: m.text }).catch(() => undefined);
+        else SystemShare.share({ message: m.text }).catch(() => undefined);
+      })} /> : null}
+      {m.role === 'user' && m.text ? <SheetAction icon={<Pencil size={20} color={t.colors.text} />} label="Edit and send again" onPress={run(() => {
+        useApp.getState().setDraft(server.id, m.chat_id, m.text);
+      })} /> : null}
+      {m.role === 'bot' && m.id === latestBot && !busy ? <SheetAction icon={<RotateCcw size={20} color={t.colors.text} />} label="Try again" onPress={run(() => {
+        haptic.light();
+        useApp.getState().sendMessage(server.id, m.chat_id, '/retry');
+      })} /> : null}
+    </Sheet>
+  );
+}
 
 /** A message the server refused: try again, take it back into the composer, or drop it. */
 function FailedActions({ server, message, right }: { server: Server; message: Message; right?: boolean }) {
@@ -345,7 +577,7 @@ function Cursor({ onAccent }: { onAccent: boolean }) {
 function TypingRow({ server }: { server: Server }) {
   const s = useStyles();
   return (
-    <Animated.View entering={FadeIn.duration(200)} style={s.typing} accessibilityLiveRegion="polite" accessibilityLabel={`${server.bot.title} is working`}>
+    <Animated.View entering={FadeIn.duration(200)} style={[s.lane, s.typing]} accessibilityLiveRegion="polite" accessibilityLabel={`${server.bot.title} is working`}>
       <BotAvatar name={server.bot.name} size={30} mood="working" animated />
       <View style={s.typingBubble}><Dots /></View>
     </Animated.View>
@@ -374,7 +606,6 @@ function Dot({ delay, reduced, color }: { delay: number; reduced: boolean; color
 }
 
 function EmptyChat({ server, chatId, top, bottom }: { server: Server; chatId: string; top: number; bottom: number }) {
-  const t = useTheme();
   const s = useStyles();
   const sendMessage = useApp((st) => st.sendMessage);
   const chat = useApp((st) => st.runtime[server.id]?.chats[chatId]);
@@ -398,106 +629,82 @@ function EmptyChat({ server, chatId, top, bottom }: { server: Server; chatId: st
   );
 }
 
-function Composer({ server, chatId, busy, bottomInset, target, onHeight, placeholder }: {
-  server: Server; chatId: string; busy: boolean; bottomInset: number; target: React.RefObject<View | null>;
-  onHeight: (h: number) => void; placeholder: string;
-}) {
+const MUTE_OPTIONS: { label: string; seconds: number }[] = [
+  { label: 'For 1 hour', seconds: 3600 },
+  { label: 'For 8 hours', seconds: 8 * 3600 },
+  { label: 'For a day', seconds: 24 * 3600 },
+  { label: 'Until I turn it back on', seconds: 0 },
+];
+
+function ChatMenu({ server, chatId, title, visible, onClose }: { server: Server; chatId: string; title: string; visible: boolean; onClose: () => void }) {
   const t = useTheme();
   const s = useStyles();
-  // The draft lives in the store, so it survives switching chats, closing the app, and "Edit" on a failed send.
-  const text = useApp((st) => st.drafts[draftKey(server.id, chatId)] ?? '');
-  const setDraft = useApp((st) => st.setDraft);
-  const sendMessage = useApp((st) => st.sendMessage);
-  const online = useApp((st) => st.runtime[server.id]?.status === 'online');
-  const [height, setHeight] = useState(MIN_INPUT);
-  const setText = (value: string) => setDraft(server.id, chatId, value);
-
-  const send = (value = text) => {
-    const v = value.trim();
-    if (!v) return;
-    haptic.light();
-    sendMessage(server.id, chatId, v);
-    setText('');
-    setHeight(MIN_INPUT);
-  };
-
-  const matches = text.startsWith('/') && !text.includes(' ') ? COMMANDS.filter((c) => c.cmd.startsWith(text.toLowerCase())) : [];
-  const showStop = busy && !text.trim();
-  const canSend = !!text.trim();
-
-  return (
-    <View style={[s.composerWrap, { paddingBottom: Math.max(bottomInset, 10) }]} onLayout={(e) => onHeight(e.nativeEvent.layout.height)} pointerEvents="box-none">
-      {matches.length ? (
-        <Glass target={target} style={s.commands}>
-          {matches.map((c) => (
-            <Pressable key={c.cmd} accessibilityRole="button" accessibilityLabel={`${c.cmd}: ${c.hint}`}
-              style={({ pressed, hovered }: any) => [s.command, (pressed || hovered) && { backgroundColor: t.colors.pressed }]} onPress={() => send(c.cmd)}>
-              <Text style={s.commandName}>{c.cmd}</Text>
-              <Text style={s.commandHint} numberOfLines={1}>{c.hint}</Text>
-            </Pressable>
-          ))}
-        </Glass>
-      ) : null}
-      {!online ? <Text style={s.offlineNote}>Offline. Messages you send are queued and go out when {server.bot.title} is back.</Text> : null}
-      <Glass target={target} style={s.composer} intensity={50}>
-        <TextInput
-          value={text}
-          onChangeText={setText}
-          placeholder={placeholder}
-          placeholderTextColor={t.colors.textTertiary}
-          multiline
-          accessibilityLabel={placeholder}
-          onContentSizeChange={(e) => setHeight(Math.min(150, Math.max(MIN_INPUT, e.nativeEvent.contentSize.height)))}
-          style={[s.input, Platform.OS === 'web' ? { height } : null]}
-          onKeyPress={(e: any) => {
-            if (Platform.OS === 'web' && e.nativeEvent.key === 'Enter' && !e.nativeEvent.shiftKey) {
-              e.preventDefault?.();
-              send();
-            }
-          }}
-        />
-        {showStop ? (
-          <Tap key="stop" feedback="light" accessibilityLabel="Stop the current task" onPress={() => send('/stop')} style={[s.sendBtn, s.stopBtn]}>
-            <Animated.View entering={ZoomIn.duration(160)}><Square size={14} color={t.colors.text} fill={t.colors.text} /></Animated.View>
-          </Tap>
-        ) : (
-          <Tap key="send" feedback="none" accessibilityLabel="Send" accessibilityState={{ disabled: !canSend }} disabled={!canSend} onPress={() => send()} scaleTo={0.9}
-            style={[s.sendBtn, { backgroundColor: canSend ? t.colors.accentFill : t.colors.surfaceSunken }]}>
-            <ArrowUp size={20} color={canSend ? t.colors.onAccent : t.colors.textTertiary} strokeWidth={2.5} />
-          </Tap>
-        )}
-      </Glass>
-    </View>
-  );
-}
-
-function ChatMenu({ server, chatId, visible, onClose }: { server: Server; chatId: string; visible: boolean; onClose: () => void }) {
-  const t = useTheme();
   const chat = useApp((st) => st.runtime[server.id]?.chats[chatId]);
   const renameChat = useApp((st) => st.renameChat);
   const deleteChat = useApp((st) => st.deleteChat);
-  const [mode, setMode] = useState<'menu' | 'rename' | 'delete'>('menu');
-  const [title, setTitle] = useState('');
+  const features = useApp((st) => st.runtime[server.id]?.info?.features);
+  const prefs = usePushPrefs((st) => st.byServer[server.id]);
+  const [mode, setMode] = useState<'menu' | 'rename' | 'delete' | 'mute'>('menu');
+  const [name, setName] = useState('');
+  const [busy, setBusy] = useState(false);
   const side = chat?.kind === 'chat' && chatId !== 'general';
+  const until = mutedUntil(prefs, chatId);
   const close = () => { setMode('menu'); onClose(); };
+
+  useEffect(() => {
+    if (visible && features?.mute) usePushPrefs.getState().load(server);
+  }, [visible, features?.mute, server]);
+
+  const fail = (title: string) => (e: unknown) => useApp.getState().toast({ serverId: server.id, title, body: (e as Error).message });
+  const mute = (seconds: number | null) => {
+    close();
+    usePushPrefs.getState().save(server, (p) => {
+      const muted = { ...p.muted };
+      if (seconds === null) delete muted[chatId];
+      else muted[chatId] = seconds === 0 ? 0 : Date.now() / 1000 + seconds;
+      return { ...p, muted };
+    }).catch(fail("Couldn't change notifications"));
+  };
+
   return (
-    <Sheet visible={visible} onClose={close} title={chatId === 'general' ? server.bot.title : chat?.kind === 'home' ? 'Updates' : `#${chat?.title ?? ''}`}>
+    <Sheet visible={visible} onClose={close} title={mode === 'mute' ? 'Mute notifications' : title}>
       {mode === 'menu' ? (
         <>
-          {side ? <SheetAction icon={<Pencil size={20} color={t.colors.text} />} label="Rename" onPress={() => { setTitle(chat?.title ?? ''); setMode('rename'); }} /> : null}
+          {side ? <SheetAction icon={<Pencil size={20} color={t.colors.text} />} label="Rename" onPress={() => { setName(chat?.title ?? ''); setMode('rename'); }} /> : null}
+          {features?.mute ? (until !== undefined ? (
+            <SheetAction icon={<Bell size={20} color={t.colors.text} />} label={`Unmute${until ? ` (muted until ${timeOf(until)})` : ''}`} onPress={() => mute(null)} />
+          ) : (
+            <SheetAction icon={<BellOff size={20} color={t.colors.text} />} label="Mute notifications" onPress={() => setMode('mute')} />
+          )) : null}
+          {features?.export ? (
+            <SheetAction icon={<Download size={20} color={t.colors.text} />} label={busy ? 'Exporting…' : 'Export chat'} onPress={async () => {
+              setBusy(true);
+              try {
+                await exportChat(server, chatId, title.replace(/^#/, ''));
+                close();
+              } catch (e) {
+                fail("Couldn't export")(e);
+              } finally {
+                setBusy(false);
+              }
+            }} />
+          ) : null}
           <SheetAction icon={<Activity size={20} color={t.colors.text} />} label="Connection details" onPress={() => { close(); router.push(`/diagnostics/${server.id}`); }} />
           {side ? <SheetAction icon={<Trash2 size={20} color={t.colors.danger} />} label="Delete chat" destructive onPress={() => setMode('delete')} /> : null}
         </>
+      ) : mode === 'mute' ? (
+        <>
+          <Text style={s.menuNote}>Approvals and questions still come through: {server.bot.title} is waiting on those.</Text>
+          {MUTE_OPTIONS.map((o) => <SheetAction key={o.label} label={o.label} onPress={() => mute(o.seconds)} />)}
+        </>
       ) : mode === 'rename' ? (
         <View style={{ gap: 14, paddingHorizontal: 4 }}>
-          <Field value={title} onChangeText={setTitle} placeholder="Chat name" autoFocus />
-          <Button title="Save" onPress={async () => { await renameChat(server.id, chatId, title); close(); }} />
+          <Field value={name} onChangeText={setName} placeholder="Chat name" autoFocus />
+          <Button title="Save" onPress={async () => { await renameChat(server.id, chatId, name); close(); }} />
         </View>
       ) : (
         <View style={{ gap: 14, paddingHorizontal: 4 }}>
-          <Text style={{ ...t.type.callout, color: t.colors.textSecondary, textAlign: 'center' }}>
-            This removes the chat from Winglet on every device. Hermes keeps its own session history.
-          </Text>
+          <Text style={s.menuNote}>This removes the chat from Winglet on every device. Hermes keeps its own session history.</Text>
           <Button title="Delete chat" variant="danger" onPress={async () => { await deleteChat(server.id, chatId); close(); router.replace('/chats'); }} />
           <Button title="Cancel" variant="secondary" onPress={() => setMode('menu')} />
         </View>
@@ -506,19 +713,10 @@ function ChatMenu({ server, chatId, visible, onClose }: { server: Server; chatId
   );
 }
 
-function formatSize(n: number) {
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-  return `${(n / 1024 / 1024).toFixed(1)} MB`;
-}
-
-function openUrl(url: string) {
-  if (Platform.OS === 'web') globalThis.open?.(url, '_blank', 'noopener');
-  else import('react-native').then(({ Linking }) => Linking.openURL(url));
-}
-
 const useStyles = makeStyles((t) => ({
   root: { flex: 1, backgroundColor: t.colors.bg },
+  /** Messages keep a readable width on tablets and desktops, lined up with the composer. */
+  lane: { width: '100%', maxWidth: 880, alignSelf: 'center' },
   center: { alignItems: 'center', justifyContent: 'center', gap: 12 },
   headerWrap: { position: 'absolute', top: 0, left: 0, right: 0 },
   header: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 8, paddingBottom: 10 },
@@ -546,14 +744,20 @@ const useStyles = makeStyles((t) => ({
   systemCard: { paddingHorizontal: 14, marginTop: 14 },
   systemLine: { alignItems: 'center', marginVertical: 10, paddingHorizontal: 24 },
   systemText: { ...t.type.caption, color: t.colors.textSecondary, textAlign: 'center' },
-  attachmentImage: { width: 260, height: 190, borderRadius: t.radius.md, marginTop: 6, backgroundColor: t.colors.surfaceSunken },
-  file: {
-    flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 6, padding: 10, borderRadius: t.radius.md,
-    backgroundColor: t.colors.surface, borderWidth: 1, borderColor: t.colors.border, maxWidth: 340,
+  statusWrap: { alignItems: 'center', marginVertical: 8, paddingHorizontal: 20 },
+  statusPill: {
+    flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 6, borderRadius: t.radius.pill,
+    backgroundColor: t.colors.surfaceSunken, maxWidth: 560,
   },
-  fileIcon: { width: 38, height: 38, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: t.colors.accentSoft },
-  fileName: { ...t.type.callout, fontFamily: t.fonts.semibold, color: t.colors.text },
-  fileSize: { ...t.type.caption, color: t.colors.textSecondary },
+  statusText: { ...t.type.caption, color: t.colors.textSecondary, flexShrink: 1 },
+  quote: {
+    flexDirection: 'row', gap: 8, paddingVertical: 6, paddingRight: 10, paddingLeft: 8, marginBottom: 6, borderRadius: 10,
+    backgroundColor: t.colors.surfaceSunken, alignSelf: 'stretch', maxWidth: 420,
+  },
+  quoteOnAccent: { backgroundColor: FIXED.onAccentWash },
+  quoteBar: { width: 3, borderRadius: 2, backgroundColor: t.colors.accent },
+  quoteWho: { ...t.type.caption, fontFamily: t.fonts.semibold, color: t.colors.accent },
+  quoteText: { ...t.type.caption, color: t.colors.textSecondary },
   state: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 5, marginTop: 5 },
   stateRight: { justifyContent: 'flex-end' },
   stateText: { ...t.type.caption, color: t.colors.textSecondary },
@@ -563,20 +767,22 @@ const useStyles = makeStyles((t) => ({
   emptyTitle: { ...t.type.title, color: t.colors.text, textAlign: 'center', marginTop: 8 },
   emptyText: { ...t.type.callout, color: t.colors.textSecondary, textAlign: 'center', maxWidth: 400 },
   suggestions: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 8, marginTop: 8, maxWidth: 440 },
-  composerWrap: { position: 'absolute', left: 0, right: 0, bottom: 0, paddingHorizontal: 10, paddingTop: 6 },
-  composer: {
-    flexDirection: 'row', alignItems: 'flex-end', gap: 8, borderRadius: t.radius.xl, paddingLeft: 18, paddingRight: 6, paddingVertical: 6,
-    maxWidth: 820, width: '100%', alignSelf: 'center',
+  swipeIcon: {
+    position: 'absolute', left: 14, top: 0, bottom: 0, width: 32, alignItems: 'center', justifyContent: 'center',
   },
-  input: {
-    flex: 1, ...t.type.body, color: t.colors.text, paddingTop: 9, paddingBottom: 9, maxHeight: 150,
-    ...(Platform.OS === 'web' ? ({ outlineStyle: 'none' } as object) : {}),
+  hoverBar: {
+    position: 'absolute', top: -14, right: 14, flexDirection: 'row', gap: 2, padding: 2, borderRadius: t.radius.pill,
+    backgroundColor: t.colors.surfaceRaised, borderWidth: 1, borderColor: t.colors.border,
+    shadowColor: t.colors.shadow, shadowOpacity: 0.12, shadowRadius: 8, shadowOffset: { width: 0, height: 2 },
   },
-  sendBtn: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
-  stopBtn: { backgroundColor: t.colors.surfaceSunken, borderWidth: 1, borderColor: t.colors.borderStrong },
-  offlineNote: { ...t.type.caption, color: t.colors.warning, marginBottom: 6, marginLeft: 12, maxWidth: 820, alignSelf: 'center', width: '100%' },
-  commands: { borderRadius: t.radius.lg, marginBottom: 8, paddingVertical: 4, maxWidth: 820, width: '100%', alignSelf: 'center' },
-  command: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 14, minHeight: 44 },
-  commandName: { fontFamily: t.fonts.bold, fontSize: 14.5, color: t.colors.text, minWidth: 90 },
-  commandHint: { ...t.type.callout, color: t.colors.textSecondary, flex: 1 },
+  jump: { position: 'absolute', right: 16 },
+  jumpBtn: {
+    width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: t.colors.surfaceRaised,
+    borderWidth: 1, borderColor: t.colors.borderStrong, shadowColor: t.colors.shadow, shadowOpacity: 0.18, shadowRadius: 10,
+    shadowOffset: { width: 0, height: 3 }, elevation: 4,
+  },
+  jumpBadge: { position: 'absolute', top: -4, right: -4 },
+  menuPreview: { ...t.type.callout, color: t.colors.textSecondary, paddingHorizontal: 12, marginBottom: 6 },
+  menuNote: { ...t.type.callout, color: t.colors.textSecondary, textAlign: 'center', paddingHorizontal: 12, marginBottom: 6 },
+  selectText: { ...t.type.body, color: t.colors.text },
 }));
