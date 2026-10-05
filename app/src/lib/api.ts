@@ -1,4 +1,5 @@
 import { Platform } from 'react-native';
+import { fetch } from 'expo/fetch';
 import type { Bot, Server } from './types';
 
 export class ApiError extends Error {
@@ -31,9 +32,13 @@ async function request<T>(url: string, init: RequestInit & { token?: string } = 
   if (init.body) headers['Content-Type'] = 'application/json';
   if (init.token) headers.Authorization = `Bearer ${init.token}`;
   let resp: Response;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 10000);
   try {
-    resp = await fetch(url, { ...init, headers: { ...headers, ...(init.headers as Record<string, string>) } });
+    resp = await fetch(url, { ...init, signal: init.signal ?? controller.signal, redirect: 'error',
+      headers: { ...headers, ...(init.headers as Record<string, string>) } });
   } catch {
+    clearTimeout(timer);
     throw new ApiError("Can't reach your Hermes server. Check that the gateway is running and the address is accessible from your phone. If you use Tailscale, connect it on this phone.", 0);
   }
   let data: any = null;
@@ -41,7 +46,7 @@ async function request<T>(url: string, init: RequestInit & { token?: string } = 
     data = await resp.json();
   } catch {
     // non-JSON body
-  }
+  } finally { clearTimeout(timer); }
   if (!resp.ok) throw new ApiError(data?.error || `Server returned ${resp.status}`, resp.status);
   return data as T;
 }
@@ -63,7 +68,8 @@ export async function pair(url: string, code: string, deviceName: string): Promi
     method: 'POST',
     body: JSON.stringify({ code: normalizeCode(code), device_name: deviceName, platform: Platform.OS }),
   });
-  return { id: data.server_id, url: base, token: data.token, deviceId: data.device.id, bot: data.bot, addedAt: Date.now() };
+  return { id: data.server_id, url: base, token: data.token, deviceId: data.device.id, bot: data.bot,
+    addedAt: Date.now(), ...(Platform.OS === 'android' && data.recovery ? { recovery: data.recovery } : {}) };
 }
 
 export function wsUrl(server: Server): string {

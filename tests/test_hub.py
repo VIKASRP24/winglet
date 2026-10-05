@@ -132,6 +132,39 @@ async def test_pairing_flow(client, hub):
     assert resp.status == 401
 
 
+async def test_tunnel_pairing_limits_each_verified_client_ip(client, hub):
+    hub.connection["mode"] = "quick"
+    headers = {"Host": hub.tunnel_host, "CF-Connecting-IP": "192.0.2.10"}
+    for _ in range(10):
+        assert (await client.post("/api/pair", json={"code": "WRONG123"}, headers=headers)).status == 403
+    assert (await client.post("/api/pair", json={"code": "WRONG123"}, headers=headers)).status == 429
+    other = {**headers, "CF-Connecting-IP": "2001:db8::20"}
+    assert (await client.post("/api/pair", json={"code": hub.store.create_pair_code()}, headers=other)).status == 200
+    # The private origin marker must never be given to visiting phones.
+    assert hub.tunnel_host not in str(await (await client.get("/api/info")).json())
+
+
+@pytest.mark.parametrize("mode, host, ip", [("direct", "marker", "192.0.2.1"),
+    ("quick", "public.trycloudflare.com", "192.0.2.1"), ("quick", "marker", "garbage"),
+    ("quick", "marker", "192.0.2.1, 192.0.2.2"), ("quick", "marker", "")])
+async def test_untrusted_pairing_headers_cannot_bypass_rate_limit(client, hub, mode, host, ip):
+    hub.connection["mode"] = mode
+    headers = {"Host": hub.tunnel_host if host == "marker" else host, "CF-Connecting-IP": ip}
+    for _ in range(10):
+        assert (await client.post("/api/pair", json={"code": "WRONG123"}, headers=headers)).status == 403
+    headers["CF-Connecting-IP"] = "192.0.2.99"
+    headers["Host"] = "public.trycloudflare.com"
+    assert (await client.post("/api/pair", json={"code": hub.store.create_pair_code()}, headers=headers)).status == 429
+
+
+def test_nonlocal_caller_cannot_claim_tunnel_client_ip(hub):
+    from types import SimpleNamespace
+    hub.connection["mode"] = "quick"
+    request = SimpleNamespace(remote="192.0.2.1", headers={
+        "Host": hub.tunnel_host, "CF-Connecting-IP": "192.0.2.99"})
+    assert hub._pair_peer(request) == "192.0.2.1"
+
+
 async def test_message_reaches_hermes_and_reply_streams(client, hub):
     received = []
 
