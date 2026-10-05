@@ -7,9 +7,12 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Button, IconButton } from '../components/ui';
 import { defaultDeviceName, pair, parsePairLink } from '../lib/api';
 import { useApp } from '../lib/store';
-import { colors, fonts, radius } from '../lib/theme';
+import { FIXED } from '../lib/theme';
+import { makeStyles, useTheme } from '../lib/themeContext';
 
 export default function ScanScreen() {
+  const t = useTheme();
+  const styles = useStyles();
   const insets = useSafeAreaInsets();
   const [permission, requestPermission] = useCameraPermissions();
   const addServer = useApp((s) => s.addServer);
@@ -60,11 +63,11 @@ export default function ScanScreen() {
       />
       <View style={[styles.overlay, { paddingTop: insets.top + 8 }]}>
         <IconButton label="Close" onPress={() => router.back()} style={styles.close}>
-          <X size={24} color={colors.white} />
+          <X size={24} color={FIXED.white} />
         </IconButton>
         <View style={styles.frame} />
         <View style={styles.hintBox}>
-          {status === 'pairing' ? <ActivityIndicator color={colors.white} /> : null}
+          {status === 'pairing' ? <ActivityIndicator color={FIXED.white} /> : null}
           <Text style={styles.hint}>
             {status === 'pairing' ? 'Pairing…' : error || 'Point at the QR code from `hermes winglet pair`'}
           </Text>
@@ -77,14 +80,14 @@ export default function ScanScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#000' },
-  center: { alignItems: 'center', justifyContent: 'center', gap: 14, backgroundColor: colors.rail },
-  title: { color: colors.text, fontFamily: fonts.extrabold, fontSize: 22 },
-  text: { color: colors.textMuted, fontFamily: fonts.regular, fontSize: 15, lineHeight: 22, textAlign: 'center' },
+const useStyles = makeStyles((t) => ({
+  root: { flex: 1, backgroundColor: FIXED.camera },
+  center: { alignItems: 'center', justifyContent: 'center', gap: 14, backgroundColor: t.colors.bg },
+  title: { ...t.type.title, color: t.colors.text },
+  text: { ...t.type.callout, fontSize: 15, color: t.colors.textSecondary, textAlign: 'center' },
   overlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'space-between', paddingBottom: 60 },
-  close: { alignSelf: 'flex-start', marginLeft: 12, backgroundColor: 'rgba(0,0,0,0.45)', borderRadius: 20 },
-  frame: { width: 250, height: 250, borderRadius: 28, borderWidth: 3, borderColor: 'rgba(255,255,255,0.9)' },
-  hintBox: { alignItems: 'center', gap: 12, backgroundColor: 'rgba(0,0,0,0.6)', borderRadius: radius.lg, paddingHorizontal: 18, paddingVertical: 14, marginHorizontal: 24 },
-  hint: { color: colors.white, fontFamily: fonts.semibold, fontSize: 15, textAlign: 'center' },
-});
+  close: { alignSelf: 'flex-start', marginLeft: 12, backgroundColor: FIXED.cameraScrim, borderRadius: 20 },
+  frame: { width: 250, height: 250, borderRadius: 32, borderWidth: 3, borderColor: FIXED.cameraFrame },
+  hintBox: { alignItems: 'center', gap: 12, backgroundColor: FIXED.cameraScrim, borderRadius: t.radius.lg, paddingHorizontal: 18, paddingVertical: 14, marginHorizontal: 24 },
+  hint: { fontFamily: t.fonts.semibold, fontSize: 15, color: FIXED.white, textAlign: 'center' },
+}));
