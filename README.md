@@ -191,24 +191,32 @@ hermes -p researcher winglet pair
 - [x] Inbox + push notifications (Web Push for iPhone/desktop, ntfy for Android)
 - [x] Approvals and answers to the agent's questions, from the phone
 
+**v0.1.3: Reliable basics**
+- [ ] Fast reconnect after a server restart, clear connection states and diagnostics
+- [ ] Copyable replies, saved drafts, offline queue and chat cache
+
 **v0.2: New look**
-- [ ] Light and true-black dark themes, accent colors
+- [ ] Light and true-black dark themes, accent colors, accessible by default
 - [ ] Glass surfaces, smooth animations and haptics
-- [ ] New home screen and tab navigation
+- [ ] New home screen and tab navigation, inbox across all bots
 
 **v0.3: Chat essentials**
-- [ ] Send photos, files and voice notes
-- [ ] Full-screen media viewer, copy, reply and retry
-- [ ] One tidy activity card per task instead of a stream of tool messages
+- [ ] Send photos, files and voice notes, and share into Winglet from other apps
+- [ ] Full-screen media viewer, copy, reply, retry and stop
 
-**v0.4: Your agent**
+**v0.4: Trust and control**
+- [ ] Owner and member roles that apply to every command
+- [ ] Verified pairing, encrypted API keys, signed admin actions, activity log
+- [ ] Manage devices and pair a new phone from the app
+
+**v0.5: Your agent**
 - [ ] Model picker per chat, default model, reasoning effort
 - [ ] Add model providers from the phone
 - [ ] Persona, memory, and an animated pet
 
-**v0.5: Control center**
-- [ ] Server health, restart, and Hermes and Winglet updates
-- [ ] Logs, devices, scheduled tasks, skills and tools
+**v0.6: Control center**
+- [ ] Server health, restart, pause new work, Hermes and Winglet updates
+- [ ] Logs, scheduled tasks, skills and tools
 
 **Later**
 - [ ] Goals, live screen, real-time voice, widgets
