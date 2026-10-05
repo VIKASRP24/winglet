@@ -238,6 +238,9 @@ async def test_approval_roundtrip_and_signed_action(client, hub):
                                 {"choices": ["once", "deny"], "session_key": "k"}, push=False)
     bad = await client.post(f"/api/inbox/{item2['id']}/respond?choice=once&sig=bad")
     assert bad.status == 401
+    # Even a correctly signed link can't approve: only "deny" is honoured from a notification.
+    signed_once = hub.action_signature(item2["id"], "once")
+    assert (await client.post(f"/api/inbox/{item2['id']}/respond?choice=once&sig={signed_once}")).status == 401
     sig = hub.action_signature(item2["id"], "deny")
     ok = await client.post(f"/api/inbox/{item2['id']}/respond?choice=deny&sig={sig}")
     assert ok.status == 200 and decisions == ["once", "deny"]
@@ -278,7 +281,8 @@ async def test_webpush_subscription_and_delivery(client, hub):
     assert url == sub["endpoint"] and kwargs["headers"]["Urgency"] == "high"
     import json
     note = json.loads(webpush.decrypt(kwargs["content"], ua_key, sub["keys"]["auth"]))
-    assert note["kind"] == "approval" and note["actions"][0]["title"] == "Allow once"
+    assert note["kind"] == "approval" and "actions" not in note
+    assert note["url"].startswith("/inbox?server=") and note["item_id"] in note["url"]
 
 
 async def test_bot_reply_pushes_only_when_app_is_closed(client, hub, monkeypatch):
@@ -393,10 +397,10 @@ async def test_unpairing_voids_notification_action_links(client, hub):
     token = await pair(client, hub)
     item = await hub.add_inbox("approval", "general", "Approval needed", "ls",
                                {"choices": ["once", "deny"], "session_key": "k"}, push=False)
-    old_sig = hub.action_signature(item["id"], "once")
+    old_sig = hub.action_signature(item["id"], "deny")
     device = (await (await client.get("/api/me", headers={"Authorization": f"Bearer {token}"})).json())["device"]
     hub.store.remove_device(device["id"])
-    resp = await client.post(f"/api/inbox/{item['id']}/respond?choice=once&sig={old_sig}")
+    resp = await client.post(f"/api/inbox/{item['id']}/respond?choice=deny&sig={old_sig}")
     assert resp.status == 401
 
 
@@ -515,9 +519,10 @@ async def test_notifications_point_at_real_app_routes(client, hub, monkeypatch):
     hub.store.add_push_sub("dev", "ntfy", "https://ntfy.sh/t", {"server": "https://ntfy.sh", "topic": "t"})
     await hub.post_message("general", "done!")
     await asyncio.sleep(0.5)
-    await hub.add_inbox("approval", "general", "Approval needed", "ls", {"choices": ["once"]})
+    item = await hub.add_inbox("approval", "general", "Approval needed", "ls", {"choices": ["once"]})
     clicks = [post[1]["json"]["click"] for post in hub._http.posts]
-    assert clicks == [f"winglet://chat/{hub.server_id()}/general", "winglet://inbox"]
+    assert clicks == [f"winglet://chat/{hub.server_id()}/general",
+                      f"winglet://inbox?server={hub.server_id()}&item={item['id']}"]
 
 
 async def test_old_pending_requests_are_never_crowded_out(client, hub):

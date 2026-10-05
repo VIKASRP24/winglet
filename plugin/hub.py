@@ -424,9 +424,10 @@ class Hub:
         answer = body.get("answer")
         device = self._device(request)
         if device is None:
-            # One-tap notification actions carry an HMAC instead of a bearer token.
+            # Older notifications carried signed action links. Only "deny" is honoured from one: an
+            # approval must be given from the card itself, where the whole command is visible.
             sig = str(body.get("sig") or request.query.get("sig") or "")
-            if not (choice and hmac.compare_digest(sig, self.action_signature(item_id, choice))):
+            if not (choice == "deny" and hmac.compare_digest(sig, self.action_signature(item_id, choice))):
                 return _error(401, "not paired")
         ok, item = await self.respond(item_id, choice=choice, answer=answer)
         if item is None:
@@ -485,8 +486,10 @@ class Hub:
     def _inbox_notification(self, item: Dict[str, Any]) -> Dict[str, Any]:
         bot = self.bot()["title"]
         chat = self.store.get_chat(item["chat_id"]) or {}
+        # Tapping it opens exactly this card in the app.
+        url = f"/inbox?server={quote(self.server_id(), safe='')}&item={quote(item['id'], safe='')}"
         return {"title": f"{bot} · {item['title']}", "body": _clip(item["body"], 180),
-                "url": "/inbox", "kind": item["kind"], "item_id": item["id"],
+                "url": url, "kind": item["kind"], "item_id": item["id"],
                 "chat_id": item["chat_id"], "chat_title": chat.get("title", "")}
 
     # -- outbound (called by the adapter) ------------------------------------------------------
@@ -669,11 +672,8 @@ class Hub:
         if not subs:
             return result
         client = await self._client()
+        # No approve buttons on notifications: approving needs the card, with the full command in view.
         note = {**note, "tag": tag, "server_id": self.server_id()}
-        if item is not None and item["kind"] == "approval":
-            note["actions"] = [{"action": c, "title": item["payload"].get("labels", {}).get(c, c.title()),
-                                "sig": self.action_signature(item["id"], c)}
-                               for c in item["payload"].get("choices", []) if c in ("once", "deny")]
         for sub in subs:
             try:
                 if sub["kind"] == "webpush":
