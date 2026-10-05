@@ -63,7 +63,9 @@ for (const scheme of ['light', 'dark']) {
         check('success', parse(c.success).rgb, `successSoft/${name}`, over(c.successSoft, s));
       }
       check('onDanger', parse(c.onDanger).rgb, 'danger badge', parse(c.danger).rgb);
-      check('codeText', parse(c.codeText).rgb, 'codeBg', over(c.codeBg, bg));
+      for (const syn of ['codeText', 'synKeyword', 'synString', 'synNumber', 'synComment', 'synFunction', 'synType']) {
+        check(syn, parse(c[syn]).rgb, 'codeBg', over(c.codeBg, bg));
+      }
     });
   }
 }

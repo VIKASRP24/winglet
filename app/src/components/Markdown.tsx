@@ -1,33 +1,40 @@
 import * as Clipboard from 'expo-clipboard';
 import { Image } from 'expo-image';
 import { Lexer, type Token, type Tokens } from 'marked';
-import { memo, useState, type ReactNode } from 'react';
+import { memo, useMemo, useState, type ReactNode } from 'react';
 import { Linking, Platform, Pressable, ScrollView, Text, View } from 'react-native';
 import { haptic } from '../lib/haptics';
+import { highlight, type SynKind } from '../lib/highlight';
 import { makeStyles, useTheme } from '../lib/themeContext';
 import { FIXED, type Theme } from '../lib/theme';
-import { Check, Copy } from './icons';
+import { Check, ChevronsDownUp, ChevronsUpDown, Copy } from './icons';
 
 type Props = {
   text: string;
   resolveUrl?: (url: string) => string;
   /** onAccent: white text, for your own message bubbles. */
   tone?: 'default' | 'onAccent' | 'muted';
+  /** Text can be selected in place. Off in chat on phones, where a long press opens the message menu. */
+  selectable?: boolean;
 };
 
 type Styles = ReturnType<typeof useStyles>;
-type Ctx = { resolveUrl?: (url: string) => string; s: Styles; t: Theme; tone: NonNullable<Props['tone']> };
+type Ctx = { resolveUrl?: (url: string) => string; s: Styles; t: Theme; tone: NonNullable<Props['tone']>; sel: boolean };
 
-/** Chat-flavoured Markdown: paragraphs, headings, lists, code, quotes, tables, links, images. All text is selectable. */
-export const Markdown = memo(function Markdown({ text, resolveUrl, tone = 'default' }: Props) {
+/** Code longer than this folds to its first lines, with a button to show the rest. */
+const FOLD_LINES = 18;
+const FOLDED_LINES = 12;
+
+/** Chat-flavoured Markdown: paragraphs, headings, lists, highlighted code, quotes, tables, links, images. */
+export const Markdown = memo(function Markdown({ text, resolveUrl, tone = 'default', selectable = true }: Props) {
   const s = useStyles();
   const t = useTheme();
-  const ctx: Ctx = { resolveUrl, s, t, tone };
+  const ctx: Ctx = { resolveUrl, s, t, tone, sel: selectable };
   let tokens: Token[];
   try {
     tokens = new Lexer({ gfm: true, breaks: true }).lex(text || '');
   } catch {
-    return <Text selectable style={[s.p, toneStyle(ctx)]}>{text}</Text>;
+    return <Text selectable={selectable} style={[s.p, toneStyle(ctx)]}>{text}</Text>;
   }
   return <View style={s.root}>{renderBlocks(tokens, ctx)}</View>;
 });
@@ -50,30 +57,20 @@ function renderBlock(token: Token, key: number, ctx: Ctx): ReactNode {
       const t = token as Tokens.Paragraph;
       const onlyImage = t.tokens?.length === 1 && t.tokens[0].type === 'image';
       if (onlyImage) return <MdImage key={key} token={t.tokens[0] as Tokens.Image} ctx={ctx} />;
-      return <Text key={key} selectable style={[s.p, tone]}>{renderInline(t.tokens ?? [], ctx)}</Text>;
+      return <Text key={key} selectable={ctx.sel} style={[s.p, tone]}>{renderInline(t.tokens ?? [], ctx)}</Text>;
     }
     case 'heading': {
       const t = token as Tokens.Heading;
       const size = t.depth === 1 ? 22 : t.depth === 2 ? 19 : 17;
       return (
-        <Text key={key} selectable accessibilityRole="header" style={[s.h, tone, { fontSize: size, lineHeight: size * 1.3 }]}>
+        <Text key={key} selectable={ctx.sel} accessibilityRole="header" style={[s.h, tone, { fontSize: size, lineHeight: size * 1.3 }]}>
           {renderInline(t.tokens ?? [], ctx)}
         </Text>
       );
     }
     case 'code': {
       const t = token as Tokens.Code;
-      return (
-        <View key={key} style={s.codeBlock}>
-          <View style={s.codeHead}>
-            <Text style={s.codeLang}>{t.lang || 'code'}</Text>
-            <CopyButton text={t.text} ctx={ctx} />
-          </View>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-            <Text selectable style={s.codeText}>{t.text}</Text>
-          </ScrollView>
-        </View>
-      );
+      return <CodeBlock key={key} code={t.text} lang={t.lang} ctx={ctx} />;
     }
     case 'blockquote': {
       const t = token as Tokens.Blockquote;
@@ -95,7 +92,7 @@ function renderBlock(token: Token, key: number, ctx: Ctx): ReactNode {
               <View style={{ flex: 1 }}>
                 {item.tokens.map((child, ci) =>
                   child.type === 'text' ? (
-                    <Text key={ci} selectable style={[s.p, tone]}>{renderInline((child as Tokens.Text).tokens ?? [child], ctx)}</Text>
+                    <Text key={ci} selectable={ctx.sel} style={[s.p, tone]}>{renderInline((child as Tokens.Text).tokens ?? [child], ctx)}</Text>
                   ) : (
                     renderBlock(child, ci, ctx)
                   ),
@@ -112,11 +109,11 @@ function renderBlock(token: Token, key: number, ctx: Ctx): ReactNode {
         <ScrollView key={key} horizontal style={s.tableWrap} showsHorizontalScrollIndicator={false}>
           <View>
             <View style={[s.tr, s.thead]}>
-              {t.header.map((cell, ci) => <Text key={ci} selectable style={[s.td, s.th]}>{renderInline(cell.tokens, ctx)}</Text>)}
+              {t.header.map((cell, ci) => <Text key={ci} selectable={ctx.sel} style={[s.td, s.th]}>{renderInline(cell.tokens, ctx)}</Text>)}
             </View>
             {t.rows.map((row, ri) => (
               <View key={ri} style={[s.tr, ri === t.rows.length - 1 && { borderBottomWidth: 0 }]}>
-                {row.map((cell, ci) => <Text key={ci} selectable style={s.td}>{renderInline(cell.tokens, ctx)}</Text>)}
+                {row.map((cell, ci) => <Text key={ci} selectable={ctx.sel} style={s.td}>{renderInline(cell.tokens, ctx)}</Text>)}
               </View>
             ))}
           </View>
@@ -128,12 +125,12 @@ function renderBlock(token: Token, key: number, ctx: Ctx): ReactNode {
     case 'html':
     case 'text':
       return (
-        <Text key={key} selectable style={[s.p, tone]}>
+        <Text key={key} selectable={ctx.sel} style={[s.p, tone]}>
           {'tokens' in token && token.tokens ? renderInline(token.tokens, ctx) : (token as Tokens.Text).text}
         </Text>
       );
     default:
-      return 'raw' in token ? <Text key={key} selectable style={[s.p, tone]}>{(token as Tokens.Generic).raw}</Text> : null;
+      return 'raw' in token ? <Text key={key} selectable={ctx.sel} style={[s.p, tone]}>{(token as Tokens.Generic).raw}</Text> : null;
   }
 }
 
@@ -173,6 +170,42 @@ function renderInline(tokens: Token[], ctx: Ctx): ReactNode[] {
         return <Text key={i}>{decode((token as Tokens.Generic).raw ?? '')}</Text>;
     }
   });
+}
+
+/** A code block: syntax colours, copy, and long code folded until you ask for all of it. */
+function CodeBlock({ code, lang, ctx }: { code: string; lang?: string; ctx: Ctx }) {
+  const { s, t } = ctx;
+  const lines = code.split('\n');
+  const long = lines.length > FOLD_LINES;
+  const [open, setOpen] = useState(false);
+  const shown = long && !open ? lines.slice(0, FOLDED_LINES).join('\n') : code;
+  const spans = useMemo(() => highlight(shown, lang), [shown, lang]);
+  const color: Record<SynKind, string> = {
+    keyword: t.colors.synKeyword, string: t.colors.synString, number: t.colors.synNumber,
+    comment: t.colors.synComment, function: t.colors.synFunction, type: t.colors.synType,
+  };
+  return (
+    <View style={s.codeBlock}>
+      <View style={s.codeHead}>
+        <Text style={s.codeLang}>{lang || 'code'}</Text>
+        <CopyButton text={code} ctx={ctx} />
+      </View>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+        <Text selectable={ctx.sel} style={s.codeText}>
+          {spans.map((sp, i) => sp.kind ? (
+            <Text key={i} style={{ color: color[sp.kind], fontStyle: sp.kind === 'comment' ? 'italic' : 'normal' }}>{sp.text}</Text>
+          ) : sp.text)}
+        </Text>
+      </ScrollView>
+      {long ? (
+        <Pressable accessibilityRole="button" accessibilityLabel={open ? 'Show less code' : `Show all ${lines.length} lines`}
+          onPress={() => { haptic.selection(); setOpen(!open); }} style={({ pressed }) => [s.fold, pressed && { opacity: 0.6 }]} hitSlop={6}>
+          {open ? <ChevronsDownUp size={14} color={t.colors.accent} /> : <ChevronsUpDown size={14} color={t.colors.accent} />}
+          <Text style={s.foldText}>{open ? 'Show less' : `Show all ${lines.length} lines`}</Text>
+        </Pressable>
+      ) : null}
+    </View>
+  );
 }
 
 /** Copies the exact code block, then confirms with a check mark for a moment. */
@@ -233,6 +266,8 @@ const useStyles = makeStyles((t) => ({
   copy: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingVertical: 2, paddingHorizontal: 4 },
   copyText: { fontFamily: t.fonts.semibold, fontSize: 12, color: t.colors.textSecondary },
   codeText: { fontFamily: t.fonts.mono, fontSize: 13.5, lineHeight: 20, color: t.colors.codeText },
+  fold: { flexDirection: 'row', alignItems: 'center', gap: 6, alignSelf: 'flex-start', marginTop: 8, paddingVertical: 4 },
+  foldText: { fontFamily: t.fonts.semibold, fontSize: 12.5, color: t.colors.accent },
   quote: { flexDirection: 'row', gap: 10 },
   quoteBar: { width: 3, borderRadius: 3, backgroundColor: t.colors.borderStrong },
   list: { gap: 4 },
