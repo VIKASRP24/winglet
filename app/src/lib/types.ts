@@ -7,7 +7,8 @@ export type Server = {
   deviceId: string;
   bot: Bot;
   addedAt: number;
-  recovery?: { server: string; topic: string; key: string; revision: number };
+  // `since`: ntfy time of the last verified announcement, so later lookups only fetch newer ones.
+  recovery?: { server: string; topic: string; key: string; revision: number; since?: number };
 };
 
 export type Chat = {
@@ -27,7 +28,8 @@ export type Message = {
   chat_id: string;
   role: 'user' | 'bot' | 'system';
   text: string;
-  status: 'final' | 'streaming' | 'pending' | 'failed';
+  // pending: sending now; queued: waiting for a connection; failed: the server refused it.
+  status: 'final' | 'streaming' | 'pending' | 'queued' | 'failed';
   meta: {
     device?: string;
     client_id?: string;
@@ -62,3 +64,12 @@ export type InboxItem = {
 };
 
 export type ConnStatus = 'connecting' | 'online' | 'offline' | 'unauthorized';
+
+/** What a server reports about itself in `hello` and `/api/info`. */
+export type ServerInfo = {
+  version: string;
+  protocol: number;
+  min_app_protocol: number;
+  hermes_version: string;
+  features: Record<string, boolean>;
+};
