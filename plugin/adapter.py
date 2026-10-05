@@ -165,6 +165,8 @@ class WingletAdapter(BasePlatformAdapter):
         self._runner = None
         self._tunnel = None
         self._reconcile_task: Optional[asyncio.Task] = None
+        # (chat_id, status_key) -> message id, so a repeated status edits one line in place.
+        self._status_ids: Dict[tuple, str] = {}
 
     # -- lifecycle -------------------------------------------------------------------------
 
@@ -188,6 +190,7 @@ class WingletAdapter(BasePlatformAdapter):
             hub.on_approval = self._on_approval
             hub.on_answer = self._on_answer
             hub.hermes_version = hermes_api.hermes_version
+            hub.commands_provider = hermes_api.list_commands
             from gateway.platforms.shared_ingress import bind_listener
             # No access log: device tokens ride in WebSocket/media query strings and must not reach log files.
             self._runner = await bind_listener(self, hub.build_app(), self._host, self._port, "/api/ws",
@@ -230,15 +233,35 @@ class WingletAdapter(BasePlatformAdapter):
     # -- inbound -----------------------------------------------------------------------------
 
     async def _on_user_message(self, chat: Dict[str, Any], text: str, device: Dict[str, Any],
-                               message: Dict[str, Any]) -> None:
+                               message: Dict[str, Any], files: Optional[list] = None,
+                               reply: Optional[Dict[str, Any]] = None) -> None:
         source = self.build_source(
             chat_id=chat["id"], chat_name=chat.get("title") or chat["id"], chat_type="dm", user_id=OWNER_ID,
             user_name=device.get("name") or "Owner", message_id=message["id"],
             # The device proved itself with its pairing token before reaching this point.
             role_authorized=True)
+        media_urls, media_types, kinds = [], [], []
+        for f in files or []:
+            voice = f.get("kind") == "voice"
+            try:
+                path, media_type, kind = await hermes_api.cache_media(f["path"], f["name"], f["mime"], voice=voice)
+            except Exception:
+                logger.warning("[%s] could not pass %s to Hermes", self.name, f.get("name"), exc_info=True)
+                continue
+            media_urls.append(path)
+            media_types.append(media_type)
+            kinds.append("voice" if voice else kind)
         event = MessageEvent(
-            text=text, message_type=MessageType.COMMAND if text.startswith("/") else MessageType.TEXT,
+            text=text, message_type=_message_type(text, kinds),
             source=source, message_id=message["id"], raw_message=message, timestamp=datetime.now(tz=timezone.utc))
+        if media_urls:
+            event.media_urls = media_urls
+            event.media_types = media_types
+        if reply:
+            # Hermes adds '[Replying to: "…"]' context for the agent, as it does for Telegram replies.
+            event.reply_to_message_id = reply["id"]
+            event.reply_to_text = reply["text"]
+            event.reply_to_is_own_message = reply.get("role") == "bot"
         await self.handle_message(event)
 
     async def _on_approval(self, item: Dict[str, Any], choice: str) -> bool:
@@ -284,6 +307,24 @@ class WingletAdapter(BasePlatformAdapter):
         message = await hub.edit_message(message_id, _strip_cursor(content or ""), final=finalize)
         return SendResult(success=message is not None, message_id=message_id,
                           error=None if message else "message not found")
+
+    async def send_or_update_status(self, chat_id: str, status_key: str, content: str, *,
+                                    metadata: Optional[Dict[str, Any]] = None) -> SendResult:
+        """Hermes's lifecycle and status notes (context pressure, compression, fallback): one line per
+        kind, edited in place instead of a new bubble each time."""
+        hub = self._hub
+        if hub is None:
+            return SendResult(success=False, error="Winglet is not running")
+        text = _strip_cursor(content or "")
+        key = (str(chat_id), str(status_key))
+        cached = self._status_ids.get(key)
+        if cached and hub.store.get_message(cached) is not None:
+            message = await hub.edit_message(cached, text, final=True)
+            if message is not None:
+                return SendResult(success=True, message_id=cached)
+        message = await hub.post_message(chat_id, text, role="system", meta={"status_key": str(status_key)}, push=False)
+        self._status_ids[key] = message["id"]
+        return SendResult(success=True, message_id=message["id"])
 
     async def delete_message(self, chat_id: str, message_id: str) -> bool:
         return bool(self._hub and await self._hub.delete_message(message_id))
@@ -445,6 +486,16 @@ class WingletAdapter(BasePlatformAdapter):
                          reply_to: Optional[str] = None, metadata: Optional[Dict[str, Any]] = None,
                          **kwargs) -> SendResult:
         return await self._send_attachment(chat_id, video_path, caption)
+
+
+def _message_type(text: str, kinds: list):
+    """Voice beats documents beats photos, as other platforms do (a document turns on Hermes's
+    document handling; a voice note turns on transcription)."""
+    for kind, name in (("voice", "VOICE"), ("document", "DOCUMENT"), ("image", "PHOTO"), ("video", "VIDEO"),
+                       ("audio", "AUDIO")):
+        if kind in kinds:
+            return getattr(MessageType, name)
+    return MessageType.COMMAND if text.startswith("/") else MessageType.TEXT
 
 
 def register(ctx) -> None:

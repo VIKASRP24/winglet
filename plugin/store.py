@@ -49,6 +49,15 @@ CREATE TABLE IF NOT EXISTS inbox (
     resolution TEXT NOT NULL DEFAULT '', created_at REAL NOT NULL, updated_at REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS inbox_status ON inbox (status, created_at);
+CREATE TABLE IF NOT EXISTS uploads (
+    id TEXT PRIMARY KEY, device_id TEXT NOT NULL, chat_id TEXT NOT NULL, name TEXT NOT NULL, mime TEXT NOT NULL,
+    kind TEXT NOT NULL, size INTEGER NOT NULL, created_at REAL NOT NULL, message_id TEXT
+);
+CREATE INDEX IF NOT EXISTS uploads_device ON uploads (device_id, created_at);
+CREATE INDEX IF NOT EXISTS uploads_chat ON uploads (chat_id);
+CREATE TABLE IF NOT EXISTS push_prefs (
+    device_id TEXT PRIMARY KEY, data TEXT NOT NULL DEFAULT '{}'
+);
 CREATE TABLE IF NOT EXISTS push_subs (
     id TEXT PRIMARY KEY, device_id TEXT NOT NULL, kind TEXT NOT NULL, endpoint TEXT NOT NULL,
     data TEXT NOT NULL, created_at REAL NOT NULL, UNIQUE (kind, endpoint)
@@ -175,6 +184,7 @@ class Store:
     def remove_device(self, device_id: str) -> bool:
         with self._lock:
             self._exec("DELETE FROM push_subs WHERE device_id = ?", (device_id,))
+            self._exec("DELETE FROM push_prefs WHERE device_id = ?", (device_id,))
             removed = self._exec("DELETE FROM devices WHERE id = ?", (device_id,)) == 1
             if removed:
                 # Notification action links are signed with this key; rotating it voids any the
@@ -390,3 +400,65 @@ class Store:
         if device_id:
             return self._exec("DELETE FROM push_subs WHERE endpoint = ? AND device_id = ?", (endpoint, device_id))
         return self._exec("DELETE FROM push_subs WHERE endpoint = ?", (endpoint,))
+
+    # -- uploads ---------------------------------------------------------------------
+
+    def add_upload(self, upload_id: str, device_id: str, chat_id: str, name: str, mime: str, kind: str,
+                   size: int) -> Dict[str, Any]:
+        self._exec("INSERT INTO uploads (id, device_id, chat_id, name, mime, kind, size, created_at) "
+                   "VALUES (?, ?, ?, ?, ?, ?, ?, ?)", (upload_id, device_id, chat_id, name, mime, kind, int(size), _now()))
+        return self.get_upload(upload_id)
+
+    def get_upload(self, upload_id: str) -> Optional[Dict[str, Any]]:
+        row = self._one("SELECT * FROM uploads WHERE id = ?", (upload_id,))
+        return dict(row) if row else None
+
+    def claim_uploads(self, upload_ids: List[str], device_id: str, chat_id: str, message_id: str) -> Optional[List[Dict[str, Any]]]:
+        """Attach uploads to a message. All or nothing: each must belong to this device and chat and
+        not already be attached to another message; otherwise None and nothing changes."""
+        with self._lock:
+            rows = []
+            for upload_id in upload_ids:
+                row = self.get_upload(upload_id)
+                if (row is None or row["device_id"] != device_id or row["chat_id"] != chat_id
+                        or row["message_id"] not in (None, message_id)):
+                    return None
+                rows.append(row)
+            for row in rows:
+                self._exec("UPDATE uploads SET message_id = ? WHERE id = ?", (message_id, row["id"]))
+            return [self.get_upload(r["id"]) for r in rows]
+
+    def upload_bytes_since(self, device_id: str, since: float) -> int:
+        row = self._one("SELECT COALESCE(SUM(size), 0) AS n FROM uploads WHERE device_id = ? AND created_at >= ?",
+                        (device_id, since))
+        return int(row["n"]) if row else 0
+
+    def total_upload_bytes(self) -> int:
+        row = self._one("SELECT COALESCE(SUM(size), 0) AS n FROM uploads")
+        return int(row["n"]) if row else 0
+
+    def stale_uploads(self, older_than: float) -> List[Dict[str, Any]]:
+        """Uploads never attached to a message, created before ``older_than``."""
+        return [dict(r) for r in self._all("SELECT * FROM uploads WHERE message_id IS NULL AND created_at < ?",
+                                           (older_than,))]
+
+    def chat_uploads(self, chat_id: str) -> List[Dict[str, Any]]:
+        return [dict(r) for r in self._all("SELECT * FROM uploads WHERE chat_id = ?", (chat_id,))]
+
+    def delete_upload(self, upload_id: str) -> None:
+        self._exec("DELETE FROM uploads WHERE id = ?", (upload_id,))
+
+    # -- notification preferences --------------------------------------------------------
+
+    def get_push_prefs(self, device_id: str) -> Dict[str, Any]:
+        row = self._one("SELECT data FROM push_prefs WHERE device_id = ?", (device_id,))
+        return json.loads(row["data"]) if row else {}
+
+    def set_push_prefs(self, device_id: str, data: Dict[str, Any]) -> Dict[str, Any]:
+        self._exec("INSERT INTO push_prefs (device_id, data) VALUES (?, ?) "
+                   "ON CONFLICT(device_id) DO UPDATE SET data = excluded.data", (device_id, json.dumps(data)))
+        return self.get_push_prefs(device_id)
+
+    def all_messages(self, chat_id: str) -> List[Dict[str, Any]]:
+        rows = self._all("SELECT rowid AS position, * FROM messages WHERE chat_id = ? ORDER BY rowid", (chat_id,))
+        return [self._message(r) for r in rows]
