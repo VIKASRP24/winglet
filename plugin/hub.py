@@ -36,6 +36,10 @@ from .store import Store
 logger = logging.getLogger(__name__)
 
 VERSION = "0.1.2"
+# Wire protocol: bumped only for breaking changes. The app compares these to its own and asks for
+# whichever side is out of date to be updated.
+PROTOCOL = 1
+MIN_APP_PROTOCOL = 1
 HOME_CHAT_ID = "home"
 PUSH_DEBOUNCE_SECONDS = 2.5
 MAX_TEXT = 16_000
@@ -90,6 +94,8 @@ class Hub:
         self.on_user_message: Optional[InboundFn] = None
         self.on_approval: Optional[ResolveFn] = None
         self.on_answer: Optional[ResolveFn] = None
+        # Installed by the adapter; the hub itself never imports Hermes.
+        self.hermes_version: Callable[[], str] = lambda: ""
         self.store.ensure_chat(HOME_CHAT_ID, "Updates", kind="home")
 
     # -- lifecycle -------------------------------------------------------------------
@@ -185,10 +191,17 @@ class Hub:
         self._alive_cache[device_id] = (alive, now)
         return alive
 
+    def features(self) -> Dict[str, bool]:
+        """What this server can do. The app hides anything that isn't listed as true."""
+        return {"webpush": True, "ntfy": True, "approvals": True, "questions": True}
+
+    def about(self) -> Dict[str, Any]:
+        return {"version": VERSION, "protocol": PROTOCOL, "min_app_protocol": MIN_APP_PROTOCOL,
+                "hermes_version": self.hermes_version() or "", "features": self.features()}
+
     async def h_info(self, request: web.Request) -> web.Response:
-        return _json({"app": "winglet", "version": VERSION, "server_id": self.server_id(), "bot": self.bot(),
-                      "connection": self.connection,
-                      "features": {"webpush": True, "ntfy": True, "approvals": True, "questions": True}})
+        return _json({"app": "winglet", "server_id": self.server_id(), "bot": self.bot(),
+                      "connection": self.connection, **self.about()})
 
     def _pair_peer(self, request: web.Request) -> str:
         peer = request.remote or "?"
@@ -565,7 +578,7 @@ class Hub:
         self._sockets[ws] = {"device": device}
         try:
             await ws.send_json({"type": "hello", "server_id": self.server_id(), "bot": self.bot(), "device": device,
-                                "version": VERSION, "chats": self.store.list_chats(),
+                                **self.about(), "chats": self.store.list_chats(),
                                 "typing": sorted(self._typing), "pending": self.store.pending_count()})
             async for msg in ws:
                 if msg.type != WSMsgType.TEXT:

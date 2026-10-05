@@ -122,6 +122,20 @@ async def test_info_is_public(client):
     assert data["app"] == "winglet" and data["bot"]["title"] == "Hermes"
 
 
+async def test_info_and_hello_report_protocol_versions_and_features(client, hub):
+    hub.hermes_version = lambda: "2026.9.24"
+    data = await (await client.get("/api/info")).json()
+    assert data["protocol"] >= 1 and data["min_app_protocol"] >= 1
+    assert data["hermes_version"] == "2026.9.24" and data["version"]
+    assert data["features"]["approvals"] is True
+    token = await pair(client, hub)
+    ws = await client.ws_connect(f"/api/ws?token={token}")
+    hello = await ws.receive_json()
+    assert hello["protocol"] == data["protocol"] and hello["hermes_version"] == "2026.9.24"
+    assert hello["features"] == data["features"]
+    await ws.close()
+
+
 async def test_pairing_flow(client, hub):
     resp = await client.post("/api/pair", json={"code": "WRONG123"})
     assert resp.status == 403

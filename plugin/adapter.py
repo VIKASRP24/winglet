@@ -27,7 +27,7 @@ from gateway.platforms._shared import extra_or_secret, get_scoped_secret, seed_e
 from gateway.platforms.base import BasePlatformAdapter, ExecApprovalPrompt, SendResult
 from gateway.platforms.event import MessageEvent, MessageType
 
-from . import bridge, cli
+from . import bridge, cli, hermes_api
 from .dependencies import missing_dependencies
 from .store import Store
 
@@ -187,6 +187,7 @@ class WingletAdapter(BasePlatformAdapter):
             hub.on_user_message = self._on_user_message
             hub.on_approval = self._on_approval
             hub.on_answer = self._on_answer
+            hub.hermes_version = hermes_api.hermes_version
             from gateway.platforms.shared_ingress import bind_listener
             # No access log: device tokens ride in WebSocket/media query strings and must not reach log files.
             self._runner = await bind_listener(self, hub.build_app(), self._host, self._port, "/api/ws",
