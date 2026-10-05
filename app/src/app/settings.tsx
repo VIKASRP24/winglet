@@ -1,14 +1,14 @@
 import Constants from 'expo-constants';
 import * as Clipboard from 'expo-clipboard';
 import { router } from 'expo-router';
-import { BellRing, ChevronLeft, ExternalLink, Plus, Trash2 } from '../components/icons';
+import { Activity, BellRing, ChevronLeft, ExternalLink, Plus, Trash2 } from '../components/icons';
 import { useState } from 'react';
 import { Linking, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BotAvatar } from '../components/BotAvatar';
 import { Button, IconButton, Row, SectionLabel } from '../components/ui';
 import { describeTestPush, enableNtfy, enableWebPush, openNtfySubscribe, sendTestPush, webPushServer, webPushState, type PushState } from '../lib/push';
-import { useApp } from '../lib/store';
+import { APP_PROTOCOL, useApp } from '../lib/store';
 import { colors, fonts, radius } from '../lib/theme';
 import type { Server } from '../lib/types';
 
@@ -17,7 +17,10 @@ export default function SettingsScreen() {
   const servers = useApp((s) => s.servers);
   const runtime = useApp((s) => s.runtime);
   const removeServer = useApp((s) => s.removeServer);
+  const clearCache = useApp((s) => s.clearCache);
   const [confirm, setConfirm] = useState<string | null>(null);
+  const [cleared, setCleared] = useState(false);
+  const appVersion = Constants.expoConfig?.version ?? '';
 
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
@@ -59,9 +62,44 @@ export default function SettingsScreen() {
         <SectionLabel>Notifications</SectionLabel>
         {Platform.OS === 'web' ? <WebPushSettings servers={servers} /> : servers.map((s) => <NtfySettings key={s.id} server={s} />)}
 
+        <SectionLabel>Storage</SectionLabel>
+        <View style={[styles.group, { padding: 14, gap: 12 }]}>
+          <Text style={styles.note}>
+            Recent messages are kept on this device so chats open instantly and can be read offline. Your server keeps the full history.
+          </Text>
+          <Button title={cleared ? 'Cleared' : 'Clear cached messages'} variant="secondary" onPress={async () => {
+            await clearCache();
+            setCleared(true);
+          }} />
+        </View>
+
         <SectionLabel>About</SectionLabel>
         <View style={styles.group}>
-          <Text style={styles.about}>Winglet {Constants.expoConfig?.version ?? ''} · an open-source app for Hermes Agent. Not affiliated with Nous Research.</Text>
+          <Text style={styles.about}>Winglet {appVersion} (protocol {APP_PROTOCOL}) · an open-source app for Hermes Agent. Not affiliated with Nous Research.</Text>
+          {servers.map((s) => {
+            const info = runtime[s.id]?.info;
+            const compat = runtime[s.id]?.compat;
+            const behind = info?.version && appVersion && compareVersions(info.version, appVersion) < 0;
+            return (
+              <View key={s.id} style={styles.versionRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.botName}>{s.bot.title}</Text>
+                  <Text style={styles.botUrl}>
+                    {info ? `Winglet ${info.version || '?'} · Hermes ${info.hermes_version || 'unknown'}` : 'Versions show once connected'}
+                  </Text>
+                  {compat === 'update-app' ? (
+                    <Text style={styles.warn}>This app is too old for {s.bot.title}. Install the latest Winglet app.</Text>
+                  ) : compat === 'update-server' || behind ? (
+                    <Text style={styles.warn}>
+                      {compat ? 'Update needed' : 'Update available'}: on the server, run <Text style={styles.mono}>hermes plugins update winglet</Text>, then restart the gateway.
+                    </Text>
+                  ) : null}
+                </View>
+                <Button size="sm" variant="ghost" title="Connection" icon={<Activity size={15} color={colors.textMuted} />}
+                  onPress={() => router.push(`/diagnostics/${s.id}`)} />
+              </View>
+            );
+          })}
           <Row onPress={() => Linking.openURL('https://github.com/VIKASRP24/winglet')}>
             <ExternalLink size={20} color={colors.textMuted} />
             <Text style={styles.rowText}>Source code & help</Text>
@@ -182,5 +220,17 @@ const styles = StyleSheet.create({
   rowText: { color: colors.textDim, fontFamily: fonts.semibold, fontSize: 15 },
   note: { color: colors.textMuted, fontFamily: fonts.regular, fontSize: 14, lineHeight: 20 },
   about: { color: colors.textMuted, fontFamily: fonts.regular, fontSize: 14, lineHeight: 20, padding: 10 },
+  versionRow: { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 10 },
+  warn: { color: colors.yellow, fontFamily: fonts.medium, fontSize: 13, lineHeight: 18, marginTop: 4 },
+  mono: { fontFamily: fonts.mono, color: colors.text },
   topic: { color: colors.text, fontFamily: fonts.mono, fontSize: 15, backgroundColor: colors.rail, padding: 12, borderRadius: radius.md },
 });
+
+/** Compare dotted versions numerically: -1 if a is older than b. */
+function compareVersions(a: string, b: string): number {
+  const pa = a.split('.').map((n) => parseInt(n, 10) || 0), pb = b.split('.').map((n) => parseInt(n, 10) || 0);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    if ((pa[i] ?? 0) !== (pb[i] ?? 0)) return (pa[i] ?? 0) < (pb[i] ?? 0) ? -1 : 1;
+  }
+  return 0;
+}

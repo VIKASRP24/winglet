@@ -1,14 +1,16 @@
 import { router } from 'expo-router';
-import { ArrowUp, ChevronLeft, FileText, Hash, Inbox, RotateCcw, Square, Sparkles } from './icons';
+import { ArrowUp, ChevronLeft, Clock, FileText, Hash, Inbox, RotateCcw, Square, Sparkles } from './icons';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, FlatList, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
 import { mediaUrl } from '../lib/api';
-import { isTyping, useApp } from '../lib/store';
+import { connectionView } from '../lib/connection';
+import { draftKey, isTyping, useApp } from '../lib/store';
 import { colors, fonts, radius } from '../lib/theme';
 import type { InboxItem, Message, Server } from '../lib/types';
 import { BotAvatar, botColor, UserAvatar } from './BotAvatar';
+import { ConnectionBanner } from './ConnectionBanner';
 import { InboxCard } from './InboxCards';
 import { Markdown } from './Markdown';
 import { Badge, IconButton, tap } from './ui';
@@ -30,6 +32,8 @@ export function ChatView({ server, chatId, showBack }: { server: Server; chatId:
   const insets = useSafeAreaInsets();
   const runtime = useApp((s) => s.runtime[server.id]);
   const loadMessages = useApp((s) => s.loadMessages);
+  const hydrateChat = useApp((s) => s.hydrateChat);
+  const network = useApp((s) => s.network);
   const setVisibleChat = useApp((s) => s.setVisibleChat);
   const chat = runtime?.chats[chatId];
   const messages = runtime?.messages[chatId];
@@ -42,6 +46,11 @@ export function ChatView({ server, chatId, showBack }: { server: Server; chatId:
     setVisibleChat({ serverId: server.id, chatId });
     return () => setVisibleChat(undefined);
   }, [server.id, chatId, setVisibleChat]);
+
+  // Show what this phone remembers straight away; the server's copy replaces it when it arrives.
+  useEffect(() => {
+    hydrateChat(server.id, chatId);
+  }, [server.id, chatId, hydrateChat]);
 
   useEffect(() => {
     if (runtime?.status === 'online' && !loaded) loadMessages(server.id, chatId);
@@ -66,8 +75,9 @@ export function ChatView({ server, chatId, showBack }: { server: Server; chatId:
   }
 
   const title = chat?.kind === 'home' ? 'Updates' : chat?.title ?? 'Chat';
-  const statusLabel = runtime?.status === 'online' ? (typing ? 'working…' : 'online')
-    : runtime?.status === 'unauthorized' ? 'unpaired' : runtime?.status === 'offline' ? 'offline — reconnecting' : 'connecting…';
+  const view = connectionView(network, runtime, server.bot.title);
+  const statusLabel = view.kind === 'online' ? (typing ? 'working…' : 'online') : view.kind === 'connecting' ? 'connecting…'
+    : view.kind === 'recovering' ? 'finding new address…' : view.kind === 'unreachable' ? 'offline' : view.title.toLowerCase();
 
   return (
     <KeyboardAvoidingView style={styles.root} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
@@ -91,7 +101,8 @@ export function ChatView({ server, chatId, showBack }: { server: Server; chatId:
           </IconButton>
         ) : null}
       </View>
-      <MessageList server={server} chatId={chatId} messages={messages ?? []} loaded={!!loaded} typing={typing} />
+      <ConnectionBanner server={server} />
+      <MessageList server={server} chatId={chatId} messages={messages ?? []} loaded={!!loaded || !!messages?.length} typing={typing} />
       <Composer server={server} chatId={chatId} busy={typing} bottomInset={insets.bottom} />
     </KeyboardAvoidingView>
   );
@@ -149,7 +160,6 @@ function isGrouped(prev: Message | undefined, m: Message) {
 const MessageRow = memo(function MessageRow({ server, message, grouped, live, inboxItem }: {
   server: Server; message: Message; grouped: boolean; live?: boolean; inboxItem?: InboxItem;
 }) {
-  const sendMessage = useApp((s) => s.sendMessage);
   const resolve = useCallback((url: string) => mediaUrl(server, url), [server]);
 
   if (message.role === 'system') {
@@ -205,16 +215,37 @@ const MessageRow = memo(function MessageRow({ server, message, grouped, live, in
             </Pressable>
           ),
         )}
-        {failed ? (
-          <Pressable style={styles.failed} onPress={() => sendMessage(server.id, message.chat_id, message.text, message.meta?.client_id)}>
-            <RotateCcw size={13} color={colors.red} />
-            <Text style={styles.failedText}>Not delivered · tap to retry</Text>
-          </Pressable>
+        {message.status === 'queued' ? (
+          <View style={styles.failed}>
+            <Clock size={12} color={colors.textMuted} />
+            <Text style={[styles.failedText, { color: colors.textMuted }]}>Queued · sends when {server.bot.title} is reachable</Text>
+          </View>
         ) : null}
+        {failed ? <FailedActions server={server} message={message} /> : null}
       </View>
     </View>
   );
 });
+
+/** A message the server refused: try again, take it back into the composer, or drop it. */
+function FailedActions({ server, message }: { server: Server; message: Message }) {
+  const sendMessage = useApp((s) => s.sendMessage);
+  const discard = useApp((s) => s.discardMessage);
+  const setDraft = useApp((s) => s.setDraft);
+  const clientId = message.meta?.client_id ?? message.id;
+  return (
+    <View style={styles.failed}>
+      <RotateCcw size={13} color={colors.red} />
+      <Text style={styles.failedText}>Not delivered</Text>
+      <Text accessibilityRole="button" style={styles.failedAction} onPress={() => sendMessage(server.id, message.chat_id, message.text, clientId)}>Retry</Text>
+      <Text accessibilityRole="button" style={styles.failedAction} onPress={() => {
+        setDraft(server.id, message.chat_id, message.text);
+        discard(server.id, message.chat_id, clientId);
+      }}>Edit</Text>
+      <Text accessibilityRole="button" style={styles.failedAction} onPress={() => discard(server.id, message.chat_id, clientId)}>Delete</Text>
+    </View>
+  );
+}
 
 function Cursor() {
   const opacity = useRef(new Animated.Value(1)).current;
@@ -283,7 +314,10 @@ function EmptyChat({ server, chatId }: { server: Server; chatId: string }) {
 }
 
 function Composer({ server, chatId, busy, bottomInset }: { server: Server; chatId: string; busy: boolean; bottomInset: number }) {
-  const [text, setText] = useState('');
+  // The draft lives in the store, so it survives switching chats, closing the app, and "Edit" on a failed send.
+  const text = useApp((s) => s.drafts[draftKey(server.id, chatId)] ?? '');
+  const setDraft = useApp((s) => s.setDraft);
+  const setText = (value: string) => setDraft(server.id, chatId, value);
   const [height, setHeight] = useState(36);
   const sendMessage = useApp((s) => s.sendMessage);
   const chat = useApp((s) => s.runtime[server.id]?.chats[chatId]);
@@ -349,7 +383,7 @@ function Composer({ server, chatId, busy, bottomInset }: { server: Server; chatI
           </Pressable>
         )}
       </View>
-      {!online ? <Text style={styles.offlineNote}>Offline — messages will fail until {server.bot.title} is reachable.</Text> : null}
+      {!online ? <Text style={styles.offlineNote}>Offline. Messages you send are queued and go out when {server.bot.title} is back.</Text> : null}
     </View>
   );
 }
@@ -406,6 +440,7 @@ const styles = StyleSheet.create({
   fileSize: { color: colors.textMuted, fontFamily: fonts.regular, fontSize: 12 },
   failed: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 4 },
   failedText: { color: colors.red, fontFamily: fonts.medium, fontSize: 12.5 },
+  failedAction: { color: colors.link, fontFamily: fonts.semibold, fontSize: 12.5, paddingHorizontal: 4 },
   typing: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 18, paddingTop: 12, paddingBottom: 4 },
   dots: { flexDirection: 'row', gap: 3, paddingHorizontal: 8, paddingVertical: 7, backgroundColor: colors.card, borderRadius: radius.pill },
   dot: { width: 6, height: 6, borderRadius: 3, backgroundColor: colors.textDim },
