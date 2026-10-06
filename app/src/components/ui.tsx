@@ -336,9 +336,9 @@ const useStyles = makeStyles((t) => ({
   segmentText: { fontFamily: t.fonts.semibold, fontSize: 14 },
   chip: {
     flexDirection: 'row', alignItems: 'center', gap: 6, minHeight: 38, paddingHorizontal: 14, borderRadius: t.radius.pill,
-    borderWidth: 1, borderColor: t.colors.border, backgroundColor: t.colors.surface,
+    borderWidth: 1, borderColor: t.colors.border, backgroundColor: t.colors.surface, maxWidth: '100%',
   },
-  chipText: { fontFamily: t.fonts.medium, fontSize: 14 },
+  chipText: { fontFamily: t.fonts.medium, fontSize: 14, flexShrink: 1 },
   fieldLabel: { ...t.type.label, color: t.colors.textSecondary },
   hint: { ...t.type.caption, fontFamily: t.fonts.regular, color: t.colors.textSecondary },
   input: {
