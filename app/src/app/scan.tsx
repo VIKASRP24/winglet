@@ -5,7 +5,7 @@ import { useRef, useState } from 'react';
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Button, IconButton } from '../components/ui';
-import { defaultDeviceName, pair, parsePairLink } from '../lib/api';
+import { defaultDeviceName, fetchInfo, pair, parsePairLink, verifyDevice } from '../lib/api';
 import { useApp } from '../lib/store';
 import { FIXED } from '../lib/theme';
 import { makeStyles, useTheme } from '../lib/themeContext';
@@ -16,7 +16,8 @@ export default function ScanScreen() {
   const insets = useSafeAreaInsets();
   const [permission, requestPermission] = useCameraPermissions();
   const addServer = useApp((s) => s.addServer);
-  const [status, setStatus] = useState<'scanning' | 'pairing' | 'error'>('scanning');
+  const updateServer = useApp((s) => s.updateServer);
+  const [status, setStatus] = useState<'scanning' | 'pairing' | 'verifying' | 'error'>('scanning');
   const [error, setError] = useState('');
   const handled = useRef(false);
 
@@ -28,9 +29,20 @@ export default function ScanScreen() {
       return;
     }
     handled.current = true;
-    setStatus('pairing');
     try {
-      const server = await pair(link.url, link.code, defaultDeviceName());
+      // A code from a server this phone already has verifies the phone instead of pairing it twice.
+      const info = await fetchInfo(link.url);
+      const existing = useApp.getState().servers.find((x) => x.id === info.server_id);
+      if (existing && link.fp) {
+        setStatus('verifying');
+        const verified = await verifyDevice(existing, link.code, link.fp);
+        await updateServer(existing.id, { fingerprint: verified.fingerprint }, true);
+        useApp.getState().toast({ serverId: existing.id, title: 'Phone verified', body: `You can manage ${existing.bot.title} from this phone now.` });
+        router.back();
+        return;
+      }
+      setStatus('pairing');
+      const server = await pair(link.url, link.code, defaultDeviceName(), link.fp);
       await addServer(server);
       router.dismissAll();
       router.replace('/');
@@ -67,9 +79,10 @@ export default function ScanScreen() {
         </IconButton>
         <View style={styles.frame} />
         <View style={styles.hintBox}>
-          {status === 'pairing' ? <ActivityIndicator color={FIXED.white} /> : null}
+          {status === 'pairing' || status === 'verifying' ? <ActivityIndicator color={FIXED.white} /> : null}
           <Text style={styles.hint}>
-            {status === 'pairing' ? 'Pairing…' : error || 'Point at the QR code from `hermes winglet pair`'}
+            {status === 'pairing' ? 'Pairing…' : status === 'verifying' ? 'Verifying this phone…'
+              : error || 'Point at the QR code from `hermes winglet pair` or another phone'}
           </Text>
           {status === 'error' ? (
             <Button title="Try again" onPress={() => { handled.current = false; setError(''); setStatus('scanning'); }} />

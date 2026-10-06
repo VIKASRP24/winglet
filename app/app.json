@@ -62,6 +62,12 @@
         }
       ],
       [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "Winglet can ask for Face ID to unlock when App lock is on."
+        }
+      ],
+      [
         "expo-build-properties",
         {
           "android": {

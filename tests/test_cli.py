@@ -49,7 +49,7 @@ def test_ready_gateway_creates_redeemable_code_for_configured_url(config, monkey
     assert links[0].startswith("https://winglet.example.com/#pair=")
     store = Store(tmp_path / "data.db")
     try:
-        assert store.redeem_pair_code(links[0].split("#pair=")[1])
+        assert store.redeem_pair_code(links[0].split("#pair=")[1].split("&")[0])
     finally:
         store.close()
 
@@ -118,7 +118,7 @@ def test_pair_prints_actual_qr_link_and_redeemable_code(config, monkeypatch, tmp
     assert "█" in output or "▀" in output or "▄" in output
     assert "install `qrcode`" not in output
     link = next(line.split("Link:", 1)[1].strip() for line in output.splitlines() if "Link:" in line)
-    code = link.split("#pair=", 1)[1]
+    code = link.split("#pair=", 1)[1].split("&")[0]
     assert code and f"Code:  {code[:4]}-{code[4:]}" in output
     store = Store(path)
     try:
@@ -333,6 +333,6 @@ async def test_pair_with_real_hub_bound_only_to_specific_address(config, monkeyp
         links = []
         monkeypatch.setattr(cli, "_print_qr", links.append)
         assert await asyncio.to_thread(cli.cmd_pair, argparse.Namespace(public_url="https://winglet.example.com")) == 0
-        assert store.redeem_pair_code(links[0].split("#pair=")[1])
+        assert store.redeem_pair_code(links[0].split("#pair=")[1].split("&")[0])
     finally:
         store.close()

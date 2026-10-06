@@ -9,7 +9,22 @@ export type Server = {
   addedAt: number;
   // `since`: ntfy time of the last verified announcement, so later lookups only fetch newer ones.
   recovery?: { server: string; topic: string; key: string; revision: number; since?: number };
+  /** The server key's fingerprint, pinned at pairing (from the QR code when there was one). */
+  fingerprint?: string;
+  /** The server takes the token in the socket's first frame, not the URL. */
+  wsAuth?: boolean;
 };
+
+export type Role = 'owner' | 'member';
+
+/** Who this phone is on a server: its role, whether it can sign owner actions, and its main chat. */
+export type Me = { id: string; name: string; role: Role; verified: boolean; home_chat: string };
+
+export type Device = { id: string; name: string; platform: string; role: Role; verified: boolean;
+  created_at: number; last_seen: number; current?: boolean };
+
+export type AuditEntry = { id: number; ts: number; device_id: string; device_name: string; role: string; action: string;
+  summary: string; outcome: string };
 
 export type Chat = {
   id: string;

@@ -1,5 +1,7 @@
 import { Platform } from 'react-native';
 import { fetch } from 'expo/fetch';
+import { checkServerKey, newSigningKey, seal, signedHeaders, type ServerKeyInfo } from './crypto';
+import { getItem, setItem } from './storage';
 import type { Bot, Server } from './types';
 
 export class ApiError extends Error {
@@ -19,12 +21,13 @@ export function normalizeCode(code: string): string {
   return code.toUpperCase().replace(/[^A-Z0-9]/g, '');
 }
 
-/** Pull `{url, code}` out of a pairing link like `https://box.ts.net/#pair=ABCD2345`. */
-export function parsePairLink(text: string): { url: string; code: string } | null {
+/** Pull `{url, code, fp}` out of a pairing link like `https://box.ts.net/#pair=ABCD2345&fp=…`. The
+ * fingerprint is the server key's: with it, the phone can tell it's really talking to that server. */
+export function parsePairLink(text: string): { url: string; code: string; fp?: string } | null {
   const trimmed = text.trim();
-  const match = trimmed.match(/^(https?:\/\/[^\s#?]+?)\/?(?:\?[^#]*)?#pair=([A-Za-z0-9-]+)/);
+  const match = trimmed.match(/^(https?:\/\/[^\s#?]+?)\/?(?:\?[^#]*)?#pair=([A-Za-z0-9-]+)(?:&fp=([A-Za-z0-9_-]{16,64}))?/);
   if (!match) return null;
-  return { url: normalizeUrl(match[1]), code: normalizeCode(match[2]) };
+  return { url: normalizeUrl(match[1]), code: normalizeCode(match[2]), ...(match[3] ? { fp: match[3] } : {}) };
 }
 
 async function request<T>(url: string, init: RequestInit & { token?: string } = {}): Promise<T> {
@@ -61,19 +64,76 @@ export async function fetchInfo(url: string): Promise<{ server_id: string; bot: 
   return info;
 }
 
-export async function pair(url: string, code: string, deviceName: string): Promise<Server> {
-  const base = normalizeUrl(url);
-  await fetchInfo(base);
-  const data = await request<any>(`${base}/api/pair`, {
-    method: 'POST',
-    body: JSON.stringify({ code: normalizeCode(code), device_name: deviceName, platform: Platform.OS }),
-  });
-  return { id: data.server_id, url: base, token: data.token, deviceId: data.device.id, bot: data.bot,
-    addedAt: Date.now(), ...(Platform.OS === 'android' && data.recovery ? { recovery: data.recovery } : {}) };
+/** The server's public keys, checked against the pairing code's fingerprint (or the one pinned at
+ * pairing). Null from a server too old to have keys, which is only acceptable without a fingerprint. */
+export async function serverKey(base: string, fp?: string): Promise<ServerKeyInfo | null> {
+  let info: ServerKeyInfo;
+  try {
+    info = await request<ServerKeyInfo>(`${base}/api/server-key`);
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 404 && !fp) return null;
+    if (e instanceof ApiError && e.status === 404) {
+      throw new ApiError("This pairing code expects a newer Winglet on the server than the one that answered. Don't continue on this network; update the server and pair again.", 0);
+    }
+    throw e;
+  }
+  checkServerKey(info, fp);
+  return info;
 }
 
+const signKeyName = (serverId: string) => `winglet.sign.${serverId}`;
+
+export async function pair(url: string, code: string, deviceName: string, fp?: string): Promise<Server> {
+  const base = normalizeUrl(url);
+  await fetchInfo(base);
+  const key = await serverKey(base, fp);
+  const details = { code: normalizeCode(code), device_name: deviceName, platform: Platform.OS };
+  let body: object = details;
+  let signing: { secret: string; public: string } | undefined;
+  if (key) {
+    // Sealed to the server's key, with this phone's signing key inside: nobody in between can swap it.
+    signing = newSigningKey();
+    body = { sealed: seal(key, 'pair', '', { ...details, sign_key: signing.public, pinned: !!fp }) };
+  }
+  const data = await request<any>(`${base}/api/pair`, { method: 'POST', body: JSON.stringify(body) });
+  if (signing) await setItem(signKeyName(data.server_id), signing.secret);
+  return { id: data.server_id, url: base, token: data.token, deviceId: data.device.id, bot: data.bot,
+    addedAt: Date.now(), ...(key ? { fingerprint: key.fingerprint, wsAuth: true } : {}),
+    ...(Platform.OS === 'android' && data.recovery ? { recovery: data.recovery } : {}) };
+}
+
+/** Verify a phone that was paired without a fingerprint: it scans a fresh code from the server (or
+ * another owner's phone) and registers a signing key. Returns the server with the pinned fingerprint. */
+export async function verifyDevice(server: Server, code: string, fp: string): Promise<Server> {
+  if (server.fingerprint && server.fingerprint !== fp) {
+    throw new ApiError("This code is for a different server key than the one this phone paired with. Don't continue on this network; pair again from the server.", 0);
+  }
+  const key = await serverKey(server.url, fp);
+  if (!key) throw new ApiError('Update Winglet on the server first.', 0);
+  const signing = newSigningKey();
+  await api(server, '/api/devices/verify', {
+    method: 'POST',
+    body: JSON.stringify({ sealed: seal(key, 'verify', server.deviceId, { code: normalizeCode(code), sign_key: signing.public, pinned: true }) }),
+  });
+  await setItem(signKeyName(server.id), signing.secret);
+  return { ...server, fingerprint: key.fingerprint };
+}
+
+/** An owner action: signed with this phone's key, so a leaked token alone can't do it. */
+export async function signedApi<T>(server: Server, method: 'POST' | 'PATCH' | 'PUT' | 'DELETE', path: string, data?: unknown): Promise<T> {
+  const secret = await getItem(signKeyName(server.id));
+  if (!secret) throw new ApiError('Verify this phone first: scan a new pairing code from your server or another owner\'s phone.', 403);
+  const body = data === undefined ? '' : JSON.stringify(data);
+  return request<T>(`${server.url}${path}`, {
+    method, ...(body ? { body } : {}), token: server.token,
+    headers: signedHeaders(secret, server.deviceId, method, path, body),
+  });
+}
+
+/** The socket URL. Current servers take the token in the first frame instead, so it isn't in a URL. */
 export function wsUrl(server: Server): string {
-  return `${server.url.replace(/^http/, 'ws')}/api/ws?token=${encodeURIComponent(server.token)}`;
+  const base = `${server.url.replace(/^http/, 'ws')}/api/ws`;
+  return server.wsAuth ? base : `${base}?token=${encodeURIComponent(server.token)}`;
 }
 
 export function mediaUrl(server: Server, path: string): string {

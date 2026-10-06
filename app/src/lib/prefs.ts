@@ -13,10 +13,12 @@ export type Prefs = {
   haptics: boolean;
   /** What a message sent while the agent works does: guide it, wait for it, or interrupt it. */
   busyMode: 'steer' | 'queue' | 'interrupt';
+  /** Ask for the phone's fingerprint, face or PIN when opening Winglet (Android app only). */
+  appLock: boolean;
 };
 
 export const DEFAULT_PREFS: Prefs = {
-  theme: 'system', accent: 'iris', layout: 'bubbles', motion: 'system', transparency: 'system', haptics: true, busyMode: 'steer',
+  theme: 'system', accent: 'iris', layout: 'bubbles', motion: 'system', transparency: 'system', haptics: true, busyMode: 'steer', appLock: false,
 };
 
 const KEY = 'winglet.prefs';

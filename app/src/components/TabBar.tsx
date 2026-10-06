@@ -6,7 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { moodOf } from '../lib/agent';
 import { haptic } from '../lib/haptics';
 import { spring, useReducedMotion } from '../lib/motion';
-import { useApp } from '../lib/store';
+import { homeChat, useApp } from '../lib/store';
 import { makeStyles, useTheme } from '../lib/themeContext';
 import { BotAvatar } from './BotAvatar';
 import { Glass } from './Glass';
@@ -140,7 +140,7 @@ export function SideRail() {
           const on = srv.id === selected;
           return (
             <Tap key={srv.id} accessibilityLabel={`${srv.bot.title}${on ? ', selected' : ''}`} feedback="selection"
-              onPress={() => { if (!on) select(srv.id, 'general'); }} style={s.railBot}>
+              onPress={() => { if (!on) select(srv.id, homeChat(useApp.getState().runtime[srv.id])); }} style={s.railBot}>
               <View style={[s.railBotMark, { opacity: on ? 1 : 0 }]} />
               <BotAvatar name={srv.bot.name} size={44} shape={on ? 'squircle' : 'circle'} mood={moodOf(runtime[srv.id])} />
               {runtime[srv.id]?.pending ? <Badge count={runtime[srv.id]!.pending} style={s.railBotBadge} /> : null}

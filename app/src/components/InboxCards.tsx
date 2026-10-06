@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Platform, Pressable, Text, TextInput, View } from 'react-native';
 import { agoText } from '../lib/agent';
 import { haptic } from '../lib/haptics';
-import { useApp } from '../lib/store';
+import { isOwner, useApp } from '../lib/store';
 import { makeStyles, useTheme } from '../lib/themeContext';
 import type { InboxItem } from '../lib/types';
 import { Check, CheckCircle2, CircleHelp, Clock, ShieldAlert, Sparkles, XCircle } from './icons';
@@ -46,6 +46,7 @@ function ApprovalCard({ serverId, item, compact }: { serverId: string; item: Inb
   const t = useTheme();
   const s = useStyles();
   const respond = useApp((st) => st.respond);
+  const owner = useApp((st) => isOwner(st.runtime[serverId]));
   const [busy, setBusy] = useState<string | null>(null);
   const [confirmAlways, setConfirmAlways] = useState(false);
   const choices = [...(item.payload.choices ?? [])].sort((a, b) => CHOICE_ORDER.indexOf(a) - CHOICE_ORDER.indexOf(b));
@@ -70,7 +71,12 @@ function ApprovalCard({ serverId, item, compact }: { serverId: string; item: Inb
       <View style={s.command}>
         <Text selectable style={s.commandText} numberOfLines={compact ? 6 : undefined}>{item.payload.command || item.body}</Text>
       </View>
-      {pending ? (
+      {pending && !owner ? (
+        <View style={s.waiting} accessibilityLiveRegion="polite">
+          <Clock size={14} color={t.colors.textSecondary} />
+          <Text style={s.waitingText}>Waiting for an owner to approve or deny this.</Text>
+        </View>
+      ) : pending ? (
         <View style={s.actions}>
           {choices.map((choice) => (
             <Button
@@ -191,6 +197,8 @@ function ResultCard({ item, compact }: { item: InboxItem; compact?: boolean }) {
 }
 
 const useStyles = makeStyles((t) => ({
+  waiting: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingTop: 4 },
+  waitingText: { ...t.type.callout, color: t.colors.textSecondary, flex: 1 },
   card: { backgroundColor: t.colors.surface, borderRadius: t.radius.lg, padding: 16, gap: 14, borderWidth: 1, borderColor: t.colors.border, maxWidth: 680, width: '100%' },
   header: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   iconWrap: { width: 36, height: 36, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },

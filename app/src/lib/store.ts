@@ -5,7 +5,7 @@ import { api, ApiError, wsUrl } from './api';
 import { cacheGet, cacheRemove, cacheSet } from './cache';
 import { markFailed, mergeMessages } from './messages';
 import { getJSON, setJSON } from './storage';
-import type { Attachment, Chat, ConnStatus, DraftFile, InboxItem, Message, ReplyRef, Server, ServerInfo } from './types';
+import type { Attachment, Chat, ConnStatus, DraftFile, InboxItem, Me, Message, ReplyRef, Server, ServerInfo } from './types';
 
 const SERVERS_KEY = 'winglet.servers';
 const SELECTION_KEY = 'winglet.selection';
@@ -47,6 +47,8 @@ export type ServerState = {
   outbox: OutboxEntry[];
   /** When the agent last finished a reply, for a moment of celebration on its face. */
   lastReplyAt?: number;
+  /** This phone's role and main chat on the server (from hello). */
+  me?: Me;
 };
 
 type Selection = { serverId?: string; chatId?: string };
@@ -67,6 +69,8 @@ type AppState = {
   visibleChat?: { serverId: string; chatId: string };
   init: () => Promise<void>;
   addServer: (server: Server) => Promise<void>;
+  /** Change a saved server (a verified key, a new token); `reconnect` opens a fresh socket with it. */
+  updateServer: (serverId: string, change: Partial<Server>, reconnect?: boolean) => Promise<void>;
   removeServer: (serverId: string, unpair?: boolean) => Promise<void>;
   select: (serverId?: string, chatId?: string) => void;
   setVisibleChat: (v?: { serverId: string; chatId: string }) => void;
@@ -96,6 +100,12 @@ export const emptyRuntime = (): ServerState => ({
 });
 
 export const draftKey = (serverId: string, chatId: string) => `${serverId}:${chatId}`;
+
+/** This phone's main chat with a bot: the shared one for owners, a member's own one otherwise. */
+export const homeChat = (rt?: ServerState) => rt?.me?.home_chat ?? 'general';
+
+/** Owners can approve commands and manage the server; members chat in their own chats. */
+export const isOwner = (rt?: ServerState) => (rt?.me?.role ?? 'owner') === 'owner';
 
 const connections = new Map<string, Connection>();
 const coordinator = new RecoveryCoordinator();
@@ -166,7 +176,7 @@ export const useApp = create<AppState>((set, get) => {
     saveOutbox(serverId);
     cacheRemove(`msgs:${serverId}:${chatId}`);
     const { selection, select } = get();
-    if (selection.serverId === serverId && selection.chatId === chatId) select(serverId, 'general');
+    if (selection.serverId === serverId && selection.chatId === chatId) select(serverId, homeChat(get().runtime[serverId]));
   };
 
   /** Deliver one queued message. Network failures pause the queue (order matters); HTTP errors fail it. */
@@ -238,13 +248,19 @@ export const useApp = create<AppState>((set, get) => {
         };
         const compat = info.min_app_protocol > APP_PROTOCOL ? 'update-app' as const
           : info.protocol < MIN_SERVER_PROTOCOL ? 'update-server' as const : undefined;
-        patch(serverId, () => ({ status: 'online', chats, typing, pending: ev.pending ?? 0, loaded: {}, info, compat }));
+        patch(serverId, () => ({ status: 'online', chats, typing, pending: ev.pending ?? 0, loaded: {}, info, compat,
+          me: ev.me as Me | undefined }));
+        // From now on, send the token in the socket's first frame rather than the URL.
+        if (server && info.features.ws_auth && !server.wsAuth) get().updateServer(serverId, { wsAuth: true });
         cacheSet(`chats:${serverId}`, chats);
         if (server && ev.bot && JSON.stringify(ev.bot) !== JSON.stringify(server.bot)) {
           set((state) => ({ servers: state.servers.map((s) => (s.id === serverId ? { ...s, bot: ev.bot } : s)) }));
           persist();
         }
         get().loadInbox(serverId);
+        // A member can't open the shared main chat: point them at their own (also after a role change).
+        const sel = get().selection;
+        if (sel.serverId === serverId && sel.chatId && !chats[sel.chatId]) get().select(serverId, homeChat(get().runtime[serverId]));
         const vis = get().visibleChat;
         if (vis?.serverId === serverId) get().loadMessages(serverId, vis.chatId);
         flushOutbox(serverId);
@@ -299,7 +315,9 @@ export const useApp = create<AppState>((set, get) => {
       case 'inbox.update': {
         const item = ev.item as InboxItem;
         patch(serverId, (s) => ({ inbox: { ...s.inbox, [item.id]: item }, pending: ev.pending ?? s.pending }));
-        if (ev.type === 'inbox.new' && item.kind !== 'result' && server) {
+        // A member can't answer approvals; the card in their chat already says it's waiting for an owner.
+        const actionable = item.kind !== 'result' && (item.kind !== 'approval' || isOwner(get().runtime[serverId]));
+        if (ev.type === 'inbox.new' && actionable && server) {
           toast({ serverId, title: `${server.bot.title} · ${item.title}`, body: item.body.slice(0, 140),
             href: `/inbox?server=${encodeURIComponent(serverId)}&item=${encodeURIComponent(item.id)}` });
         }
@@ -394,6 +412,16 @@ export const useApp = create<AppState>((set, get) => {
       await persist();
       await setJSON(SELECTION_KEY, get().selection);
       connect(server);
+    },
+
+    updateServer: async (serverId, change, reconnect = false) => {
+      const current = get().servers.find((s) => s.id === serverId);
+      if (!current) return;
+      const updated = { ...current, ...change };
+      set((state) => ({ servers: state.servers.map((s) => (s.id === serverId ? updated : s)) }));
+      await persist();
+      if (reconnect) connect(updated);
+      else connections.get(serverId)?.setServer(updated);
     },
 
     removeServer: async (serverId, unpair = true) => {
@@ -658,6 +686,7 @@ class Connection {
     this.ws = ws;
     ws.onopen = () => {
       this.attempt = 0;
+      if (this.server.wsAuth) this.send({ type: 'auth', token: this.server.token });
       this.presence(this.visible);
       clearInterval(this.pingTimer);
       this.pingTimer = setInterval(() => this.send({ type: 'ping', t: Date.now() }), 20000);
@@ -690,6 +719,12 @@ class Connection {
         this.cb.onStatus('unauthorized', 'device removed');
         return;
       }
+      if (e.code === 4000) {
+        // An owner changed this phone's role: reconnect at once to load what it can see now.
+        this.cb.onStatus('connecting', 'role changed');
+        this.open();
+        return;
+      }
       this.cb.onStatus('offline');
       this.retry(e.code && e.code !== 1006 ? `closed (${e.code})` : 'connection lost');
     };
@@ -707,10 +742,23 @@ class Connection {
     this.timer = setTimeout(() => this.open(), delay);
   }
 
+  /** Keep this connection's copy of the server current (a new token, a pinned key). */
+  setServer(server: Server) {
+    this.server = server;
+  }
+
   private async probeAuth() {
     const before = this.server;
     try {
       await api(before, '/api/me');
+      // Reachable and paired, yet the socket won't open: an older server that wants the token in the URL.
+      if (before.wsAuth) {
+        const info = await api<{ protocol?: number }>(before, '/api/info');
+        if ((info.protocol ?? 1) < 2 && this.server === before) {
+          this.server = { ...before, wsAuth: false };
+          await this.cb.onServer(this.server);
+        }
+      }
     } catch (e) {
       if (this.closed || this.server !== before) return;
       if (e instanceof ApiError && e.status === 401) {
