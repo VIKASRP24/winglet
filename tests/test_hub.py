@@ -288,7 +288,7 @@ async def test_webpush_subscription_and_delivery(client, hub):
 async def test_bot_reply_pushes_only_when_app_is_closed(client, hub, monkeypatch):
     monkeypatch.setattr("plugin.hub.PUSH_DEBOUNCE_SECONDS", 0.05)
     token = await pair(client, hub)
-    hub.store.add_push_sub("dev", "ntfy", "https://ntfy.sh/t", {"server": "https://ntfy.sh", "topic": "t"})
+    hub.store.add_push_sub(hub.store.list_devices()[0]["id"], "ntfy", "https://ntfy.sh/t", {"server": "https://ntfy.sh", "topic": "t"})
     ws = await client.ws_connect(f"/api/ws?token={token}")
     await ws.receive_json()
     await hub.post_message("general", "while open")
@@ -516,7 +516,8 @@ async def test_bad_paging_params_are_400(client, hub):
 
 async def test_notifications_point_at_real_app_routes(client, hub, monkeypatch):
     monkeypatch.setattr("plugin.hub.PUSH_DEBOUNCE_SECONDS", 0.05)
-    hub.store.add_push_sub("dev", "ntfy", "https://ntfy.sh/t", {"server": "https://ntfy.sh", "topic": "t"})
+    device, _ = hub.store.add_device("Phone")
+    hub.store.add_push_sub(device["id"], "ntfy", "https://ntfy.sh/t", {"server": "https://ntfy.sh", "topic": "t"})
     await hub.post_message("general", "done!")
     await asyncio.sleep(0.5)
     item = await hub.add_inbox("approval", "general", "Approval needed", "ls", {"choices": ["once"]})
@@ -572,7 +573,7 @@ async def test_each_phone_gets_its_own_ntfy_topic(client, hub):
 async def test_push_test_reports_failures_honestly(client, hub):
     token = await pair(client, hub)
     auth = {"Authorization": f"Bearer {token}"}
-    hub.store.add_push_sub("dev", "ntfy", "https://ntfy.sh/t", {"server": "https://ntfy.sh", "topic": "t"})
+    hub.store.add_push_sub(hub.store.list_devices()[0]["id"], "ntfy", "https://ntfy.sh/t", {"server": "https://ntfy.sh", "topic": "t"})
     hub._http.status = 500
     data = await (await client.post("/api/push/test", headers=auth)).json()
     assert data["ok"] is False and data["failed"] == 1 and data["accepted"] == 0

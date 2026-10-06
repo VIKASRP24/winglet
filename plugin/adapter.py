@@ -37,7 +37,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 PLATFORM = "winglet"
-OWNER_ID = "winglet-owner"
+# Each paired device is its own Hermes user ("winglet:<device id>"). Sessions don't change: Hermes keys a
+# DM session by its chat id and leaves the sender out when there is one.
+USER_PREFIX = "winglet:"
 DEFAULT_PORT = 8787
 GENERAL_CHAT_ID = "general"
 RECONCILE_SECONDS = 5.0
@@ -191,6 +193,7 @@ class WingletAdapter(BasePlatformAdapter):
             hub.on_answer = self._on_answer
             hub.hermes_version = hermes_api.hermes_version
             hub.commands_provider = hermes_api.list_commands
+            hub.command_resolver = hermes_api.resolve_command
             from gateway.platforms.shared_ingress import bind_listener
             # No access log: device tokens ride in WebSocket/media query strings and must not reach log files.
             self._runner = await bind_listener(self, hub.build_app(), self._host, self._port, "/api/ws",
@@ -236,8 +239,8 @@ class WingletAdapter(BasePlatformAdapter):
                                message: Dict[str, Any], files: Optional[list] = None,
                                reply: Optional[Dict[str, Any]] = None) -> None:
         source = self.build_source(
-            chat_id=chat["id"], chat_name=chat.get("title") or chat["id"], chat_type="dm", user_id=OWNER_ID,
-            user_name=device.get("name") or "Owner", message_id=message["id"],
+            chat_id=chat["id"], chat_name=chat.get("title") or chat["id"], chat_type="dm",
+            user_id=USER_PREFIX + device["id"], user_name=device.get("name") or "Phone", message_id=message["id"],
             # The device proved itself with its pairing token before reaching this point.
             role_authorized=True)
         media_urls, media_types, kinds = [], [], []

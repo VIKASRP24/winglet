@@ -1,0 +1,19 @@
+{
+  "server_sealing_private": "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA",
+  "purpose": "pair",
+  "device_id": "dev-1",
+  "plaintext": {
+    "code": "ABCD2345",
+    "device_name": "Pixel",
+    "sign_key": "x",
+    "pinned": true
+  },
+  "sealed": "GksctD90Ul7SEEpNgHnPVkeN8GjjoS68zFrJr_2zYzlkI0RDJGMEg-SjxMNTic48O_3w9FiupqG6j529BLRg3s7txh8khszAuCAUU1GrPvyPPvTiFp77HiHOACSa1skKI6tviC6jV2qhN98id9dkSSPT-DnLp7pJrHd3X0MGZR4KzQ",
+  "device_public": "C7w0aldmfDgBIL2cf9flHSxf3-o3zS9b9AWyxr9vLXg",
+  "method": "POST",
+  "path": "/api/devices/pairing-code",
+  "body": "{\"role\":\"member\"}",
+  "time": "1800000000",
+  "nonce": "Hql-Sd7pPomeKf7JXmm-CR6p",
+  "signature": "PvPrHK4BXqP8YpKHZsPfs_5c5yGe2Drl-fb0UZnwmttgY0RHF2JaKoSkeXO5Mzyut9bD8b3NXp6Iknk3tqh4CA"
+}

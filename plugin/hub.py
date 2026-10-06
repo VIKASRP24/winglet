@@ -3,7 +3,8 @@
 Independent of Hermes internals so it can be tested on its own. The platform adapter
 (``adapter.py``) owns a Hub and plugs Hermes into it through a few callbacks.
 
-Wire protocol (JSON over one WebSocket at ``/api/ws?token=<device token>``):
+Wire protocol (JSON over one WebSocket at ``/api/ws``; the app's first frame is
+``{"type": "auth", "token"}`` so the token never sits in a URL; ``?token=`` still works for older apps):
 
 server -> app  ``{"type": "hello" | "message.new" | "message.update" | "message.delete" | "typing" |
                   "chat.update" | "chat.delete" | "inbox.new" | "inbox.update" | "pong", ...}``
@@ -31,15 +32,15 @@ from urllib.parse import quote, unquote
 
 from aiohttp import WSMsgType, web
 
-from . import recovery, uploads, webpush
-from .store import Store, new_id
+from . import keys, recovery, uploads, webpush
+from .store import ROLES, Store, new_id
 
 logger = logging.getLogger(__name__)
 
 VERSION = "0.1.2"
 # Wire protocol: bumped only for breaking changes. The app compares these to its own and asks for
 # whichever side is out of date to be updated.
-PROTOCOL = 1
+PROTOCOL = 2
 MIN_APP_PROTOCOL = 1
 HOME_CHAT_ID = "home"
 PUSH_DEBOUNCE_SECONDS = 2.5
@@ -61,6 +62,37 @@ ResolveFn = Callable[[Dict[str, Any], Any], Awaitable[bool]]
 
 class MessageRejected(ValueError):
     """A message the server won't accept (bad attachments, reply to a missing message, ...)."""
+
+
+class Forbidden(PermissionError):
+    """The device is paired but its role doesn't allow this."""
+
+
+# Who may call each route; the policy middleware enforces it before any handler runs, and a test checks
+# that every route is listed. A route missing from the table needs an owner's signed request.
+#   public        no token; the handler checks anything it needs itself
+#   device        any paired device (handlers still limit members to their own chats)
+#   owner         an owner device
+#   signed        any verified device, with a signed request
+#   owner_signed  an owner's verified device, with a signed request: every control action
+ROUTE_POLICY = {
+    "h_info": "public", "h_pair": "public", "h_ws": "public", "h_static": "public", "h_media": "public",
+    "h_vapid": "public", "h_inbox_respond": "public", "h_server_key": "public",
+    "h_me": "device", "h_connection": "device", "h_unpair": "device", "h_chats": "device",
+    "h_chat_create": "device", "h_chat_rename": "device", "h_chat_delete": "device", "h_messages": "device",
+    "h_message_send": "device", "h_upload": "device", "h_export": "device", "h_commands": "device",
+    "h_push_prefs": "device", "h_push_prefs_put": "device", "h_inbox": "device", "h_webpush_subscribe": "device",
+    "h_webpush_unsubscribe": "device", "h_ntfy": "device", "h_push_test": "device", "h_device_verify": "device",
+    "h_devices": "owner", "h_audit": "owner",
+    "h_rotate_token": "signed",
+    "h_device_update": "owner_signed", "h_device_delete": "owner_signed", "h_pairing_code": "owner_signed",
+}
+
+# Slash commands a member may send: their own conversation and turn, and read-only help. Everything
+# else, including unknown and future commands and skills, is for owners. Names are Hermes's canonical
+# command names; aliases resolve to them.
+MEMBER_COMMANDS = frozenset({"new", "retry", "undo", "title", "stop", "queue", "steer", "btw", "background",
+                             "status", "help"})
 
 
 def _env_mb(name: str, default: int) -> int:
@@ -114,6 +146,9 @@ class Hub:
         self.total_upload_bytes = _env_mb("WINGLET_UPLOAD_STORAGE_MB", 4096)
         # Optional providers installed by the adapter (the hub never imports Hermes).
         self.commands_provider: Optional[Callable[[], List[Dict[str, Any]]]] = None
+        # Resolves a typed command or alias to Hermes's canonical name ("" when unknown).
+        self.command_resolver: Optional[Callable[[str], Optional[str]]] = None
+        self.keys = keys.ServerKeys(store)
         # Hermes-side callbacks, installed by the adapter.
         self.on_user_message: Optional[InboundFn] = None
         self.on_approval: Optional[ResolveFn] = None
@@ -125,7 +160,7 @@ class Hub:
     # -- lifecycle -------------------------------------------------------------------
 
     def build_app(self) -> web.Application:
-        app = web.Application(client_max_size=2 * 1024 * 1024, middlewares=[self._cors])
+        app = web.Application(client_max_size=2 * 1024 * 1024, middlewares=[self._cors, self._policy])
         r = app.router
         r.add_get("/api/info", self.h_info)
         r.add_post("/api/pair", self.h_pair)
@@ -152,6 +187,14 @@ class Hub:
         r.add_get("/api/push/ntfy", self.h_ntfy)
         r.add_post("/api/push/test", self.h_push_test)
         r.add_get("/api/media/{media_id}/{name}", self.h_media)
+        r.add_get("/api/server-key", self.h_server_key)
+        r.add_get("/api/devices", self.h_devices)
+        r.add_patch("/api/devices/{device_id}", self.h_device_update)
+        r.add_delete("/api/devices/{device_id}", self.h_device_delete)
+        r.add_post("/api/devices/pairing-code", self.h_pairing_code)
+        r.add_post("/api/devices/verify", self.h_device_verify)
+        r.add_post("/api/devices/me/rotate-token", self.h_rotate_token)
+        r.add_get("/api/audit", self.h_audit)
         r.add_get("/{tail:.*}", self.h_static)
         app.on_startup.append(self._start_janitor)
         app.on_shutdown.append(self._close_sockets)
@@ -204,7 +247,8 @@ class Hub:
             resp = await handler(request)
         if request.path.startswith("/api/"):
             resp.headers["Access-Control-Allow-Origin"] = "*"
-            resp.headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type"
+            resp.headers["Access-Control-Allow-Headers"] = ("Authorization, Content-Type, X-Winglet-Device, "
+                                                            "X-Winglet-Time, X-Winglet-Nonce, X-Winglet-Signature")
             resp.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, PATCH, DELETE, OPTIONS"
             resp.headers.setdefault("Cache-Control", "no-store")
         return resp
@@ -217,10 +261,99 @@ class Hub:
         return self.store.device_for_token(token)
 
     def _require(self, request: web.Request) -> Dict[str, Any]:
-        device = self._device(request)
+        device = request.get("device") or self._device(request)
         if device is None:
             raise web.HTTPUnauthorized(text=json.dumps({"error": "not paired"}), content_type="application/json")
         return device
+
+    @web.middleware
+    async def _policy(self, request: web.Request, handler):
+        if request.match_info.http_exception is not None:
+            return await handler(request)  # 404/405: nothing to protect
+        name = getattr(request.match_info.route.handler, "__name__", "")
+        level = ROUTE_POLICY.get(name, "owner_signed")
+        if level == "public":
+            return await handler(request)
+        device = self._device(request)
+        if device is None:
+            return _error(401, "not paired")
+        if level in ("owner", "owner_signed") and device["role"] != "owner":
+            return _error(403, "Only an owner can do that.")
+        if level in ("signed", "owner_signed"):
+            problem = await self._signature_problem(request, device)
+            if problem:
+                logger.warning("[winglet] refused %s %s from %s: %s", request.method, request.path, device["name"], problem)
+                self.store.add_audit("refused", device=device, summary=f"{request.method} {request.path}: {problem}",
+                                     outcome="refused")
+                return _error(403, problem)
+        request["device"] = device
+        try:
+            return await handler(request)
+        except Forbidden as exc:
+            return _error(403, str(exc))
+
+    async def _signature_problem(self, request: web.Request, device: Dict[str, Any]) -> Optional[str]:
+        """Why a control request can't run, or None when it's signed by this device's verified key, fresh,
+        and never seen before. A bearer token alone never passes."""
+        sign_key = self.store.device_sign_key(device["id"])
+        if not sign_key:
+            return "Verify this device first: scan a new pairing code from your server or another owner's phone."
+        h = request.headers
+        stamp, nonce, signature = h.get("X-Winglet-Time", ""), h.get("X-Winglet-Nonce", ""), h.get("X-Winglet-Signature", "")
+        if not (stamp and nonce and signature) or h.get("X-Winglet-Device") != device["id"]:
+            return "This action needs a signed request from the app."
+        try:
+            skew = abs(time.time() - float(stamp))
+        except ValueError:
+            return "This action needs a signed request from the app."
+        if skew > keys.CLOCK_SKEW_SECONDS:
+            return "This request has expired. Check that this device's clock is right, then try again."
+        if not 16 <= len(nonce) <= 64:
+            return "This action needs a signed request from the app."
+        payload = keys.signing_payload(request.method, request.raw_path, await request.read(), device["id"], stamp, nonce)
+        if not keys.verify_device_signature(sign_key, payload, signature):
+            return "The request's signature doesn't match this device."
+        if not self.store.use_nonce(nonce, keys.CLOCK_SKEW_SECONDS):
+            return "This request was already used."
+        return None
+
+    # -- who sees what -------------------------------------------------------------------
+
+    @staticmethod
+    def can_see(device: Optional[Dict[str, Any]], chat: Optional[Dict[str, Any]]) -> bool:
+        """Owners see every chat; a member sees the chats they started."""
+        if chat is None or device is None:
+            return False
+        return device.get("role") == "owner" or chat.get("owner_device") == device["id"]
+
+    def _visible_chat(self, device: Dict[str, Any], chat_id: str) -> Dict[str, Any]:
+        chat = self.store.get_chat(chat_id)
+        if not self.can_see(device, chat):
+            raise web.HTTPNotFound(text=json.dumps({"error": "This chat was deleted."}), content_type="application/json")
+        return chat
+
+    def visible_chats(self, device: Dict[str, Any]) -> List[Dict[str, Any]]:
+        return [c for c in self.store.list_chats() if self.can_see(device, c)]
+
+    def pending_for(self, device: Dict[str, Any]) -> int:
+        if device.get("role") == "owner":
+            return self.store.pending_count()
+        return sum(1 for i in self.store.pending_items() if self.can_see(device, self.store.get_chat(i["chat_id"])))
+
+    def home_chat(self, device: Dict[str, Any]) -> str:
+        """Owners share the main chat. Each member gets one of their own, made on first use."""
+        if device.get("role") == "owner":
+            return "general"
+        chat_id = "m-" + device["id"]
+        self.store.ensure_chat(chat_id, device["name"], owner_device=device["id"])
+        return chat_id
+
+    def me(self, device: Dict[str, Any]) -> Dict[str, Any]:
+        return {"id": device["id"], "name": device["name"], "role": device["role"], "verified": device["verified"],
+                "home_chat": self.home_chat(device)}
+
+    def audit(self, action: str, device: Optional[Dict[str, Any]], summary: str = "", outcome: str = "ok") -> None:
+        self.store.add_audit(action, device=device, summary=summary, outcome=outcome)
 
     def action_signature(self, item_id: str, choice: str) -> str:
         """HMAC used for one-tap notification action links (no bearer token available there)."""
@@ -239,21 +372,26 @@ class Hub:
     def server_id(self) -> str:
         return self.store.secret("server_id", lambda: secrets.token_hex(6))
 
-    def device_alive(self, device_id: str) -> bool:
-        """Whether a device is still paired. Unpairing can happen in another process (the CLI), so
-        this reads the database, cached for a moment to keep streaming broadcasts cheap."""
+    def current_device(self, device_id: str) -> Optional[Dict[str, Any]]:
+        """A device as it is now, or None once unpaired. Unpairing or a role change can happen in
+        another process (the CLI), so this reads the database, cached for a moment to keep streaming
+        broadcasts cheap."""
         now = time.monotonic()
         cached = self._alive_cache.get(device_id)
         if cached and now - cached[1] < ALIVE_CACHE_SECONDS:
             return cached[0]
-        alive = self.store.get_device(device_id) is not None
-        self._alive_cache[device_id] = (alive, now)
-        return alive
+        device = self.store.get_device(device_id)
+        self._alive_cache[device_id] = (device, now)
+        return device
+
+    def device_alive(self, device_id: str) -> bool:
+        return self.current_device(device_id) is not None
 
     def features(self) -> Dict[str, bool]:
         """What this server can do. The app hides anything that isn't listed as true."""
         return {"webpush": True, "ntfy": True, "approvals": True, "questions": True, "uploads": True, "voice": True,
-                "replies": True, "export": True, "mute": True, "status_updates": True,
+                "replies": True, "export": True, "mute": True, "status_updates": True, "roles": True,
+                "signed_actions": True, "ws_auth": True,
                 "commands": self.commands_provider is not None}
 
     def about(self) -> Dict[str, Any]:
@@ -286,15 +424,35 @@ class Hub:
             return _error(400, "invalid JSON")
         if not isinstance(body, dict):
             return _error(400, "expected a JSON object")
-        if not self.store.redeem_pair_code(str(body.get("code") or "")):
+        sign_key, verified = "", False
+        if body.get("sealed"):
+            # Current apps seal the request to the server key whose fingerprint was in the QR code, so
+            # nobody in between can swap in their own signing key.
+            try:
+                body = self.keys.unseal_json(str(body["sealed"]), "pair")
+            except (keys.SealError, ValueError):
+                self._pair_failures[peer] = recent + [now]
+                return _error(400, "This pairing request couldn't be opened. Scan a new code and try again.")
+            sign_key = str(body.get("sign_key") or "")
+            if sign_key and not keys.valid_public_key(sign_key):
+                return _error(400, "invalid signing key")
+            verified = bool(sign_key) and body.get("pinned") is True
+        role = self.store.redeem_pair_code(str(body.get("code") or ""))
+        if role is None:
             self._pair_failures[peer] = recent + [now]
             return _error(403, "This pairing code is invalid or expired. Run `hermes winglet pair` for a new one.")
         self._pair_failures.pop(peer, None)
-        device, token = self.store.add_device(str(body.get("device_name") or ""), str(body.get("platform") or ""))
-        logger.info("[winglet] paired new device %s (%s)", device["name"], device["platform"] or "unknown")
+        device, token = self.store.add_device(str(body.get("device_name") or ""), str(body.get("platform") or ""),
+                                              role=role, sign_key=sign_key, verified=verified)
+        logger.info("[winglet] paired new device %s (%s) as %s", device["name"], device["platform"] or "unknown", role)
+        self.audit("device.paired", device, f"{device['name']} ({device['platform'] or 'unknown'}) as {role}"
+                   + ("" if verified else ", not verified"))
         address = self._recovery_credentials(device) if device["platform"] == "android" else None
-        return _json({"token": token, "device": device, "server_id": self.server_id(), "bot": self.bot(),
-                      "recovery": address})
+        return _json({"token": token, "device": device, "me": self.me(device), "server_id": self.server_id(),
+                      "bot": self.bot(), "recovery": address})
+
+    async def h_server_key(self, request: web.Request) -> web.Response:
+        return _json(self.keys.public_info())
 
     def _recovery_credentials(self, device: dict) -> Optional[dict]:
         if self.connection["mode"] != "quick" or not self.ntfy_server.startswith("https://"):
@@ -366,7 +524,7 @@ class Hub:
 
     async def h_me(self, request: web.Request) -> web.Response:
         device = self._require(request)
-        return _json({"device": device, "bot": self.bot(), "server_id": self.server_id()})
+        return _json({"device": device, "me": self.me(device), "bot": self.bot(), "server_id": self.server_id()})
 
     async def h_unpair(self, request: web.Request) -> web.Response:
         device = self._require(request)
@@ -380,18 +538,20 @@ class Hub:
     # -- chats & messages ----------------------------------------------------------------
 
     async def h_chats(self, request: web.Request) -> web.Response:
-        self._require(request)
-        return _json({"chats": self.store.list_chats()})
+        device = self._require(request)
+        return _json({"chats": self.visible_chats(device)})
 
     async def h_chat_create(self, request: web.Request) -> web.Response:
-        self._require(request)
+        device = self._require(request)
         body = await self._body(request)
-        chat = self.store.create_chat(str(body.get("title") or ""))
+        chat = self.store.create_chat(str(body.get("title") or ""),
+                                      owner_device=None if device["role"] == "owner" else device["id"])
         await self.broadcast({"type": "chat.update", "chat": chat})
         return _json({"chat": chat})
 
     async def h_chat_rename(self, request: web.Request) -> web.Response:
-        self._require(request)
+        device = self._require(request)
+        self._visible_chat(device, request.match_info["chat_id"])
         body = await self._body(request)
         chat = self.store.rename_chat(request.match_info["chat_id"], str(body.get("title") or ""))
         if chat is None:
@@ -400,21 +560,25 @@ class Hub:
         return _json({"chat": chat})
 
     async def h_chat_delete(self, request: web.Request) -> web.Response:
-        self._require(request)
+        device = self._require(request)
         chat_id = request.match_info["chat_id"]
         if chat_id == HOME_CHAT_ID:
             return _error(400, "the Updates chat can't be deleted")
+        chat = self._visible_chat(device, chat_id)
+        if device["role"] != "owner" and chat_id == self.home_chat(device):
+            return _error(400, "This is your main chat; it can't be deleted.")
         files = self.store.chat_uploads(chat_id)
         if not self.store.delete_chat(chat_id):
             return _error(404, "no such chat")
         for row in files:
             self._remove_upload(row)
-        await self.broadcast({"type": "chat.delete", "chat_id": chat_id})
+        await self.broadcast({"type": "chat.delete", "chat_id": chat_id, "owner_device": chat.get("owner_device")})
         return _json({"ok": True})
 
     async def h_messages(self, request: web.Request) -> web.Response:
-        self._require(request)
+        device = self._require(request)
         chat_id = request.match_info["chat_id"]
+        self._visible_chat(device, chat_id)
         try:
             before = float(request.query["before"]) if request.query.get("before") else None
             before_position = int(request.query["before_position"]) if request.query.get("before_position") else None
@@ -431,8 +595,7 @@ class Hub:
     async def h_message_send(self, request: web.Request) -> web.Response:
         device = self._require(request)
         body = await self._body(request)
-        if self.store.get_chat(request.match_info["chat_id"]) is None:
-            return _error(404, "This chat was deleted.")
+        self._visible_chat(device, request.match_info["chat_id"])
         attachments = body.get("attachments") or []
         if not isinstance(attachments, list) or not all(isinstance(a, str) for a in attachments):
             return _error(400, "attachments must be a list of upload ids")
@@ -461,8 +624,9 @@ class Hub:
             if existing is not None:
                 return existing
         chat = self.store.get_chat(chat_id)
-        if chat is None:
-            return None  # deleted (or never created): don't bring it back
+        if not self.can_see(device, chat):
+            return None  # deleted (or never created, or someone else's): don't bring it back
+        refused = self._refused_command(device, text)
         meta: Dict[str, Any] = {"device": device["name"], "client_id": client_id}
         reply = None
         if reply_to:
@@ -483,6 +647,10 @@ class Hub:
         message = self.store.add_message(chat_id, "user", text, meta=meta, message_id=message_id)
         await self.broadcast({"type": "message.new", "chat_id": chat_id, "message": message})
         await self.broadcast({"type": "chat.update", "chat": self.store.get_chat(chat_id)})
+        if refused:
+            # Hermes never sees it: members can't change settings or approve through a slash command either.
+            await self.post_message(chat_id, f"Only an owner can use {refused}.", role="system", push=False)
+            return message
         if self.on_user_message is not None:
             extra: Dict[str, Any] = {}
             if files:
@@ -497,6 +665,21 @@ class Hub:
                                         role="system", push=False)
         return message
 
+    def _refused_command(self, device: Dict[str, Any], text: str) -> str:
+        """The slash command a member typed that's for owners only, or "" when the message may go through."""
+        if device.get("role") == "owner" or not text.startswith("/"):
+            return ""
+        typed = text[1:].split(maxsplit=1)[0].split("@")[0].lower() if text[1:].strip() else ""
+        if not typed:
+            return ""
+        name = typed
+        if self.command_resolver is not None:
+            try:
+                name = self.command_resolver(typed) or ""
+            except Exception:
+                name = ""
+        return "" if name in MEMBER_COMMANDS else f"/{typed}"
+
     # -- uploads, export, commands ---------------------------------------------------------
 
     def _upload_public(self, row: Dict[str, Any]) -> Dict[str, Any]:
@@ -508,8 +691,7 @@ class Hub:
         """Receive one file for a chat. It's held for a day until a message attaches it."""
         device = self._require(request)
         chat_id = request.match_info["chat_id"]
-        if self.store.get_chat(chat_id) is None:
-            return _error(404, "This chat was deleted.")
+        self._visible_chat(device, chat_id)
         day_used = self.store.upload_bytes_since(device["id"], time.time() - 86400)
         day_left = self.device_daily_upload_bytes - day_used
         store_left = self.total_upload_bytes - self.store.total_upload_bytes()
@@ -569,10 +751,8 @@ class Hub:
 
     async def h_export(self, request: web.Request) -> web.Response:
         """The whole chat as Markdown, to save or share."""
-        self._require(request)
-        chat = self.store.get_chat(request.match_info["chat_id"])
-        if chat is None:
-            return _error(404, "no such chat")
+        device = self._require(request)
+        chat = self._visible_chat(device, request.match_info["chat_id"])
         bot = self.bot()["title"]
         title = "Updates" if chat["kind"] == "home" else chat["title"]
         lines = [f"# {title}", "", f"_Exported from Winglet · {bot}_", ""]
@@ -592,14 +772,17 @@ class Hub:
 
     async def h_commands(self, request: web.Request) -> web.Response:
         """Slash commands this Hermes accepts from the app, with their hints."""
-        self._require(request)
+        device = self._require(request)
         commands: List[Dict[str, Any]] = []
         if self.commands_provider is not None:
             try:
                 commands = list(self.commands_provider() or [])
             except Exception:
                 logger.debug("[winglet] command list unavailable", exc_info=True)
-        return _json({"commands": commands or _DEFAULT_COMMANDS})
+        commands = commands or _DEFAULT_COMMANDS
+        if device["role"] != "owner":
+            commands = [c for c in commands if not self._refused_command(device, str(c.get("cmd") or ""))]
+        return _json({"commands": commands})
 
     async def h_push_prefs(self, request: web.Request) -> web.Response:
         device = self._require(request)
@@ -618,7 +801,7 @@ class Hub:
     # -- inbox ---------------------------------------------------------------------------
 
     async def h_inbox(self, request: web.Request) -> web.Response:
-        self._require(request)
+        device = self._require(request)
         status = request.query.get("status") or None
         if status == "pending":
             items = self.store.pending_items()
@@ -629,7 +812,9 @@ class Hub:
             pending = self.store.pending_items()
             seen = {i["id"] for i in pending}
             items = pending + [i for i in self.store.list_inbox() if i["id"] not in seen]
-        return _json({"items": items, "pending": self.store.pending_count()})
+        if device["role"] != "owner":
+            items = [i for i in items if self.can_see(device, self.store.get_chat(i["chat_id"]))]
+        return _json({"items": items, "pending": self.pending_for(device)})
 
     async def h_inbox_respond(self, request: web.Request) -> web.Response:
         item_id = request.match_info["item_id"]
@@ -643,23 +828,33 @@ class Hub:
             sig = str(body.get("sig") or request.query.get("sig") or "")
             if not (choice == "deny" and hmac.compare_digest(sig, self.action_signature(item_id, choice))):
                 return _error(401, "not paired")
-        ok, item = await self.respond(item_id, choice=choice, answer=answer)
+        try:
+            ok, item = await self.respond(item_id, choice=choice, answer=answer, device=device)
+        except Forbidden as exc:
+            return _error(403, str(exc))
         if item is None:
             return _error(404, "no such item")
         return _json({"ok": ok, "item": item}, status=200 if ok else 409)
 
-    async def respond(self, item_id: str, *, choice: str = "", answer: Any = None) -> tuple[bool, Optional[Dict]]:
+    async def respond(self, item_id: str, *, choice: str = "", answer: Any = None,
+                      device: Optional[Dict[str, Any]] = None) -> tuple[bool, Optional[Dict]]:
+        """Answer an inbox card. ``device`` is who's answering; None only for an old notification's
+        deny link, which the caller has already checked."""
         item = self.store.get_inbox(item_id)
-        if item is None:
+        if item is None or (device is not None and not self.can_see(device, self.store.get_chat(item["chat_id"]))):
             return False, None
         if item["status"] != "pending":
             return False, item
+        if item["kind"] == "approval" and device is not None and device["role"] != "owner":
+            raise Forbidden("Only an owner can approve or deny commands. It's waiting in their inbox.")
         ok = False
         if item["kind"] == "approval":
             if choice not in (item["payload"].get("choices") or []):
                 return False, item
             ok = bool(self.on_approval and await self.on_approval(item, choice))
             resolution = choice
+            if ok:
+                self.audit("approval", device, f"{choice}: {_clip(item['payload'].get('command') or item['title'], 120)}")
         elif item["kind"] == "question":
             if isinstance(answer, list):  # multi-select: the labels the user ticked
                 picked = [str(a).strip() for a in answer if str(a).strip()]
@@ -789,16 +984,31 @@ class Hub:
     # -- websocket -------------------------------------------------------------------------
 
     async def h_ws(self, request: web.Request) -> web.StreamResponse:
-        device = self._device(request)
-        if device is None:
+        legacy = bool(request.query.get("token")) or request.headers.get("Authorization", "").lower().startswith("bearer ")
+        device = self._device(request) if legacy else None
+        if legacy and device is None:
             return _error(401, "not paired")
         ws = web.WebSocketResponse(heartbeat=25, max_msg_size=1024 * 1024)
         await ws.prepare(request)
+        if device is None:
+            # Current apps authenticate in the first frame, so the token never appears in a URL that a
+            # proxy or tunnel might log.
+            try:
+                first = await ws.receive(timeout=10)
+                data = json.loads(first.data) if first.type == WSMsgType.TEXT else {}
+            except (asyncio.TimeoutError, ValueError, TypeError):
+                data = {}
+            if isinstance(data, dict) and data.get("type") == "auth":
+                device = self.store.device_for_token(str(data.get("token") or ""))
+            if device is None:
+                await ws.close(code=4401, message=b"not paired")
+                return ws
         self._sockets[ws] = {"device": device}
         try:
             await ws.send_json({"type": "hello", "server_id": self.server_id(), "bot": self.bot(), "device": device,
-                                **self.about(), "chats": self.store.list_chats(),
-                                "typing": sorted(self._typing), "pending": self.store.pending_count()})
+                                "me": self.me(device), **self.about(), "chats": self.visible_chats(device),
+                                "typing": sorted(c for c in self._typing if self.can_see(device, self.store.get_chat(c))),
+                                "pending": self.pending_for(device)})
             async for msg in ws:
                 if msg.type != WSMsgType.TEXT:
                     continue
@@ -812,7 +1022,8 @@ class Hub:
         return ws
 
     async def _on_ws(self, ws: web.WebSocketResponse, device: Dict[str, Any], data: Dict[str, Any]) -> None:
-        if self.store.get_device(device["id"]) is None:
+        device = self.store.get_device(device["id"])
+        if device is None:
             await ws.close(code=4401, message=b"unpaired")
             return
         kind = data.get("type")
@@ -823,8 +1034,11 @@ class Hub:
                 await self.user_message(device, str(data.get("chat_id") or ""), str(data.get("text") or ""),
                                         str(data.get("client_id") or ""))
         elif kind == "inbox.respond":
-            await self.respond(str(data.get("id") or ""), choice=str(data.get("choice") or ""),
-                               answer=data.get("answer"))
+            try:
+                await self.respond(str(data.get("id") or ""), choice=str(data.get("choice") or ""),
+                                   answer=data.get("answer"), device=device)
+            except Forbidden as exc:
+                await ws.send_json({"type": "error", "message": str(exc)})
         elif kind == "presence":
             self._sockets[ws]["visible"] = bool(data.get("visible", True))
 
@@ -832,20 +1046,138 @@ class Hub:
         """Sockets whose app is in the foreground (a backgrounded PWA may keep its socket briefly)."""
         return sum(1 for ws, meta in self._sockets.items() if not ws.closed and meta.get("visible", True))
 
+    def _event_visible(self, device: Dict[str, Any], event: Dict[str, Any]) -> bool:
+        """Members only hear about their own chats; owners hear everything."""
+        if device.get("role") == "owner":
+            return True
+        if event.get("type") == "chat.delete":
+            return event.get("owner_device") == device["id"]
+        chat_id = event.get("chat_id")
+        if chat_id is None:
+            for key in ("chat", "item", "message"):
+                value = event.get(key)
+                if isinstance(value, dict):
+                    chat_id = value.get("id") if key == "chat" else value.get("chat_id")
+                    break
+        return chat_id is None or self.can_see(device, self.store.get_chat(chat_id))
+
     async def broadcast(self, event: Dict[str, Any]) -> None:
         dead = []
         for ws, meta in list(self._sockets.items()):
-            if not self.device_alive(meta["device"]["id"]):
+            device = self.current_device(meta["device"]["id"])
+            if device is None:
                 dead.append(ws)
                 with contextlib.suppress(Exception):
                     await ws.close(code=4401, message=b"unpaired")
                 continue
+            if not self._event_visible(device, event):
+                continue
+            out = event
+            if "pending" in event and device.get("role") != "owner":
+                out = {**event, "pending": self.pending_for(device)}
             try:
-                await ws.send_json(event)
+                await ws.send_json(out)
             except Exception:
                 dead.append(ws)
         for ws in dead:
             self._sockets.pop(ws, None)
+
+    # -- devices, verification, audit ---------------------------------------------------------
+
+    async def _close_device_sockets(self, device_id: str, code: int, reason: bytes) -> None:
+        self._alive_cache.pop(device_id, None)
+        for ws, meta in list(self._sockets.items()):
+            if meta["device"]["id"] == device_id:
+                with contextlib.suppress(Exception):
+                    await ws.close(code=code, message=reason)
+
+    async def h_devices(self, request: web.Request) -> web.Response:
+        me = self._require(request)
+        return _json({"devices": [{**d, "current": d["id"] == me["id"]} for d in self.store.list_devices()]})
+
+    async def h_device_update(self, request: web.Request) -> web.Response:
+        me = self._require(request)
+        device_id = request.match_info["device_id"]
+        body = await self._body(request)
+        role = body.get("role")
+        if role is not None and role not in ROLES:
+            return _error(400, "role must be owner or member")
+        before = self.store.get_device(device_id)
+        if before is None:
+            return _error(404, "no such device")
+        try:
+            after = self.store.update_device(device_id, name=str(body["name"]) if "name" in body else None, role=role)
+        except ValueError as exc:
+            return _error(400, str(exc))
+        if after["name"] != before["name"]:
+            self.audit("device.renamed", me, f"{before['name']} → {after['name']}")
+        if after["role"] != before["role"]:
+            self.audit("device.role", me, f"{after['name']}: {before['role']} → {after['role']}")
+            if after["role"] == "member":
+                self.home_chat(after)
+            # Its view of chats and the inbox changes: make it reconnect and load them again.
+            await self._close_device_sockets(device_id, 4000, b"role changed")
+        return _json({"device": after})
+
+    async def h_device_delete(self, request: web.Request) -> web.Response:
+        me = self._require(request)
+        device = self.store.get_device(request.match_info["device_id"])
+        if device is None:
+            return _error(404, "no such device")
+        try:
+            self.store.remove_device(device["id"], keep_an_owner=True)
+        except ValueError as exc:
+            return _error(400, str(exc))
+        self.audit("device.removed", me, f"{device['name']} ({device['role']})")
+        await self._close_device_sockets(device["id"], 4401, b"unpaired")
+        return _json({"ok": True})
+
+    async def h_pairing_code(self, request: web.Request) -> web.Response:
+        """A single-use code for another phone, shown as a QR on this one."""
+        me = self._require(request)
+        body = await self._body(request)
+        role = str(body.get("role") or "member")
+        if role not in ROLES:
+            return _error(400, "role must be owner or member")
+        code = self.store.create_pair_code(role=role)
+        self.audit("pairing_code", me, f"for a new {role}")
+        return _json({"code": code, "role": role, "fingerprint": self.keys.fingerprint,
+                      "expires_at": time.time() + 600})
+
+    async def h_device_verify(self, request: web.Request) -> web.Response:
+        """A phone paired before verified pairing (or by typing a code) proves it scanned a fresh code
+        from this server, and registers the key it signs owner actions with."""
+        device = self._require(request)
+        body = await self._body(request)
+        try:
+            data = self.keys.unseal_json(str(body.get("sealed") or ""), "verify", device["id"])
+        except (keys.SealError, ValueError):
+            return _error(400, "This verification couldn't be opened. Scan a new code and try again.")
+        sign_key = str(data.get("sign_key") or "")
+        if data.get("pinned") is not True or not keys.valid_public_key(sign_key):
+            return _error(400, "Verify by scanning a code, so this phone can check the server's key.")
+        if self.store.redeem_pair_code(str(data.get("code") or "")) is None:
+            return _error(403, "This code is invalid or expired. Make a new one and try again.")
+        device = self.store.set_device_key(device["id"], sign_key)
+        self.audit("device.verified", device, device["name"])
+        return _json({"device": device, "me": self.me(device)})
+
+    async def h_rotate_token(self, request: web.Request) -> web.Response:
+        device = self._require(request)
+        token = self.store.rotate_token(device["id"])
+        if token is None:
+            return _error(404, "no such device")
+        self.audit("token.rotated", device, device["name"])
+        return _json({"token": token})
+
+    async def h_audit(self, request: web.Request) -> web.Response:
+        self._require(request)
+        try:
+            before = int(request.query["before"]) if request.query.get("before") else None
+            limit = int(request.query.get("limit") or 100)
+        except ValueError:
+            return _error(400, "before and limit must be numbers")
+        return _json({"entries": self.store.list_audit(before=before, limit=limit)})
 
     # -- push ------------------------------------------------------------------------------
 
@@ -891,7 +1223,13 @@ class Hub:
         client = await self._client()
         # No approve buttons on notifications: approving needs the card, with the full command in view.
         note = {**note, "tag": tag, "server_id": self.server_id()}
+        devices: Dict[str, Optional[Dict[str, Any]]] = {}
+        chat = self.store.get_chat(str(note.get("chat_id") or "")) if note.get("chat_id") else None
         for sub in subs:
+            if sub["device_id"] not in devices:
+                devices[sub["device_id"]] = self.store.get_device(sub["device_id"])
+            if not _push_for(devices[sub["device_id"]], chat, note):
+                continue
             if not _wants_push(self.store.get_push_prefs(sub["device_id"]), note):
                 continue
             try:
@@ -1028,7 +1366,8 @@ class Hub:
 
     @staticmethod
     async def _body(request: web.Request) -> Dict[str, Any]:
-        if not request.can_read_body:
+        # body_exists, not can_read_body: a signed request's body has already been read (and cached).
+        if not request.body_exists:
             return {}
         try:
             data = await request.json()
@@ -1089,6 +1428,19 @@ def _clean_push_prefs(raw: Any) -> Dict[str, Any]:
         out["quiet"] = {"start": quiet["start"], "end": quiet["end"], "utc_offset_min": int(offset),
                         "allow_urgent": bool(quiet.get("allow_urgent", True))}
     return out
+
+
+def _push_for(device: Optional[Dict[str, Any]], chat: Optional[Dict[str, Any]], note: Dict[str, Any]) -> bool:
+    """Who a notification is for. A member hears about their own chats, except approvals, which only
+    owners can answer. Owners hear about their chats, and approvals from anyone's."""
+    if device is None:
+        return False
+    if note.get("kind") == "test" or chat is None:
+        return device["role"] == "owner" or note.get("kind") == "test"
+    member_chat = chat.get("owner_device")
+    if device["role"] == "owner":
+        return not member_chat or note.get("kind") == "approval"
+    return member_chat == device["id"] and note.get("kind") != "approval"
 
 
 def _wants_push(prefs: Dict[str, Any], note: Dict[str, Any], now: Optional[float] = None) -> bool:

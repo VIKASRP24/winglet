@@ -6,8 +6,10 @@ short, so it is safe to call from the gateway's event loop.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
+import os
 import secrets
 import sqlite3
 import threading
@@ -62,7 +64,26 @@ CREATE TABLE IF NOT EXISTS push_subs (
     id TEXT PRIMARY KEY, device_id TEXT NOT NULL, kind TEXT NOT NULL, endpoint TEXT NOT NULL,
     data TEXT NOT NULL, created_at REAL NOT NULL, UNIQUE (kind, endpoint)
 );
+CREATE TABLE IF NOT EXISTS audit (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL NOT NULL, device_id TEXT NOT NULL DEFAULT '',
+    device_name TEXT NOT NULL DEFAULT '', role TEXT NOT NULL DEFAULT '', action TEXT NOT NULL,
+    summary TEXT NOT NULL DEFAULT '', outcome TEXT NOT NULL DEFAULT 'ok'
+);
+CREATE INDEX IF NOT EXISTS audit_ts ON audit (ts);
+CREATE TABLE IF NOT EXISTS nonces (nonce TEXT PRIMARY KEY, ts REAL NOT NULL);
 """
+
+# Columns added after v0.3. Existing phones become owners, unverified until they scan a fresh code.
+_MIGRATIONS = [
+    ("devices", "role", "TEXT NOT NULL DEFAULT 'owner'"),
+    ("devices", "sign_key", "TEXT NOT NULL DEFAULT ''"),
+    ("devices", "verified", "INTEGER NOT NULL DEFAULT 0"),
+    ("pair_codes", "role", "TEXT NOT NULL DEFAULT 'owner'"),
+    ("chats", "owner_device", "TEXT"),
+]
+ROLES = ("owner", "member")
+AUDIT_KEEP_SECONDS = 180 * 86400
+AUDIT_KEEP_ROWS = 5000
 
 
 def _hash(secret: str) -> str:
@@ -91,6 +112,13 @@ class Store:
         with self._lock:
             self._db.execute("PRAGMA journal_mode=WAL")
             self._db.executescript(_SCHEMA)
+            for table, column, decl in _MIGRATIONS:
+                columns = {r["name"] for r in self._db.execute(f"PRAGMA table_info({table})")}
+                if column not in columns:
+                    self._db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+            # Keys and tokens live here: keep the file private to this user.
+            with contextlib.suppress(OSError):
+                os.chmod(self.path, 0o600)
             # v0.1 shared one topic between phones. Retire it before the upgraded hub can send any
             # push, including when its row belongs to a different phone than the one being revoked.
             legacy_topic = self.get_kv("ntfy_topic")
@@ -137,33 +165,77 @@ class Store:
 
     # -- pairing -----------------------------------------------------------------
 
-    def create_pair_code(self, ttl: float = PAIR_CODE_TTL_SECONDS) -> str:
+    def create_pair_code(self, ttl: float = PAIR_CODE_TTL_SECONDS, role: str = "owner") -> str:
+        if role not in ROLES:
+            raise ValueError("role must be owner or member")
         code = "".join(secrets.choice(_CODE_ALPHABET) for _ in range(8))
         now = _now()
         with self._lock:
             self._exec("DELETE FROM pair_codes WHERE expires_at < ? OR used = 1", (now,))
-            self._exec("INSERT INTO pair_codes (code_hash, created_at, expires_at) VALUES (?, ?, ?)",
-                       (_hash(code), now, now + ttl))
+            self._exec("INSERT INTO pair_codes (code_hash, created_at, expires_at, role) VALUES (?, ?, ?, ?)",
+                       (_hash(code), now, now + ttl, role))
         return code
 
-    def redeem_pair_code(self, code: str) -> bool:
-        """Consume a pairing code; True exactly once per valid, unexpired code."""
+    def redeem_pair_code(self, code: str) -> Optional[str]:
+        """Consume a pairing code. Returns the role it grants, exactly once per valid, unexpired code."""
         code_hash = _hash(normalize_code(code))
         with self._lock:
-            changed = self._exec(
-                "UPDATE pair_codes SET used = 1 WHERE code_hash = ? AND used = 0 AND expires_at >= ?",
-                (code_hash, _now()))
-        return changed == 1
+            row = self._one("SELECT role FROM pair_codes WHERE code_hash = ? AND used = 0 AND expires_at >= ?",
+                            (code_hash, _now()))
+            if row is None:
+                return None
+            changed = self._exec("UPDATE pair_codes SET used = 1 WHERE code_hash = ? AND used = 0", (code_hash,))
+        return row["role"] if changed == 1 else None
 
     # -- devices -----------------------------------------------------------------
 
-    def add_device(self, name: str, platform: str = "") -> tuple[Dict[str, Any], str]:
+    def add_device(self, name: str, platform: str = "", *, role: str = "owner", sign_key: str = "",
+                   verified: bool = False) -> tuple[Dict[str, Any], str]:
+        if role not in ROLES:
+            raise ValueError("role must be owner or member")
         token = secrets.token_urlsafe(32)
         device_id, now = new_id(), _now()
         name = (name or "").strip()[:64] or "My phone"
-        self._exec("INSERT INTO devices (id, name, platform, token_hash, created_at, last_seen) VALUES (?, ?, ?, ?, ?, ?)",
-                   (device_id, name, (platform or "")[:32], _hash(token), now, now))
+        self._exec("INSERT INTO devices (id, name, platform, token_hash, created_at, last_seen, role, sign_key, verified) "
+                   "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                   (device_id, name, (platform or "")[:32], _hash(token), now, now, role, sign_key,
+                    1 if verified and sign_key else 0))
         return self.get_device(device_id), token
+
+    def update_device(self, device_id: str, *, name: Optional[str] = None, role: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Rename or change a role. Refuses to leave the server without an owner."""
+        with self._lock:
+            device = self.get_device(device_id)
+            if device is None:
+                return None
+            if role is not None:
+                if role not in ROLES:
+                    raise ValueError("role must be owner or member")
+                if device["role"] == "owner" and role != "owner" and self.owner_count() <= 1:
+                    raise ValueError("At least one owner must remain.")
+                self._exec("UPDATE devices SET role = ? WHERE id = ?", (role, device_id))
+            if name is not None and name.strip():
+                self._exec("UPDATE devices SET name = ? WHERE id = ?", (name.strip()[:64], device_id))
+            return self.get_device(device_id)
+
+    def owner_count(self) -> int:
+        row = self._one("SELECT COUNT(*) AS n FROM devices WHERE role = 'owner'")
+        return int(row["n"]) if row else 0
+
+    def set_device_key(self, device_id: str, sign_key: str) -> Optional[Dict[str, Any]]:
+        """Record a phone's signing key once it has proved it scanned a fresh code from this server."""
+        self._exec("UPDATE devices SET sign_key = ?, verified = 1 WHERE id = ?", (sign_key, device_id))
+        return self.get_device(device_id)
+
+    def device_sign_key(self, device_id: str) -> str:
+        row = self._one("SELECT sign_key FROM devices WHERE id = ? AND verified = 1", (device_id,))
+        return row["sign_key"] if row else ""
+
+    def rotate_token(self, device_id: str) -> Optional[str]:
+        token = secrets.token_urlsafe(32)
+        if self._exec("UPDATE devices SET token_hash = ? WHERE id = ?", (_hash(token), device_id)) != 1:
+            return None
+        return token
 
     def device_for_token(self, token: str) -> Optional[Dict[str, Any]]:
         if not token:
@@ -181,8 +253,12 @@ class Store:
     def list_devices(self) -> List[Dict[str, Any]]:
         return [self._device(r) for r in self._all("SELECT * FROM devices ORDER BY created_at")]
 
-    def remove_device(self, device_id: str) -> bool:
+    def remove_device(self, device_id: str, *, keep_an_owner: bool = False) -> bool:
         with self._lock:
+            if keep_an_owner:
+                device = self.get_device(device_id)
+                if device and device["role"] == "owner" and self.owner_count() <= 1:
+                    raise ValueError("At least one owner must remain.")
             self._exec("DELETE FROM push_subs WHERE device_id = ?", (device_id,))
             self._exec("DELETE FROM push_prefs WHERE device_id = ?", (device_id,))
             removed = self._exec("DELETE FROM devices WHERE id = ?", (device_id,)) == 1
@@ -195,18 +271,20 @@ class Store:
     @staticmethod
     def _device(row: sqlite3.Row) -> Dict[str, Any]:
         return {"id": row["id"], "name": row["name"], "platform": row["platform"],
-                "created_at": row["created_at"], "last_seen": row["last_seen"]}
+                "created_at": row["created_at"], "last_seen": row["last_seen"],
+                "role": row["role"], "verified": bool(row["verified"])}
 
     # -- chats -------------------------------------------------------------------
 
-    def ensure_chat(self, chat_id: str, title: str = "", kind: str = "chat") -> Dict[str, Any]:
+    def ensure_chat(self, chat_id: str, title: str = "", kind: str = "chat", owner_device: Optional[str] = None) -> Dict[str, Any]:
+        """``owner_device`` marks a member's chat; owners' chats have none, and every owner sees them."""
         now = _now()
-        self._exec("INSERT OR IGNORE INTO chats (id, title, kind, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
-                   (chat_id, (title or chat_id)[:80], kind, now, now))
+        self._exec("INSERT OR IGNORE INTO chats (id, title, kind, created_at, updated_at, owner_device) VALUES (?, ?, ?, ?, ?, ?)",
+                   (chat_id, (title or chat_id)[:80], kind, now, now, owner_device))
         return self.get_chat(chat_id)
 
-    def create_chat(self, title: str = "") -> Dict[str, Any]:
-        return self.ensure_chat("c-" + new_id(), (title or "").strip() or "New chat")
+    def create_chat(self, title: str = "", owner_device: Optional[str] = None) -> Dict[str, Any]:
+        return self.ensure_chat("c-" + new_id(), (title or "").strip() or "New chat", owner_device=owner_device)
 
     def get_chat(self, chat_id: str) -> Optional[Dict[str, Any]]:
         row = self._one("SELECT * FROM chats WHERE id = ?", (chat_id,))
@@ -462,3 +540,36 @@ class Store:
     def all_messages(self, chat_id: str) -> List[Dict[str, Any]]:
         rows = self._all("SELECT rowid AS position, * FROM messages WHERE chat_id = ? ORDER BY rowid", (chat_id,))
         return [self._message(r) for r in rows]
+
+    # -- audit log -------------------------------------------------------------------
+
+    def add_audit(self, action: str, *, device: Optional[Dict[str, Any]] = None, summary: str = "",
+                  outcome: str = "ok") -> None:
+        now = _now()
+        with self._lock:
+            self._exec("INSERT INTO audit (ts, device_id, device_name, role, action, summary, outcome) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                       (now, (device or {}).get("id", ""), (device or {}).get("name", ""), (device or {}).get("role", ""),
+                        action[:64], summary[:300], outcome[:32]))
+            self._exec("DELETE FROM audit WHERE ts < ?", (now - AUDIT_KEEP_SECONDS,))
+            self._exec("DELETE FROM audit WHERE id <= (SELECT MAX(id) FROM audit) - ?", (AUDIT_KEEP_ROWS,))
+
+    def list_audit(self, *, before: Optional[int] = None, limit: int = 100) -> List[Dict[str, Any]]:
+        limit = max(1, min(int(limit or 100), 200))
+        if before:
+            rows = self._all("SELECT * FROM audit WHERE id < ? ORDER BY id DESC LIMIT ?", (before, limit))
+        else:
+            rows = self._all("SELECT * FROM audit ORDER BY id DESC LIMIT ?", (limit,))
+        return [dict(r) for r in rows]
+
+    # -- signed-request nonces --------------------------------------------------------
+
+    def use_nonce(self, nonce: str, window: float) -> bool:
+        """True the first time a nonce is seen within the window; a replay gets False."""
+        now = _now()
+        with self._lock:
+            self._exec("DELETE FROM nonces WHERE ts < ?", (now - 2 * window,))
+            try:
+                self._exec("INSERT INTO nonces (nonce, ts) VALUES (?, ?)", (nonce, now))
+            except sqlite3.IntegrityError:
+                return False
+        return True

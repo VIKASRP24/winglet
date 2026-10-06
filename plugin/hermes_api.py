@@ -73,3 +73,14 @@ def list_commands() -> list:
     except Exception:
         logger.debug("[winglet] skill commands unavailable", exc_info=True)
     return out
+
+
+def resolve_command(name: str) -> str:
+    """Hermes's canonical name for a typed command or alias ("reset" -> "new"), or "" if unknown."""
+    try:
+        from hermes_cli.commands import resolve_command as _resolve
+        cmd = _resolve(name)
+        return cmd.name if cmd is not None else ""
+    except Exception:
+        logger.debug("[winglet] command registry unavailable", exc_info=True)
+        return ""

@@ -28,11 +28,17 @@ def setup_parser(parser: argparse.ArgumentParser) -> None:
     p_setup.add_argument("--connection", choices=("quick", "direct"), default=None,
                          help="Automatic Cloudflare HTTPS for new installs, or your own LAN/VPN/public URL")
     p_setup.add_argument("--no-start", action="store_true", help="Prepare settings without starting/restarting the gateway")
-    p_pair = subs.add_parser("pair", help="Show a QR code to pair a phone")
+    p_pair = subs.add_parser("pair", help="Show a QR code to pair a phone, or to verify one already paired")
     p_pair.add_argument("--public-url", default=None, help="Override the URL encoded in the QR code")
+    p_pair.add_argument("--member", action="store_true",
+                        help="Pair as a member: can chat in their own chats, can't approve commands or change settings")
     subs.add_parser("devices", help="List paired phones")
     p_unpair = subs.add_parser("unpair", help="Remove a paired phone")
     p_unpair.add_argument("device_id", help="Device id from `hermes winglet devices`")
+    p_role = subs.add_parser("role", help="Make a paired phone an owner or a member")
+    p_role.add_argument("device_id", help="Device id from `hermes winglet devices`")
+    p_role.add_argument("role", choices=("owner", "member"))
+    subs.add_parser("rotate-key", help="Replace the key phones encrypt secrets to (paired phones follow automatically)")
     subs.add_parser("status", help="Show whether Winglet is running and how to reach it")
     parser.set_defaults(func=main)
 
@@ -40,7 +46,7 @@ def setup_parser(parser: argparse.ArgumentParser) -> None:
 def main(args: argparse.Namespace) -> int:
     sub = getattr(args, "winglet_command", None) or "status"
     handler = {"setup": cmd_setup, "pair": cmd_pair, "devices": cmd_devices, "unpair": cmd_unpair,
-               "status": cmd_status}.get(sub)
+               "role": cmd_role, "rotate-key": cmd_rotate_key, "status": cmd_status}.get(sub)
     if handler is None:
         print(f"unknown subcommand: {sub}", file=sys.stderr)
         return 2
@@ -319,16 +325,22 @@ def cmd_pair(args: argparse.Namespace) -> int:
             print("Wait for the gateway's automatic HTTPS startup, then retry `hermes winglet pair`.")
             return 1
     from .adapter import open_store
+    from .keys import ServerKeys
+    role = "member" if getattr(args, "member", False) else "owner"
     store = open_store()
     try:
-        code = store.create_pair_code()
+        code = store.create_pair_code(role=role)
+        fingerprint = ServerKeys(store).fingerprint
+        store.add_audit("pairing_code", summary=f"for a new {role}, from the terminal")
     finally:
         store.close()
-    link = f"{url}/#pair={code}"
+    # The fingerprint lets the phone check it's talking to this server, whatever is in between.
+    link = f"{url}/#pair={code}&fp={fingerprint}"
     print("\nScan this with your phone's camera (iPhone) or the Winglet app (Android):\n")
     _print_qr(link)
     print(f"\n  Link:  {link}")
-    print(f"  Code:  {code[:4]}-{code[4:]}   (expires in 10 minutes, works once)\n")
+    print(f"  Code:  {code[:4]}-{code[4:]}   (expires in 10 minutes, works once; pairs as {role})")
+    print("  Already paired? Scan it from Winglet's Devices screen to verify that phone.\n")
     if url.lower().startswith("http://"):
         print("Note: Android can connect from any network that can reach this address; same Wi-Fi is not required.")
         print("Use HTTPS for remote connections and iPhone camera/install/notification features"
@@ -349,7 +361,41 @@ def cmd_devices(args: argparse.Namespace) -> int:
     import datetime as _dt
     for d in devices:
         seen = _dt.datetime.fromtimestamp(d["last_seen"]).strftime("%Y-%m-%d %H:%M")
-        print(f"  {d['id']}  {d['name']:<24} {d['platform'] or '':<8} last seen {seen}")
+        status = "verified" if d["verified"] else "not verified"
+        print(f"  {d['id']}  {d['name']:<24} {d['platform'] or '':<8} {d['role']:<7} {status:<13} last seen {seen}")
+    return 0
+
+
+def cmd_role(args: argparse.Namespace) -> int:
+    from .adapter import open_store
+    store = open_store()
+    try:
+        device = store.update_device(args.device_id, role=args.role)
+        if device is not None:
+            store.add_audit("device.role", summary=f"{device['name']} → {args.role}, from the terminal")
+    except ValueError as exc:
+        print(exc)
+        return 1
+    finally:
+        store.close()
+    if device is None:
+        print("No device with that id.")
+        return 1
+    print(f"{device['name']} is now {'an owner' if args.role == 'owner' else 'a member'}. It reconnects to pick this up.")
+    return 0
+
+
+def cmd_rotate_key(args: argparse.Namespace) -> int:
+    from .adapter import open_store
+    from .keys import ServerKeys
+    store = open_store()
+    try:
+        ServerKeys(store).rotate_sealing()
+        store.add_audit("server_key.rotated", summary="from the terminal")
+    finally:
+        store.close()
+    print("New encryption key in place. Phones pick it up the next time they send a secret; the old key")
+    print("still opens anything sent in the next 24 hours. To replace the server's identity itself, pair again.")
     return 0
 
 
@@ -358,6 +404,8 @@ def cmd_unpair(args: argparse.Namespace) -> int:
     store = open_store()
     try:
         removed = store.remove_device(args.device_id)
+        if removed:
+            store.add_audit("device.removed", summary=f"{args.device_id}, from the terminal")
     finally:
         store.close()
     print("Removed." if removed else "No device with that id.")
