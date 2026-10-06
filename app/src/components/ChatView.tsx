@@ -242,11 +242,13 @@ function MessageList({ server, chatId, messages, loaded, typing, top, bottom, on
   const actions = useMemo<Actions>(() => ({ open: onOpen, reply: onReply, jump }), [onOpen, onReply, jump]);
 
   // A message picked in search or the files sheet: page older history in until it's here, then
-  // bring it into view. Gives up when a page adds nothing (it was deleted) or after 20 pages.
+  // bring it into view. Gives up when a page adds nothing (it was deleted), a page can't be
+  // fetched, or after 20 pages.
   const paging = useRef<{ id: string; pages: number; busy: boolean } | null>(null);
   const jumped = useRef<string | null>(null);
   const [paged, setPaged] = useState(0);
   useEffect(() => {
+    if (!focus) jumped.current = null; // so the same message can be asked for again
     if (!focus || !loaded) return;
     if (messages.some((m) => m.id === focus)) {
       paging.current = null;
@@ -259,20 +261,21 @@ function MessageList({ server, chatId, messages, loaded, typing, top, bottom, on
     if (paging.current?.id !== focus) paging.current = { id: focus, pages: 0, busy: false };
     const p = paging.current;
     if (p.busy) return;
-    const giveUp = () => {
+    const giveUp = (body = 'It may have been deleted.') => {
       paging.current = null;
       clearFocus(focus);
-      useApp.getState().toast({ serverId: server.id, title: "Couldn't find that message", body: 'It may have been deleted.' });
+      useApp.getState().toast({ serverId: server.id, title: "Couldn't find that message", body });
     };
     if (p.pages >= 20) return giveUp();
     const count = () => useApp.getState().runtime[server.id]?.messages[chatId]?.length ?? 0;
     const before = count();
     p.busy = true;
     p.pages += 1;
-    loadMessages(server.id, chatId, true).finally(() => {
+    loadMessages(server.id, chatId, true).catch(() => false).then((ok) => {
       p.busy = false;
       if (paging.current !== p) return;
-      if (count() <= before) giveUp();
+      if (!ok) giveUp("Older messages didn't load. Check your connection and try again.");
+      else if (count() <= before) giveUp();
       else setPaged((n) => n + 1);
     });
   }, [focus, loaded, messages, paged, jump, loadMessages, server.id, chatId]);

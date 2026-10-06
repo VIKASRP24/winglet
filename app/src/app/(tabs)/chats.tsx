@@ -212,16 +212,24 @@ function ResultRow({ server, result, query, onPress }: { server: Server; result:
   );
 }
 
+/** The snippet split around every search word (the server matches each word, in any order). */
 function splitMatch(text: string, query: string): { text: string; hit: boolean }[] {
-  if (!query) return [{ text, hit: false }];
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean).sort((a, b) => b.length - a.length);
+  if (!words.length) return [{ text, hit: false }];
   const out: { text: string; hit: boolean }[] = [];
   const lower = text.toLowerCase();
-  const q = query.toLowerCase();
   let from = 0;
-  for (let at = lower.indexOf(q); at >= 0; at = lower.indexOf(q, at + q.length)) {
+  while (from < text.length) {
+    let at = -1;
+    let size = 0;
+    for (const w of words) {
+      const i = lower.indexOf(w, from);
+      if (i >= 0 && (at < 0 || i < at)) { at = i; size = w.length; }
+    }
+    if (at < 0) break;
     if (at > from) out.push({ text: text.slice(from, at), hit: false });
-    out.push({ text: text.slice(at, at + q.length), hit: true });
-    from = at + q.length;
+    out.push({ text: text.slice(at, at + size), hit: true });
+    from = at + size;
   }
   if (from < text.length) out.push({ text: text.slice(from), hit: false });
   return out;

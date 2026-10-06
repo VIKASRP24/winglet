@@ -132,6 +132,16 @@ test('three equal-timestamp history pages advance through every server message',
   assert.equal(h.messages()[0].id, 'm1');
 });
 
+test('a page that fails to load reports it, so a jump to an old message does not read it as deleted', async () => {
+  const h = harness();
+  await h.connect();
+  h.setRequest(async () => ({ messages: [msg(1)], deleted_ids: [] }));
+  assert.equal(await h.store.getState().loadMessages('s', 'general'), true);
+  h.setRequest(async () => { throw new ApiError('timed out', 504); });
+  assert.equal(await h.store.getState().loadMessages('s', 'general', true), false);
+  assert.equal(h.messages().length, 1);
+});
+
 test('refresh applies missed offline deletions, including previously loaded older pages', async () => {
   const h = harness();
   await h.connect();
