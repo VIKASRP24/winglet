@@ -33,6 +33,8 @@ import {
 } from './icons';
 import { InboxCard } from './InboxCards';
 import { Markdown } from './Markdown';
+import { ModelChip } from './ModelChip';
+import { PickerCard } from './PickerCard';
 import { MessageAttachments } from './MessageAttachments';
 import { Sheet, SheetAction } from './Sheet';
 import { Badge, Button, Chip, Field, IconButton, Tap } from './ui';
@@ -102,6 +104,9 @@ export function ChatView({ server, chatId, showBack, embedded }: { server: Serve
     return () => clearInterval(id);
   }, [typing]);
 
+  // Commands the app sent for a control (the model chip's /model) stay out of the conversation.
+  const shown = useMemo(() => (messages ?? []).filter((m) => !m.meta?.hidden), [messages]);
+
   const reply = useCallback((m: Message) => {
     haptic.selection();
     setReplyTo(server.id, chatId, toReplyRef(m));
@@ -126,7 +131,7 @@ export function ChatView({ server, chatId, showBack, embedded }: { server: Serve
   return (
     <KeyboardAvoidingView style={s.root} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <BlurTargetView ref={target} style={{ flex: 1 }}>
-        <MessageList server={server} chatId={chatId} messages={messages ?? []} loaded={!!loaded || !!messages?.length}
+        <MessageList server={server} chatId={chatId} messages={shown} loaded={!!loaded || !!messages?.length}
           typing={typing} top={headerH} bottom={composerH} onOpen={setSelected} onReply={reply} />
       </BlurTargetView>
       <View style={s.headerWrap} onLayout={(e) => setHeaderH(e.nativeEvent.layout.height)} pointerEvents="box-none">
@@ -144,6 +149,7 @@ export function ChatView({ server, chatId, showBack, embedded }: { server: Serve
               <Text style={s.headerSub} numberOfLines={1}>{main ? status : `${server.bot.title} · ${status}`}</Text>
             </View>
           </View>
+          <ModelChip server={server} chatId={chatId} />
           <IconButton label="Chat options" onPress={() => setMenu(true)}><MoreHorizontal size={22} color={t.colors.text} /></IconButton>
         </Glass>
         <View style={s.hairline} />
@@ -330,7 +336,7 @@ const MessageRow = memo(function MessageRow({ server, message, first, last, live
   const replyTo = message.meta?.reply_to;
   const sendable = message.status === 'final';
   const quote = (onAccent: boolean) => replyTo ? <ReplyQuote server={server} reply={replyTo} onAccent={onAccent} onPress={() => actions.jump(replyTo.id)} /> : null;
-  const text = (onAccent: boolean) => (
+  const text = (onAccent: boolean) => message.meta?.picker ? <PickerCard server={server} message={message} /> : (
     <>
       {message.text ? <Markdown text={message.text} resolveUrl={resolve} tone={onAccent ? 'onAccent' : 'default'} selectable={!TOUCH} /> : null}
       {message.status === 'streaming' && live ? <Cursor onAccent={onAccent} /> : null}

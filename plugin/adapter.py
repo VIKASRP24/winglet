@@ -193,6 +193,8 @@ class WingletAdapter(BasePlatformAdapter):
             hub.on_answer = self._on_answer
             hub.hermes_version = hermes_api.hermes_version
             hub.commands_provider = hermes_api.list_commands
+            hub.hermes = hermes_api
+            hub.chat_model = self._chat_model
             hub.command_resolver = hermes_api.resolve_command
             from gateway.platforms.shared_ingress import bind_listener
             # No access log: device tokens ride in WebSocket/media query strings and must not reach log files.
@@ -310,6 +312,72 @@ class WingletAdapter(BasePlatformAdapter):
         message = await hub.edit_message(message_id, _strip_cursor(content or ""), final=finalize)
         return SendResult(success=message is not None, message_id=message_id,
                           error=None if message else "message not found")
+
+    # -- pickers: /model, /reasoning, /fast and command confirmations, as cards in the chat --------
+
+    async def send_model_picker(self, chat_id: str, providers: list, current_model: str, current_provider: str,
+                                session_key: str, on_model_selected, metadata: Optional[Dict[str, Any]] = None) -> SendResult:
+        hub = self._hub
+        if hub is None or hub.store.get_chat(str(chat_id)) is None:
+            return SendResult(success=False, error="Winglet is not running")
+        offered = [{"slug": str(p.get("slug") or ""), "name": str(p.get("name") or p.get("slug") or ""),
+                    "models": [str(m) for m in (p.get("models") or [])][:50]}
+                   for p in providers or [] if p.get("models")]
+        if not offered:
+            return SendResult(success=False, error="No models")
+        message = await hub.post_picker(
+            str(chat_id), "model", "Choose a model for this chat",
+            {"current_model": current_model or "", "current_provider": current_provider or "",
+             "current_label": hermes_api.provider_label(current_provider or ""), "providers": offered},
+            on_model_selected)
+        return SendResult(success=True, message_id=message["id"])
+
+    async def send_choice_picker(self, chat_id: str, title: str, choices: list, session_key: str, on_choice_selected,
+                                 metadata: Optional[Dict[str, Any]] = None) -> SendResult:
+        hub = self._hub
+        if hub is None or hub.store.get_chat(str(chat_id)) is None:
+            return SendResult(success=False, error="Winglet is not running")
+        options = [{"value": str(c.get("value") or ""), "label": str(c.get("label") or c.get("value") or ""),
+                    "current": bool(c.get("is_current"))} for c in choices or [] if c.get("value")]
+        if not options:
+            return SendResult(success=False, error="No choices")
+        message = await hub.post_picker(str(chat_id), "choice", _strip_cursor(title or "Choose"), {"choices": options},
+                                        on_choice_selected)
+        return SendResult(success=True, message_id=message["id"])
+
+    async def send_slash_confirm(self, chat_id: str, title: str, message: str, session_key: str, confirm_id: str,
+                                 metadata: Optional[Dict[str, Any]] = None) -> SendResult:
+        hub = self._hub
+        if hub is None or hub.store.get_chat(str(chat_id)) is None:
+            return SendResult(success=False, error="Winglet is not running")
+
+        async def resolve(choice: str) -> str:
+            return await hermes_api.resolve_slash_confirm(session_key, confirm_id, choice)
+
+        # Hermes gives up on a confirmation after five minutes; the card expires with it.
+        posted = await hub.post_picker(
+            str(chat_id), "confirm", _strip_cursor(title or "Confirm"),
+            {"detail": _strip_cursor(message or ""), "choices": [
+                {"value": "once", "label": "Approve once"}, {"value": "always", "label": "Always approve"},
+                {"value": "cancel", "label": "Cancel"}]},
+            resolve, ttl=300)
+        return SendResult(success=True, message_id=posted["id"])
+
+    def _chat_model(self, chat_id: str) -> Optional[Dict[str, Any]]:
+        runner = getattr(self, "gateway_runner", None)
+        if runner is None:
+            return None
+        try:
+            source = self.build_source(chat_id=chat_id, chat_name=chat_id, chat_type="dm", user_id=USER_PREFIX + "app",
+                                       user_name="Winglet", role_authorized=True)
+            # The runner's own key (it adds the profile's namespace); a DM key leaves the sender out.
+            key_for = getattr(runner, "_session_key_for_source", None)
+            if key_for is None:
+                from gateway.session import build_session_key as key_for
+            return hermes_api.chat_model(runner, key_for(source))
+        except Exception:
+            logger.debug("[%s] chat model unavailable", self.name, exc_info=True)
+            return None
 
     async def send_or_update_status(self, chat_id: str, status_key: str, content: str, *,
                                     metadata: Optional[Dict[str, Any]] = None) -> SendResult:

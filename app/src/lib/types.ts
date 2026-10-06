@@ -62,6 +62,10 @@ export type Message = {
     reply_to?: ReplyRef;
     /** Set on Hermes status lines (context pressure, fallback…) that update in place. */
     status_key?: string;
+    /** A command the app sent for a control (the model chip's /model); not shown in the chat. */
+    hidden?: boolean;
+    /** A choice the agent offers: a model, a setting, or a command to confirm. */
+    picker?: Picker;
   };
   created_at: number;
   updated_at: number;
@@ -115,4 +119,26 @@ export type DraftFile = {
   error?: string;
   /** Voice notes send themselves as soon as they finish uploading. */
   autoSend?: boolean;
+};
+
+/** A card in the chat that the owner taps to answer: Hermes's /model, /reasoning, /fast and confirmations. */
+export type Picker = {
+  id: string;
+  kind: 'model' | 'choice' | 'confirm';
+  status: 'open' | 'done' | 'expired';
+  expires_at: number;
+  current_model?: string;
+  current_provider?: string;
+  current_label?: string;
+  providers?: { slug: string; name: string; models: string[] }[];
+  choices?: { value: string; label: string; current?: boolean }[];
+  detail?: string;
+  selected?: string;
+  by?: string;
+};
+
+/** The model new chats use, and the one a chat really uses when Hermes knows. */
+export type AgentInfo = {
+  configured: { model: string; provider: string; reasoning_effort: string; label: string };
+  chat: { model: string; provider: string; source: 'chat' | 'last_turn' } | null;
 };
