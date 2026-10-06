@@ -6,7 +6,10 @@ import { ScrollView, Text, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BotAvatar } from '../../components/BotAvatar';
 import { BotSwitcher } from '../../components/BotSwitcher';
-import { Activity, BarChart, Bell, Brain, Cpu, Fingerprint, Info, Key, MessageCircle, Palette, Plus, ShieldCheck, Smartphone, Sparkles, UserRoundPen } from '../../components/icons';
+import {
+  Activity, BarChart, Bell, Brain, CalendarClock, Cpu, Fingerprint, HeartPulse, Info, Key, MessageCircle, Palette, Plus, ScrollText, ShieldCheck,
+  Smartphone, Sparkles, UserRoundPen,
+} from '../../components/icons';
 import { shortModel } from '../../components/PickerCard';
 import { api } from '../../lib/api';
 import { useTabBarSpace } from '../../components/TabBar';
@@ -69,6 +72,20 @@ export default function AgentTab() {
           <>
             <SectionHeader title="Your agent" />
             <BrainRows server={server} rt={rt} />
+          </>
+        ) : null}
+
+        {rt?.info?.features?.control && isOwner(rt) ? (
+          <>
+            <SectionHeader title="Server" />
+            <ListGroup>
+              <ListRow icon={<HeartPulse size={18} color={rt.paused ? t.colors.warning : t.colors.onAccentSoft} />}
+                iconColor={rt.paused ? t.colors.warning : undefined} title="Status" subtitle="Health, pause, restart and updates"
+                value={rt.paused ? 'Paused' : undefined} onPress={() => router.push('/server')} />
+              <ListRow icon={<CalendarClock size={18} color={t.colors.onAccentSoft} />} title="Schedule" subtitle="Routines it runs on its own"
+                onPress={() => router.push('/schedule')} />
+              <ListRow icon={<ScrollText size={18} color={t.colors.onAccentSoft} />} title="Logs" onPress={() => router.push('/logs')} />
+            </ListGroup>
           </>
         ) : null}
 

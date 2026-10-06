@@ -5,7 +5,7 @@ import { api, ApiError, wsUrl } from './api';
 import { cacheGet, cacheRemove, cacheSet } from './cache';
 import { markFailed, mergeMessages } from './messages';
 import { getJSON, setJSON } from './storage';
-import type { Attachment, Chat, ConnStatus, DraftFile, InboxItem, Me, Message, ReplyRef, Server, ServerInfo } from './types';
+import type { Attachment, Chat, ConnStatus, DraftFile, InboxItem, Job, Me, Message, PauseState, ReplyRef, Server, ServerInfo } from './types';
 
 const SERVERS_KEY = 'winglet.servers';
 const SELECTION_KEY = 'winglet.selection';
@@ -49,6 +49,10 @@ export type ServerState = {
   lastReplyAt?: number;
   /** This phone's role and main chat on the server (from hello). */
   me?: Me;
+  /** New work is on hold on this server. */
+  paused?: PauseState;
+  /** The latest restart or update this phone heard about. */
+  job?: Job;
 };
 
 type Selection = { serverId?: string; chatId?: string };
@@ -249,7 +253,7 @@ export const useApp = create<AppState>((set, get) => {
         const compat = info.min_app_protocol > APP_PROTOCOL ? 'update-app' as const
           : info.protocol < MIN_SERVER_PROTOCOL ? 'update-server' as const : undefined;
         patch(serverId, () => ({ status: 'online', chats, typing, pending: ev.pending ?? 0, loaded: {}, info, compat,
-          me: ev.me as Me | undefined }));
+          me: ev.me as Me | undefined, paused: (ev.paused ?? null) as PauseState }));
         // From now on, send the token in the socket's first frame rather than the URL.
         if (server && info.features.ws_auth && !server.wsAuth) get().updateServer(serverId, { wsAuth: true });
         cacheSet(`chats:${serverId}`, chats);
@@ -310,6 +314,12 @@ export const useApp = create<AppState>((set, get) => {
           else delete typing[ev.chat_id];
           return { typing };
         });
+        break;
+      case 'system.paused':
+        patch(serverId, () => ({ paused: (ev.paused ?? null) as PauseState }));
+        break;
+      case 'system.job':
+        if (ev.job) patch(serverId, () => ({ job: ev.job as Job }));
         break;
       case 'inbox.new':
       case 'inbox.update': {

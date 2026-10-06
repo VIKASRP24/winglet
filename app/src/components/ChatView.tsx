@@ -26,6 +26,7 @@ import type { InboxItem, Message, ReplyRef, Server } from '../lib/types';
 import { BotAvatar, botColor, UserAvatar } from './BotAvatar';
 import { Composer } from './Composer';
 import { ConnectionBanner } from './ConnectionBanner';
+import { PausedBanner } from './PausedBanner';
 import { Glass } from './Glass';
 import {
   Activity, ArrowDown, Bell, BellOff, ChevronLeft, Clock, Copy, Download, FileText, Info, MoreHorizontal, Pencil, Reply,
@@ -154,6 +155,7 @@ export function ChatView({ server, chatId, showBack, embedded }: { server: Serve
         </Glass>
         <View style={s.hairline} />
         <ConnectionBanner server={server} compact />
+        <PausedBanner server={server} />
       </View>
       <Composer server={server} chatId={chatId} busy={typing} bottomInset={embedded ? 12 : insets.bottom} target={target}
         onHeight={setComposerH} placeholder={main || chat?.kind === 'home' ? `Message ${server.bot.title}` : `Message #${chat?.title ?? 'chat'}`} />

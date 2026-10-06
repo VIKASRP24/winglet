@@ -5,7 +5,7 @@ import { getItem, setItem } from './storage';
 import type { Bot, Server } from './types';
 
 export class ApiError extends Error {
-  constructor(message: string, public status: number) {
+  constructor(message: string, public status: number, public data?: any) {
     super(message);
   }
 }
@@ -50,7 +50,7 @@ async function request<T>(url: string, init: RequestInit & { token?: string } = 
   } catch {
     // non-JSON body
   } finally { clearTimeout(timer); }
-  if (!resp.ok) throw new ApiError(data?.error || `Server returned ${resp.status}`, resp.status);
+  if (!resp.ok) throw new ApiError(data?.error || `Server returned ${resp.status}`, resp.status, data);
   return data as T;
 }
 
