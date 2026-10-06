@@ -14,6 +14,7 @@ import { moodOf } from '../lib/agent';
 import { mediaUrl } from '../lib/api';
 import { connectionView } from '../lib/connection';
 import { exportChat } from '../lib/exportChat';
+import { clearFocus, requestFocus, useFocusRequest } from '../lib/focus';
 import { haptic } from '../lib/haptics';
 import { spring, useReducedMotion } from '../lib/motion';
 import { usePrefs } from '../lib/prefs';
@@ -26,11 +27,13 @@ import type { InboxItem, Message, ReplyRef, Server } from '../lib/types';
 import { BotAvatar, botColor, UserAvatar } from './BotAvatar';
 import { Composer } from './Composer';
 import { ConnectionBanner } from './ConnectionBanner';
+import { FilesSheet } from './FilesSheet';
+import { GoalSheet, GoalStrip, useChatGoal } from './Goal';
 import { PausedBanner } from './PausedBanner';
 import { Glass } from './Glass';
 import {
-  Activity, ArrowDown, Bell, BellOff, ChevronLeft, Clock, Copy, Download, FileText, Info, MoreHorizontal, Pencil, Reply,
-  RotateCcw, Share, Trash2,
+  Activity, ArrowDown, Bell, BellOff, ChevronLeft, Clock, Copy, Download, FileText, Images, Info, MoreHorizontal, Pencil, Reply,
+  RotateCcw, Share, Target, Trash2,
 } from './icons';
 import { InboxCard } from './InboxCards';
 import { Markdown } from './Markdown';
@@ -81,8 +84,12 @@ export function ChatView({ server, chatId, showBack, embedded }: { server: Serve
   const [menu, setMenu] = useState(false);
   const [selected, setSelected] = useState<Message | null>(null);
   const [selectText, setSelectText] = useState<string | null>(null);
+  const [goalOpen, setGoalOpen] = useState(false);
+  const [filesOpen, setFilesOpen] = useState(false);
   const target = useRef<View>(null);
   const typing = isTyping(runtime, chatId);
+  const { goal, refresh: refreshGoal, supported: goalsSupported } = useChatGoal(server, chatId);
+  const focus = useFocusRequest(server.id, chatId);
 
   useEffect(() => {
     setVisibleChat({ serverId: server.id, chatId });
@@ -133,7 +140,7 @@ export function ChatView({ server, chatId, showBack, embedded }: { server: Serve
     <KeyboardAvoidingView style={s.root} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <BlurTargetView ref={target} style={{ flex: 1 }}>
         <MessageList server={server} chatId={chatId} messages={shown} loaded={!!loaded || !!messages?.length}
-          typing={typing} top={headerH} bottom={composerH} onOpen={setSelected} onReply={reply} />
+          typing={typing} top={headerH} bottom={composerH} onOpen={setSelected} onReply={reply} focus={focus} />
       </BlurTargetView>
       <View style={s.headerWrap} onLayout={(e) => setHeaderH(e.nativeEvent.layout.height)} pointerEvents="box-none">
         <Glass target={target} borderless style={[s.header, { paddingTop: topPad + 8 }]}>
@@ -156,10 +163,16 @@ export function ChatView({ server, chatId, showBack, embedded }: { server: Serve
         <View style={s.hairline} />
         <ConnectionBanner server={server} compact />
         <PausedBanner server={server} />
+        {goal ? <GoalStrip goal={goal} onPress={() => setGoalOpen(true)} /> : null}
       </View>
       <Composer server={server} chatId={chatId} busy={typing} bottomInset={embedded ? 12 : insets.bottom} target={target}
         onHeight={setComposerH} placeholder={main || chat?.kind === 'home' ? `Message ${server.bot.title}` : `Message #${chat?.title ?? 'chat'}`} />
-      <ChatMenu server={server} chatId={chatId} title={title} visible={menu} onClose={() => setMenu(false)} />
+      <ChatMenu server={server} chatId={chatId} title={title} visible={menu} onClose={() => setMenu(false)}
+        onGoal={goalsSupported && chat?.kind !== 'home' ? () => setGoalOpen(true) : undefined} hasGoal={!!goal && goal.status !== 'done'}
+        onFiles={runtime?.info?.features?.files ? () => setFilesOpen(true) : undefined} />
+      <GoalSheet server={server} chatId={chatId} goal={goal} visible={goalOpen} onClose={() => setGoalOpen(false)} onChanged={refreshGoal} />
+      <FilesSheet server={server} chatId={chatId} visible={filesOpen} onClose={() => setFilesOpen(false)}
+        onJump={(id) => requestFocus(server.id, chatId, id)} />
       <MessageMenu server={server} message={selected} busy={typing} onClose={() => setSelected(null)}
         onReply={reply} onSelectText={setSelectText} />
       <Sheet visible={selectText !== null} onClose={() => setSelectText(null)} title="Select text">
@@ -178,9 +191,9 @@ function toReplyRef(m: Message): ReplyRef {
   return { id: m.id, role: m.role, text };
 }
 
-function MessageList({ server, chatId, messages, loaded, typing, top, bottom, onOpen, onReply }: {
+function MessageList({ server, chatId, messages, loaded, typing, top, bottom, onOpen, onReply, focus }: {
   server: Server; chatId: string; messages: Message[]; loaded: boolean; typing: boolean; top: number; bottom: number;
-  onOpen: (m: Message) => void; onReply: (m: Message) => void;
+  onOpen: (m: Message) => void; onReply: (m: Message) => void; focus: string | null;
 }) {
   const t = useTheme();
   const s = useStyles();
@@ -227,6 +240,45 @@ function MessageList({ server, chatId, messages, loaded, typing, top, bottom, on
     setTimeout(() => setFlash((f) => (f === id ? null : f)), 1600);
   }, []);
   const actions = useMemo<Actions>(() => ({ open: onOpen, reply: onReply, jump }), [onOpen, onReply, jump]);
+
+  // A message picked in search or the files sheet: page older history in until it's here, then
+  // bring it into view. Gives up when a page adds nothing (it was deleted), a page can't be
+  // fetched, or after 20 pages.
+  const paging = useRef<{ id: string; pages: number; busy: boolean } | null>(null);
+  const jumped = useRef<string | null>(null);
+  const [paged, setPaged] = useState(0);
+  useEffect(() => {
+    if (!focus) jumped.current = null; // so the same message can be asked for again
+    if (!focus || !loaded) return;
+    if (messages.some((m) => m.id === focus)) {
+      paging.current = null;
+      if (jumped.current === focus) return;
+      jumped.current = focus;
+      // Once, after the rows have laid out; later renders (a reply streaming in) don't restart it.
+      setTimeout(() => { jump(focus); clearFocus(focus); }, 350);
+      return;
+    }
+    if (paging.current?.id !== focus) paging.current = { id: focus, pages: 0, busy: false };
+    const p = paging.current;
+    if (p.busy) return;
+    const giveUp = (body = 'It may have been deleted.') => {
+      paging.current = null;
+      clearFocus(focus);
+      useApp.getState().toast({ serverId: server.id, title: "Couldn't find that message", body });
+    };
+    if (p.pages >= 20) return giveUp();
+    const count = () => useApp.getState().runtime[server.id]?.messages[chatId]?.length ?? 0;
+    const before = count();
+    p.busy = true;
+    p.pages += 1;
+    loadMessages(server.id, chatId, true).catch(() => false).then((ok) => {
+      p.busy = false;
+      if (paging.current !== p) return;
+      if (!ok) giveUp("Older messages didn't load. Check your connection and try again.");
+      else if (count() <= before) giveUp();
+      else setPaged((n) => n + 1);
+    });
+  }, [focus, loaded, messages, paged, jump, loadMessages, server.id, chatId]);
 
   if (loaded && messages.length === 0) return <EmptyChat server={server} chatId={chatId} top={top} bottom={bottom} />;
 
@@ -645,7 +697,10 @@ const MUTE_OPTIONS: { label: string; seconds: number }[] = [
   { label: 'Until I turn it back on', seconds: 0 },
 ];
 
-function ChatMenu({ server, chatId, title, visible, onClose }: { server: Server; chatId: string; title: string; visible: boolean; onClose: () => void }) {
+function ChatMenu({ server, chatId, title, visible, onClose, onGoal, hasGoal, onFiles }: {
+  server: Server; chatId: string; title: string; visible: boolean; onClose: () => void;
+  onGoal?: () => void; hasGoal?: boolean; onFiles?: () => void;
+}) {
   const t = useTheme();
   const s = useStyles();
   const chat = useApp((st) => st.runtime[server.id]?.chats[chatId]);
@@ -679,6 +734,8 @@ function ChatMenu({ server, chatId, title, visible, onClose }: { server: Server;
     <Sheet visible={visible} onClose={close} title={mode === 'mute' ? 'Mute notifications' : title}>
       {mode === 'menu' ? (
         <>
+          {onGoal ? <SheetAction icon={<Target size={20} color={t.colors.text} />} label={hasGoal ? 'Goal' : 'Set a goal'} onPress={() => { close(); onGoal(); }} /> : null}
+          {onFiles ? <SheetAction icon={<Images size={20} color={t.colors.text} />} label="Files and photos" onPress={() => { close(); onFiles(); }} /> : null}
           {side ? <SheetAction icon={<Pencil size={20} color={t.colors.text} />} label="Rename" onPress={() => { setName(chat?.title ?? ''); setMode('rename'); }} /> : null}
           {features?.mute ? (until !== undefined ? (
             <SheetAction icon={<Bell size={20} color={t.colors.text} />} label={`Unmute${until ? ` (muted until ${timeOf(until)})` : ''}`} onPress={() => mute(null)} />

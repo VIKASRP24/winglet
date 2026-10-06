@@ -82,7 +82,8 @@ type AppState = {
   setNetwork: (online: boolean) => void;
   retryNow: (serverId: string) => void;
   hydrateChat: (serverId: string, chatId: string) => Promise<void>;
-  loadMessages: (serverId: string, chatId: string, older?: boolean) => Promise<void>;
+  /** Resolves false when the page couldn't be fetched (offline, a server error). */
+  loadMessages: (serverId: string, chatId: string, older?: boolean) => Promise<boolean>;
   loadInbox: (serverId: string) => Promise<void>;
   sendMessage: (serverId: string, chatId: string, text: string, opts?: string | SendOptions) => Promise<void>;
   updateDraftFiles: (serverId: string, chatId: string, fn: (files: DraftFile[]) => DraftFile[]) => void;
@@ -495,7 +496,7 @@ export const useApp = create<AppState>((set, get) => {
 
     loadMessages: async (serverId, chatId, older = false) => {
       const server = get().servers.find((s) => s.id === serverId);
-      if (!server) return;
+      if (!server) return false;
       const existing = get().runtime[serverId]?.messages[chatId] ?? [];
       // Page from the oldest message the server knows (optimistic rows have no server position).
       const oldest = existing.find((m) => !isLocal(m));
@@ -503,7 +504,7 @@ export const useApp = create<AppState>((set, get) => {
         ? `&before_position=${oldest.position}` : `&before_id=${encodeURIComponent(oldest.id)}`) : '';
       try {
         const data = await api<{ messages: Message[]; deleted_ids?: string[] }>(server, `/api/chats/${encodeURIComponent(chatId)}/messages?limit=60${before}`);
-        if (get().servers.find((s) => s.id === serverId) !== server) return;
+        if (get().servers.find((s) => s.id === serverId) !== server) return false;
         patch(serverId, (s) => {
           if (s.status === 'online' && !s.chats[chatId]) return {};
           // A live delete may have arrived after this snapshot was taken. Keep both sets so a stale
@@ -522,8 +523,10 @@ export const useApp = create<AppState>((set, get) => {
             loaded: { ...s.loaded, [chatId]: true },
           };
         });
+        return true;
       } catch (e) {
         if (e instanceof ApiError && e.status === 401) patch(serverId, () => ({ status: 'unauthorized' }));
+        return false;
       }
     },
 

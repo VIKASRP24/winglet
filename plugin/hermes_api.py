@@ -600,3 +600,40 @@ def change_routine(job_id: str, action: str, updates: Optional[dict] = None) -> 
     except ValueError as exc:
         raise HermesRefused(str(exc)) from exc
     return _job_view(job) if job else None
+
+
+# -- goals ---------------------------------------------------------------------------------
+
+
+def goals_available() -> bool:
+    """Whether this Hermes has standing goals (/goal). Older versions don't."""
+    try:
+        import hermes_cli.goals  # noqa: F401
+    except Exception:
+        return False
+    return True
+
+
+def chat_goal(runner, session_key: str) -> Optional[dict]:
+    """The standing goal (/goal) a chat's Hermes session is working on, or None. Read-only: the app
+    changes goals by sending /goal and /subgoal, so Hermes's own rules and judge apply."""
+    try:
+        session_id = runner.session_store.peek_session_id(session_key)
+    except Exception:
+        return None
+    if not session_id:
+        return None
+    try:
+        from hermes_cli.goals import load_goal
+    except Exception as exc:
+        raise HermesUnavailable("goals unavailable") from exc
+    with _profile_scope():
+        state = load_goal(session_id)
+    if state is None or state.status == "cleared" or not state.goal:
+        return None
+    import time as _time
+    waiting = bool(state.waiting_reason) and (not state.waiting_until or state.waiting_until > _time.time())
+    return {"goal": state.goal, "status": state.status, "turns_used": state.turns_used, "max_turns": state.max_turns,
+            "subgoals": list(state.subgoals), "last_verdict": state.last_verdict, "last_reason": state.last_reason,
+            "paused_reason": state.paused_reason, "waiting_reason": state.waiting_reason if waiting else None,
+            "created_at": state.created_at, "last_turn_at": state.last_turn_at}

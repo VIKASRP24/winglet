@@ -22,6 +22,7 @@ import hmac
 import ipaddress
 import json
 import logging
+import math
 import mimetypes
 import re
 import os
@@ -96,6 +97,7 @@ ROUTE_POLICY = {
     "h_webpush_unsubscribe": "device", "h_ntfy": "device", "h_push_test": "device", "h_device_verify": "device",
     "h_devices": "owner", "h_audit": "owner",
     "h_agent": "device", "h_picker_select": "owner",
+    "h_chat_goal": "device", "h_goals": "device", "h_search": "device", "h_chat_files": "device",
     "h_models": "owner", "h_providers": "owner", "h_identity": "owner", "h_memory": "owner", "h_usage": "owner",
     "h_model_default": "owner_signed", "h_provider_key": "owner_signed", "h_provider_key_delete": "owner_signed",
     "h_identity_put": "owner_signed", "h_memory_edit": "owner_signed",
@@ -137,6 +139,23 @@ def _iso_ts(value: Any) -> float:
         return datetime.fromisoformat(str(value).replace("Z", "+00:00")).timestamp()
     except (TypeError, ValueError):
         return 0.0
+
+
+def _snippet(text: str, query: str, before: int = 50, after: int = 110) -> str:
+    """The part of a message around the first match (the whole query, else its earliest word), on one
+    line, with … where it was cut."""
+    flat = " ".join((text or "").split())
+    lower, q = flat.lower(), query.lower()
+    at, size = lower.find(q), len(q)
+    if at < 0:
+        at, size = min(((lower.find(w), len(w)) for w in q.split() if w in lower), default=(-1, 0))
+    if at < 0:
+        return _clip(flat, before + after)
+    start, end = max(0, at - before), min(len(flat), at + size + after)
+    if start:
+        space = flat.find(" ", start, at)
+        start = space + 1 if space != -1 else start
+    return ("…" if start else "") + flat[start:end] + ("…" if end < len(flat) else "")
 
 
 def _clip(text: str, n: int) -> str:
@@ -183,6 +202,8 @@ class Hub:
         self.hermes: Any = None
         # chat id -> the model that chat is really using, when Hermes knows (installed by the adapter).
         self.chat_model: Optional[Callable[[str], Optional[Dict[str, Any]]]] = None
+        # chat id -> the standing goal (/goal) its Hermes session is working on (installed by the adapter).
+        self.chat_goal: Optional[Callable[[str], Optional[Dict[str, Any]]]] = None
         self._pickers: Dict[str, Dict[str, Any]] = {}
         # Restarts and updates outlive this process; jobs started by this one carry its boot id.
         self.boot_id = new_id()
@@ -216,6 +237,10 @@ class Hub:
         r.add_post("/api/chats/{chat_id}/messages", self.h_message_send)
         r.add_post("/api/chats/{chat_id}/uploads", self.h_upload)
         r.add_get("/api/chats/{chat_id}/export", self.h_export)
+        r.add_get("/api/chats/{chat_id}/goal", self.h_chat_goal)
+        r.add_get("/api/chats/{chat_id}/files", self.h_chat_files)
+        r.add_get("/api/goals", self.h_goals)
+        r.add_get("/api/search", self.h_search)
         r.add_get("/api/commands", self.h_commands)
         r.add_get("/api/push/prefs", self.h_push_prefs)
         r.add_put("/api/push/prefs", self.h_push_prefs_put)
@@ -383,7 +408,7 @@ class Hub:
             skew = abs(time.time() - float(stamp))
         except ValueError:
             return "This action needs a signed request from the app."
-        if skew > keys.CLOCK_SKEW_SECONDS:
+        if not math.isfinite(skew) or skew > keys.CLOCK_SKEW_SECONDS:
             return "This request has expired. Check that this device's clock is right, then try again."
         if not 16 <= len(nonce) <= 64:
             return "This action needs a signed request from the app."
@@ -469,7 +494,7 @@ class Hub:
         return {"webpush": True, "ntfy": True, "approvals": True, "questions": True, "uploads": True, "voice": True,
                 "replies": True, "export": True, "mute": True, "status_updates": True, "roles": True,
                 "signed_actions": True, "ws_auth": True, "pickers": True, "agent": self.hermes is not None,
-                "control": self.hermes is not None,
+                "control": self.hermes is not None, "goals": self.chat_goal is not None, "search": True, "files": True,
                 "commands": self.commands_provider is not None}
 
     def about(self) -> Dict[str, Any]:
@@ -490,11 +515,20 @@ class Hub:
             pass  # Missing/malformed proxy headers use the socket's address.
         return peer
 
+    def _pair_throttled(self, key: str) -> bool:
+        """True once ``key`` (a peer or a device) has guessed wrong too often in the last minute."""
+        now = time.monotonic()
+        recent = [t for t in self._pair_failures.pop(key, []) if now - t < 60]
+        if recent:
+            self._pair_failures[key] = recent
+        return len(recent) >= PAIR_FAILURES_PER_MINUTE
+
+    def _pair_failed(self, key: str) -> None:
+        self._pair_failures.setdefault(key, []).append(time.monotonic())
+
     async def h_pair(self, request: web.Request) -> web.Response:
         peer = self._pair_peer(request)
-        now = time.monotonic()
-        recent = [t for t in self._pair_failures.get(peer, []) if now - t < 60]
-        if len(recent) >= PAIR_FAILURES_PER_MINUTE:
+        if self._pair_throttled(peer):
             return _error(429, "Too many attempts. Wait a minute and try again.")
         try:
             body = await request.json()
@@ -509,7 +543,7 @@ class Hub:
             try:
                 body = self.keys.unseal_json(str(body["sealed"]), "pair")
             except (keys.SealError, ValueError):
-                self._pair_failures[peer] = recent + [now]
+                self._pair_failed(peer)
                 return _error(400, "This pairing request couldn't be opened. Scan a new code and try again.")
             sign_key = str(body.get("sign_key") or "")
             if sign_key and not keys.valid_public_key(sign_key):
@@ -517,7 +551,7 @@ class Hub:
             verified = bool(sign_key) and body.get("pinned") is True
         role = self.store.redeem_pair_code(str(body.get("code") or ""))
         if role is None:
-            self._pair_failures[peer] = recent + [now]
+            self._pair_failed(peer)
             return _error(403, "This pairing code is invalid or expired. Run `hermes winglet pair` for a new one.")
         self._pair_failures.pop(peer, None)
         device, token = self.store.add_device(str(body.get("device_name") or ""), str(body.get("platform") or ""),
@@ -853,6 +887,61 @@ class Hub:
         safe = uploads.safe_name(f"{title}.md", "chat.md")
         return web.Response(text="\n".join(lines), content_type="text/markdown", charset="utf-8",
                             headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(safe)}"})
+
+    # -- goals, search and files ----------------------------------------------------------------
+
+    def _goal_for(self, chat_id: str) -> Optional[Dict[str, Any]]:
+        if self.chat_goal is None:
+            return None
+        try:
+            return self.chat_goal(chat_id)
+        except Exception:
+            logger.debug("[winglet] goal unavailable for %s", chat_id, exc_info=True)
+            return None
+
+    async def h_chat_goal(self, request: web.Request) -> web.Response:
+        """The goal (/goal) this chat is working toward, if any. Changing it is a /goal message."""
+        device = self._require(request)
+        chat = self._visible_chat(device, request.match_info["chat_id"])
+        return _json({"goal": await asyncio.to_thread(self._goal_for, chat["id"])})
+
+    async def h_goals(self, request: web.Request) -> web.Response:
+        """Every chat you can see that has a goal, for the home screen."""
+        device = self._require(request)
+        if self.chat_goal is None:
+            return _json({"goals": []})
+        chats = self.visible_chats(device)
+
+        def collect():
+            out = []
+            for chat in chats:
+                goal = self._goal_for(chat["id"])
+                if goal is not None:
+                    out.append({"chat_id": chat["id"], "title": chat["title"], "goal": goal})
+            return out
+        goals = await asyncio.to_thread(collect)
+        order = {"active": 0, "paused": 1, "done": 2}
+        goals.sort(key=lambda g: (order.get(g["goal"]["status"], 3), -(g["goal"].get("last_turn_at") or 0)))
+        return _json({"goals": goals})
+
+    async def h_search(self, request: web.Request) -> web.Response:
+        """Messages in your chats that contain the words, newest first, with the matching part."""
+        device = self._require(request)
+        query = " ".join((request.query.get("q") or "").split())[:200]
+        if len(query) < 2:
+            return _json({"results": []})
+        chats = {c["id"]: c for c in self.visible_chats(device)}
+        found = self.store.search_messages(query, list(chats), limit=60)
+        results = [{"message": {k: m[k] for k in ("id", "chat_id", "role", "created_at", "position")},
+                    "chat": {"id": m["chat_id"], "title": chats[m["chat_id"]]["title"], "kind": chats[m["chat_id"]]["kind"]},
+                    "snippet": _snippet(m["text"], query)} for m in found]
+        return _json({"results": results})
+
+    async def h_chat_files(self, request: web.Request) -> web.Response:
+        """Everything shared in a chat, both ways, newest first."""
+        device = self._require(request)
+        chat = self._visible_chat(device, request.match_info["chat_id"])
+        return _json({"files": self.store.chat_attachments(chat["id"])})
 
     async def h_commands(self, request: web.Request) -> web.Response:
         """Slash commands this Hermes accepts from the app, with their hints."""
@@ -1238,16 +1327,23 @@ class Hub:
         """A phone paired before verified pairing (or by typing a code) proves it scanned a fresh code
         from this server, and registers the key it signs owner actions with."""
         device = self._require(request)
+        # Redeems the same codes as /api/pair, so wrong guesses count against the same limit.
+        throttle = "device:" + device["id"]
+        if self._pair_throttled(throttle):
+            return _error(429, "Too many attempts. Wait a minute and try again.")
         body = await self._body(request)
         try:
             data = self.keys.unseal_json(str(body.get("sealed") or ""), "verify", device["id"])
         except (keys.SealError, ValueError):
+            self._pair_failed(throttle)
             return _error(400, "This verification couldn't be opened. Scan a new code and try again.")
         sign_key = str(data.get("sign_key") or "")
         if data.get("pinned") is not True or not keys.valid_public_key(sign_key):
             return _error(400, "Verify by scanning a code, so this phone can check the server's key.")
         if self.store.redeem_pair_code(str(data.get("code") or "")) is None:
+            self._pair_failed(throttle)
             return _error(403, "This code is invalid or expired. Make a new one and try again.")
+        self._pair_failures.pop(throttle, None)
         device = self.store.set_device_key(device["id"], sign_key)
         self.audit("device.verified", device, device["name"])
         return _json({"device": device, "me": self.me(device)})

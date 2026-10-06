@@ -196,3 +196,29 @@ export type Routine = {
   kind: string | null;
   paused_reason: string | null;
 };
+
+/** A standing goal (/goal) a chat's session works toward, turn after turn, until a judge says done. */
+export type Goal = {
+  goal: string;
+  status: 'active' | 'paused' | 'done' | string;
+  turns_used: number;
+  max_turns: number;
+  subgoals: string[];
+  last_verdict: string | null;
+  last_reason: string | null;
+  paused_reason: string | null;
+  waiting_reason: string | null;
+  created_at: number;
+  last_turn_at: number;
+};
+
+export type GoalEntry = { chat_id: string; title: string; goal: Goal };
+
+export type SearchResult = {
+  message: { id: string; chat_id: string; role: 'user' | 'bot'; created_at: number; position: number };
+  chat: { id: string; title: string; kind: 'chat' | 'home' };
+  snippet: string;
+};
+
+/** A file or photo shared in a chat, with the message it came in. */
+export type ChatFile = Attachment & { message_id: string; role: 'user' | 'bot'; created_at: number };

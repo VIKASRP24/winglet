@@ -1,5 +1,5 @@
 import { Redirect, router } from 'expo-router';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Platform, ScrollView, Text, TextInput, useWindowDimensions, View } from 'react-native';
 import Animated, { FadeIn, LinearTransition } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -12,10 +12,12 @@ import { Sheet, SheetAction } from '../../components/Sheet';
 import { useTabBarSpace } from '../../components/TabBar';
 import { Button, Field, IconButton, SectionHeader, Skeleton, Tap } from '../../components/ui';
 import { ago, moodOf } from '../../lib/agent';
+import { api } from '../../lib/api';
+import { requestFocus } from '../../lib/focus';
 import { homeChat, isTyping, useApp } from '../../lib/store';
 import { WIDE_BREAKPOINT } from '../../lib/theme';
 import { makeStyles, useTheme } from '../../lib/themeContext';
-import type { Chat, Server } from '../../lib/types';
+import type { Chat, SearchResult, Server } from '../../lib/types';
 
 /** The main chat, the Updates feed, and side chats for separate topics. Wide screens show the chat alongside. */
 export default function ChatsTab() {
@@ -56,6 +58,7 @@ function ChatList({ server, activeChatId }: { server: Server; activeChatId?: str
   const general = rt?.chats[mainId];
   const updates = rt?.chats.home;
   const loading = !rt || (rt.status !== 'online' && !Object.keys(rt.chats).length);
+  const found = useMessageSearch(server, rt?.info?.features?.search ? query : '');
 
   const open = (id: string) => {
     if (wide) select(server.id, id);
@@ -80,7 +83,7 @@ function ChatList({ server, activeChatId }: { server: Server; activeChatId?: str
         <Text style={s.title} accessibilityRole="header">Chats</Text>
         <View style={s.search}>
           <Search size={18} color={t.colors.textTertiary} />
-          <TextInput value={query} onChangeText={setQuery} placeholder="Search chats" placeholderTextColor={t.colors.textTertiary}
+          <TextInput value={query} onChangeText={setQuery} placeholder={rt?.info?.features?.search ? 'Search chats and messages' : 'Search chats'} placeholderTextColor={t.colors.textTertiary}
             style={s.searchInput} accessibilityLabel="Search chats" returnKeyType="search" />
           {query ? <IconButton label="Clear search" size={32} onPress={() => setQuery('')}><X size={16} color={t.colors.textSecondary} /></IconButton> : null}
         </View>
@@ -110,7 +113,7 @@ function ChatList({ server, activeChatId }: { server: Server; activeChatId?: str
                 subtitle={updates.preview || 'Results from your routines land here'} time={updates.updated_at}
                 active={activeChatId === 'home'} onPress={() => open('home')} />
             ) : null}
-            <SectionHeader title="Side chats" />
+            {!q || side.some(match) ? <SectionHeader title="Side chats" /> : null}
             {side.filter(match).map((c) => (
               <Animated.View key={c.id} entering={FadeIn.duration(200)} layout={LinearTransition.springify().damping(20)}>
                 <ChatRow icon={<Hash size={17} color={t.colors.onAccentSoft} />} tint={t.colors.accentSoft} title={c.title}
@@ -124,7 +127,17 @@ function ChatList({ server, activeChatId }: { server: Server; activeChatId?: str
                 <Button title="Start a side chat" variant="tonal" icon={<Hash size={16} color={t.colors.onAccentSoft} />} onPress={newChat} />
               </View>
             ) : null}
-            {q && !side.some(match) && !(general && match(general)) ? <Text style={s.emptyText}>No chats match “{query}”.</Text> : null}
+            {found.results.length ? (
+              <>
+                <SectionHeader title="In messages" />
+                {found.results.map((r) => (
+                  <ResultRow key={r.message.id} server={server} result={r} query={query.trim()}
+                    onPress={() => { requestFocus(server.id, r.chat.id, r.message.id); open(r.chat.id); }} />
+                ))}
+              </>
+            ) : null}
+            {q && !side.some(match) && !(general && match(general)) && !found.results.length && !found.busy
+              ? <Text style={s.emptyText}>Nothing matches “{query}”.</Text> : null}
           </>
         )}
       </ScrollView>
@@ -153,6 +166,73 @@ function ChatRow({ icon, tint, title, subtitle, time, working, active, onPress, 
       </View>
     </Tap>
   );
+}
+
+/** Messages containing the search words, from the server, a moment after typing stops. */
+function useMessageSearch(server: Server, query: string) {
+  const [state, setState] = useState<{ results: SearchResult[]; busy: boolean }>({ results: [], busy: false });
+  const q = query.trim();
+  useEffect(() => {
+    if (q.length < 2) { setState({ results: [], busy: false }); return; }
+    setState((st) => ({ ...st, busy: true }));
+    let live = true;
+    const id = setTimeout(() => {
+      api<{ results: SearchResult[] }>(server, `/api/search?q=${encodeURIComponent(q)}`)
+        .then((d) => live && setState({ results: d.results, busy: false }))
+        .catch(() => live && setState({ results: [], busy: false }));
+    }, 300);
+    return () => { live = false; clearTimeout(id); };
+  }, [server, q]);
+  return state;
+}
+
+/** A found message: where it is, when, and the words around the match with the match in bold. */
+function ResultRow({ server, result, query, onPress }: { server: Server; result: SearchResult; query: string; onPress: () => void }) {
+  const t = useTheme();
+  const s = useStyles();
+  const rt = useApp((st) => st.runtime[server.id]);
+  const where = result.chat.id === homeChat(rt) ? server.bot.title : result.chat.kind === 'home' ? 'Updates' : `#${result.chat.title}`;
+  const who = result.message.role === 'bot' ? server.bot.title : 'You';
+  const parts = splitMatch(result.snippet, query);
+  return (
+    <Tap feedback="selection" scaleTo={0.99} onPress={onPress} accessibilityLabel={`${who} in ${where}: ${result.snippet}. Open`}
+      style={({ pressed, hovered }) => [s.row, (pressed || hovered) && { backgroundColor: t.colors.pressed }]}>
+      <View style={[s.rowIcon, { backgroundColor: t.colors.surfaceSunken }]}><Search size={17} color={t.colors.textSecondary} /></View>
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <View style={s.rowHead}>
+          <Text style={s.rowTitle} numberOfLines={1}>{where}</Text>
+          <Text style={s.time}>{ago(result.message.created_at)}</Text>
+        </View>
+        <Text style={s.preview} numberOfLines={2}>
+          <Text style={{ color: t.colors.textTertiary }}>{who}: </Text>
+          {parts.map((p, i) => (p.hit ? <Text key={i} style={s.hit}>{p.text}</Text> : p.text))}
+        </Text>
+      </View>
+    </Tap>
+  );
+}
+
+/** The snippet split around every search word (the server matches each word, in any order). */
+function splitMatch(text: string, query: string): { text: string; hit: boolean }[] {
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean).sort((a, b) => b.length - a.length);
+  if (!words.length) return [{ text, hit: false }];
+  const out: { text: string; hit: boolean }[] = [];
+  const lower = text.toLowerCase();
+  let from = 0;
+  while (from < text.length) {
+    let at = -1;
+    let size = 0;
+    for (const w of words) {
+      const i = lower.indexOf(w, from);
+      if (i >= 0 && (at < 0 || i < at)) { at = i; size = w.length; }
+    }
+    if (at < 0) break;
+    if (at > from) out.push({ text: text.slice(from, at), hit: false });
+    out.push({ text: text.slice(at, at + size), hit: true });
+    from = at + size;
+  }
+  if (from < text.length) out.push({ text: text.slice(from), hit: false });
+  return out;
 }
 
 function ChatMenu({ server, chat, onClose }: { server: Server; chat: Chat | null; onClose: () => void }) {
@@ -213,4 +293,5 @@ const useStyles = makeStyles((t) => ({
   time: { ...t.type.caption, color: t.colors.textTertiary, marginLeft: 'auto' },
   empty: { alignItems: 'center', gap: 14, paddingVertical: 24, paddingHorizontal: 12 },
   emptyText: { ...t.type.callout, color: t.colors.textSecondary, textAlign: 'center' },
+  hit: { fontFamily: t.fonts.semibold, color: t.colors.text, backgroundColor: t.colors.accentSoft },
 }));

@@ -266,6 +266,24 @@ async def test_an_older_phone_verifies_by_scanning_a_fresh_code(client, hub):
     assert (await client.post("/api/devices/verify", json={"sealed": other}, headers=legacy.auth)).status == 400
 
 
+async def test_verifying_counts_wrong_codes_against_the_pairing_limit(client, hub):
+    legacy = await pair_phone(client, hub, "Old", sealed=False)
+    info = await (await client.get("/api/server-key")).json()
+    key = Phone("Old")
+    for _ in range(10):
+        wrong = seal(info, "verify", {"code": "WRONG123", "sign_key": key.public, "pinned": True}, legacy.id)
+        assert (await client.post("/api/devices/verify", json={"sealed": wrong}, headers=legacy.auth)).status == 403
+    right = seal(info, "verify", {"code": hub.store.create_pair_code(), "sign_key": key.public, "pinned": True}, legacy.id)
+    assert (await client.post("/api/devices/verify", json={"sealed": right}, headers=legacy.auth)).status == 429
+
+
+async def test_a_timestamp_that_isnt_a_number_is_refused(client, hub):
+    owner = await pair_phone(client, hub)
+    for stamp in ("nan", "inf", "-inf", "soon"):
+        assert (await post_signed(client, owner, "/api/devices/pairing-code", {}, stamp=stamp)).status == 403
+    assert (await post_signed(client, owner, "/api/devices/pairing-code", {})).status == 200
+
+
 async def test_roles_rename_remove_and_the_last_owner(client, hub):
     owner = await pair_phone(client, hub, "Mine")
     member = await pair_phone(client, hub, "Alex", role="member")
