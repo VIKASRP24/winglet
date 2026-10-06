@@ -22,6 +22,7 @@ import hmac
 import ipaddress
 import json
 import logging
+import math
 import mimetypes
 import re
 import os
@@ -403,7 +404,7 @@ class Hub:
             skew = abs(time.time() - float(stamp))
         except ValueError:
             return "This action needs a signed request from the app."
-        if skew > keys.CLOCK_SKEW_SECONDS:
+        if not math.isfinite(skew) or skew > keys.CLOCK_SKEW_SECONDS:
             return "This request has expired. Check that this device's clock is right, then try again."
         if not 16 <= len(nonce) <= 64:
             return "This action needs a signed request from the app."
@@ -510,11 +511,20 @@ class Hub:
             pass  # Missing/malformed proxy headers use the socket's address.
         return peer
 
+    def _pair_throttled(self, key: str) -> bool:
+        """True once ``key`` (a peer or a device) has guessed wrong too often in the last minute."""
+        now = time.monotonic()
+        recent = [t for t in self._pair_failures.pop(key, []) if now - t < 60]
+        if recent:
+            self._pair_failures[key] = recent
+        return len(recent) >= PAIR_FAILURES_PER_MINUTE
+
+    def _pair_failed(self, key: str) -> None:
+        self._pair_failures.setdefault(key, []).append(time.monotonic())
+
     async def h_pair(self, request: web.Request) -> web.Response:
         peer = self._pair_peer(request)
-        now = time.monotonic()
-        recent = [t for t in self._pair_failures.get(peer, []) if now - t < 60]
-        if len(recent) >= PAIR_FAILURES_PER_MINUTE:
+        if self._pair_throttled(peer):
             return _error(429, "Too many attempts. Wait a minute and try again.")
         try:
             body = await request.json()
@@ -529,7 +539,7 @@ class Hub:
             try:
                 body = self.keys.unseal_json(str(body["sealed"]), "pair")
             except (keys.SealError, ValueError):
-                self._pair_failures[peer] = recent + [now]
+                self._pair_failed(peer)
                 return _error(400, "This pairing request couldn't be opened. Scan a new code and try again.")
             sign_key = str(body.get("sign_key") or "")
             if sign_key and not keys.valid_public_key(sign_key):
@@ -537,7 +547,7 @@ class Hub:
             verified = bool(sign_key) and body.get("pinned") is True
         role = self.store.redeem_pair_code(str(body.get("code") or ""))
         if role is None:
-            self._pair_failures[peer] = recent + [now]
+            self._pair_failed(peer)
             return _error(403, "This pairing code is invalid or expired. Run `hermes winglet pair` for a new one.")
         self._pair_failures.pop(peer, None)
         device, token = self.store.add_device(str(body.get("device_name") or ""), str(body.get("platform") or ""),
@@ -1313,16 +1323,23 @@ class Hub:
         """A phone paired before verified pairing (or by typing a code) proves it scanned a fresh code
         from this server, and registers the key it signs owner actions with."""
         device = self._require(request)
+        # Redeems the same codes as /api/pair, so wrong guesses count against the same limit.
+        throttle = "device:" + device["id"]
+        if self._pair_throttled(throttle):
+            return _error(429, "Too many attempts. Wait a minute and try again.")
         body = await self._body(request)
         try:
             data = self.keys.unseal_json(str(body.get("sealed") or ""), "verify", device["id"])
         except (keys.SealError, ValueError):
+            self._pair_failed(throttle)
             return _error(400, "This verification couldn't be opened. Scan a new code and try again.")
         sign_key = str(data.get("sign_key") or "")
         if data.get("pinned") is not True or not keys.valid_public_key(sign_key):
             return _error(400, "Verify by scanning a code, so this phone can check the server's key.")
         if self.store.redeem_pair_code(str(data.get("code") or "")) is None:
+            self._pair_failed(throttle)
             return _error(403, "This code is invalid or expired. Make a new one and try again.")
+        self._pair_failures.pop(throttle, None)
         device = self.store.set_device_key(device["id"], sign_key)
         self.audit("device.verified", device, device["name"])
         return _json({"device": device, "me": self.me(device)})
