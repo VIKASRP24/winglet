@@ -6,14 +6,17 @@ import { ScrollView, Text, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BotAvatar } from '../../components/BotAvatar';
 import { BotSwitcher } from '../../components/BotSwitcher';
-import { Activity, Bell, Fingerprint, Info, MessageCircle, Palette, Plus, ShieldCheck, Smartphone, Sparkles } from '../../components/icons';
+import { Activity, BarChart, Bell, Brain, Cpu, Fingerprint, Info, Key, MessageCircle, Palette, Plus, ShieldCheck, Smartphone, Sparkles, UserRoundPen } from '../../components/icons';
+import { shortModel } from '../../components/PickerCard';
+import { api } from '../../lib/api';
 import { useTabBarSpace } from '../../components/TabBar';
 import { ListGroup, ListRow, SectionHeader, Toggle } from '../../components/ui';
 import { lockAvailable, unlock } from '../../lib/appLock';
 import { moodOf } from '../../lib/agent';
 import { connectionView } from '../../lib/connection';
 import { usePrefs } from '../../lib/prefs';
-import { homeChat, type ServerState, useApp } from '../../lib/store';
+import { homeChat, isOwner, type ServerState, useApp } from '../../lib/store';
+import type { AgentInfo, Server } from '../../lib/types';
 import { ACCENTS, WIDE_BREAKPOINT } from '../../lib/theme';
 import { makeStyles, useTheme } from '../../lib/themeContext';
 
@@ -62,6 +65,13 @@ export default function AgentTab() {
             onPress={() => router.push(`/diagnostics/${server.id}`)} />
         </ListGroup>
 
+        {rt?.info?.features?.agent && isOwner(rt) ? (
+          <>
+            <SectionHeader title="Your agent" />
+            <BrainRows server={server} rt={rt} />
+          </>
+        ) : null}
+
         {rt?.info?.features?.roles || Platform.OS !== 'web' ? <SectionHeader title="Security" /> : null}
         <SecurityRows rt={rt} />
 
@@ -80,6 +90,26 @@ export default function AgentTab() {
         <Text style={s.footer}>Winglet {Constants.expoConfig?.version ?? ''} · open source · not affiliated with Nous Research</Text>
       </ScrollView>
     </View>
+  );
+}
+
+/** The agent's model, providers, persona, memory and usage: owners only. */
+function BrainRows({ server, rt }: { server: Server; rt?: ServerState }) {
+  const t = useTheme();
+  const [info, setInfo] = useState<AgentInfo | null>(null);
+  useEffect(() => {
+    if (rt?.status !== 'online') return;
+    api<AgentInfo>(server, '/api/agent').then(setInfo).catch(() => undefined);
+  }, [server, rt?.status]);
+  return (
+    <ListGroup>
+      <ListRow icon={<Cpu size={18} color={t.colors.onAccentSoft} />} title="Default model"
+        value={info?.configured.model ? shortModel(info.configured.model) : undefined} onPress={() => router.push('/model')} />
+      <ListRow icon={<Key size={18} color={t.colors.onAccentSoft} />} title="Providers" onPress={() => router.push('/providers')} />
+      <ListRow icon={<UserRoundPen size={18} color={t.colors.onAccentSoft} />} title="Persona" subtitle="Who it is and how it talks" onPress={() => router.push('/persona')} />
+      <ListRow icon={<Brain size={18} color={t.colors.onAccentSoft} />} title="Memory" subtitle="What it remembers about you" onPress={() => router.push('/memory')} />
+      <ListRow icon={<BarChart size={18} color={t.colors.onAccentSoft} />} title="Usage" subtitle="Tokens and cost" onPress={() => router.push('/usage')} />
+    </ListGroup>
   );
 }
 
