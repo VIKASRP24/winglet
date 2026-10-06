@@ -22,6 +22,7 @@ import ipaddress
 import json
 import logging
 import mimetypes
+import re
 import os
 import secrets
 import shutil
@@ -52,6 +53,11 @@ MAX_ATTACHMENTS = 10
 UNSENT_UPLOAD_SECONDS = 24 * 3600
 JANITOR_SECONDS = 3600
 REPLY_EXCERPT = 280
+# How long a model/choice/confirm picker stays answerable (Hermes's own slash confirmations time out
+# after five minutes; the card says so when it's too late).
+PICKER_SECONDS = 10 * 60
+MAX_PERSONA = 20_000
+_KEY_ENV = re.compile(r"^[A-Z][A-Z0-9_]{1,62}(_API_KEY|_KEY|_TOKEN)$")
 REPLY_CONTEXT = 4000
 # Raster formats only: SVG is a document that can carry script.
 INLINE_IMAGE_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp", "image/avif", "image/bmp"}
@@ -84,6 +90,10 @@ ROUTE_POLICY = {
     "h_push_prefs": "device", "h_push_prefs_put": "device", "h_inbox": "device", "h_webpush_subscribe": "device",
     "h_webpush_unsubscribe": "device", "h_ntfy": "device", "h_push_test": "device", "h_device_verify": "device",
     "h_devices": "owner", "h_audit": "owner",
+    "h_agent": "device", "h_picker_select": "owner",
+    "h_models": "owner", "h_providers": "owner", "h_identity": "owner", "h_memory": "owner", "h_usage": "owner",
+    "h_model_default": "owner_signed", "h_provider_key": "owner_signed", "h_provider_key_delete": "owner_signed",
+    "h_identity_put": "owner_signed", "h_memory_edit": "owner_signed",
     "h_rotate_token": "signed",
     "h_device_update": "owner_signed", "h_device_delete": "owner_signed", "h_pairing_code": "owner_signed",
 }
@@ -149,6 +159,12 @@ class Hub:
         # Resolves a typed command or alias to Hermes's canonical name ("" when unknown).
         self.command_resolver: Optional[Callable[[str], Optional[str]]] = None
         self.keys = keys.ServerKeys(store)
+        # Hermes functions for model, providers, persona, memory and usage (plugin/hermes_api.py),
+        # installed by the adapter; None turns those features off.
+        self.hermes: Any = None
+        # chat id -> the model that chat is really using, when Hermes knows (installed by the adapter).
+        self.chat_model: Optional[Callable[[str], Optional[Dict[str, Any]]]] = None
+        self._pickers: Dict[str, Dict[str, Any]] = {}
         # Hermes-side callbacks, installed by the adapter.
         self.on_user_message: Optional[InboundFn] = None
         self.on_approval: Optional[ResolveFn] = None
@@ -195,6 +211,18 @@ class Hub:
         r.add_post("/api/devices/verify", self.h_device_verify)
         r.add_post("/api/devices/me/rotate-token", self.h_rotate_token)
         r.add_get("/api/audit", self.h_audit)
+        r.add_get("/api/agent", self.h_agent)
+        r.add_post("/api/pickers/{picker_id}/select", self.h_picker_select)
+        r.add_get("/api/models", self.h_models)
+        r.add_put("/api/models/default", self.h_model_default)
+        r.add_get("/api/providers", self.h_providers)
+        r.add_post("/api/providers/key", self.h_provider_key)
+        r.add_delete("/api/providers/key/{env}", self.h_provider_key_delete)
+        r.add_get("/api/identity", self.h_identity)
+        r.add_put("/api/identity", self.h_identity_put)
+        r.add_get("/api/memory", self.h_memory)
+        r.add_post("/api/memory", self.h_memory_edit)
+        r.add_get("/api/usage", self.h_usage)
         r.add_get("/{tail:.*}", self.h_static)
         app.on_startup.append(self._start_janitor)
         app.on_shutdown.append(self._close_sockets)
@@ -391,7 +419,7 @@ class Hub:
         """What this server can do. The app hides anything that isn't listed as true."""
         return {"webpush": True, "ntfy": True, "approvals": True, "questions": True, "uploads": True, "voice": True,
                 "replies": True, "export": True, "mute": True, "status_updates": True, "roles": True,
-                "signed_actions": True, "ws_auth": True,
+                "signed_actions": True, "ws_auth": True, "pickers": True, "agent": self.hermes is not None,
                 "commands": self.commands_provider is not None}
 
     def about(self) -> Dict[str, Any]:
@@ -602,7 +630,8 @@ class Hub:
         try:
             message = await self.user_message(device, request.match_info["chat_id"], str(body.get("text") or ""),
                                               str(body.get("client_id") or ""), attachments=attachments,
-                                              reply_to=str(body.get("reply_to") or ""))
+                                              reply_to=str(body.get("reply_to") or ""),
+                                              hidden=body.get("hidden") is True)
         except MessageRejected as exc:
             return _error(400, str(exc))
         if message is None:
@@ -611,7 +640,7 @@ class Hub:
 
     async def user_message(self, device: Dict[str, Any], chat_id: str, text: str,
                            client_id: str = "", *, attachments: Optional[List[str]] = None,
-                           reply_to: str = "") -> Optional[Dict[str, Any]]:
+                           reply_to: str = "", hidden: bool = False) -> Optional[Dict[str, Any]]:
         text = (text or "").strip()[:MAX_TEXT]
         attachments = list(dict.fromkeys(attachments or []))
         if (not text and not attachments) or not chat_id:
@@ -628,6 +657,9 @@ class Hub:
             return None  # deleted (or never created, or someone else's): don't bring it back
         refused = self._refused_command(device, text)
         meta: Dict[str, Any] = {"device": device["name"], "client_id": client_id}
+        if hidden and text.startswith("/") and not attachments:
+            # A command the app sent for a control (the model chip's /model): kept for the record, not shown.
+            meta["hidden"] = True
         reply = None
         if reply_to:
             quoted = self.store.get_message(reply_to)
@@ -757,6 +789,8 @@ class Hub:
         title = "Updates" if chat["kind"] == "home" else chat["title"]
         lines = [f"# {title}", "", f"_Exported from Winglet · {bot}_", ""]
         for m in self.store.all_messages(chat["id"]):
+            if (m.get("meta") or {}).get("hidden"):
+                continue
             when = time.strftime("%Y-%m-%d %H:%M", time.localtime(m["created_at"]))
             if m["role"] == "system":
                 lines += [f"> {m['text']}", ""]
@@ -1178,6 +1212,200 @@ class Hub:
         except ValueError:
             return _error(400, "before and limit must be numbers")
         return _json({"entries": self.store.list_audit(before=before, limit=limit)})
+
+    # -- pickers (/model, /reasoning, /fast, command confirmations) ------------------------------
+
+    async def post_picker(self, chat_id: str, kind: str, title: str, data: Dict[str, Any],
+                          callback: Callable[..., Awaitable[Any]], ttl: float = PICKER_SECONDS) -> Dict[str, Any]:
+        """A card in the chat the owner taps to answer. ``callback`` gets the choice and returns the
+        reply, which replaces the card's question."""
+        picker_id = new_id()
+        meta = {"picker": {"id": picker_id, "kind": kind, **data, "status": "open", "expires_at": time.time() + ttl}}
+        message = await self.post_message(chat_id, title, role="bot", meta=meta, push=False)
+        self._pickers[picker_id] = {"callback": callback, "chat_id": chat_id, "message_id": message["id"],
+                                    "kind": kind, "expires": time.monotonic() + ttl}
+        return message
+
+    async def _close_picker(self, message_id: str, text: Optional[str], **change: Any) -> Optional[Dict[str, Any]]:
+        message = self.store.get_message(message_id)
+        if message is None or "picker" not in (message.get("meta") or {}):
+            return None
+        meta = dict(message["meta"])
+        meta["picker"] = {**meta["picker"], **change}
+        updated = self.store.update_message(message_id, text if text is not None else message["text"], meta=meta)
+        await self.broadcast({"type": "message.update", "chat_id": updated["chat_id"], "message": updated})
+        return updated
+
+    async def h_picker_select(self, request: web.Request) -> web.Response:
+        device = self._require(request)
+        picker_id = request.match_info["picker_id"]
+        body = await self._body(request)
+        entry = self._pickers.get(picker_id)
+        if entry is None or time.monotonic() > entry["expires"]:
+            self._pickers.pop(picker_id, None)
+            message_id = str(body.get("message_id") or (entry or {}).get("message_id") or "")
+            message = self.store.get_message(message_id) if message_id else None
+            if message and (message.get("meta") or {}).get("picker", {}).get("id") == picker_id \
+                    and self.can_see(device, self.store.get_chat(message["chat_id"])):
+                await self._close_picker(message_id, None, status="expired")
+            return _error(410, "This choice has expired. Run the command again for a new one.")
+        message = self.store.get_message(entry["message_id"])
+        if message is None or not self.can_see(device, self.store.get_chat(entry["chat_id"])):
+            return _error(404, "no such picker")
+        picker = message["meta"]["picker"]
+        kind = entry["kind"]
+        if kind == "model":
+            provider, model = str(body.get("provider") or ""), str(body.get("model") or "")
+            allowed = {(p.get("slug"), m) for p in picker.get("providers") or [] for m in p.get("models") or []}
+            if (provider, model) not in allowed:
+                return _error(400, "pick one of the models offered")
+            args, label = (entry["chat_id"], model, provider), model
+        else:
+            value = str(body.get("value") or "")
+            choices = {str(c.get("value")): str(c.get("label") or c.get("value")) for c in picker.get("choices") or []}
+            if value not in choices:
+                return _error(400, "pick one of the options offered")
+            args, label = ((entry["chat_id"], value) if kind == "choice" else (value,)), choices[value]
+        self._pickers.pop(picker_id, None)  # one answer per card
+        try:
+            reply = await entry["callback"](*args)
+        except Exception:
+            logger.warning("[winglet] picker callback failed", exc_info=True)
+            reply = "That didn't work. Try the command again."
+        updated = await self._close_picker(entry["message_id"], str(reply or message["text"]), status="done",
+                                           selected=label, by=device["name"])
+        self.audit("picker", device, f"{kind}: {label}")
+        return _json({"message": updated})
+
+    # -- your agent: model, providers, persona, memory, usage ------------------------------------
+
+    def _need_hermes(self):
+        if self.hermes is None:
+            raise web.HTTPNotFound(text=json.dumps({"error": "This server can't do that yet."}), content_type="application/json")
+        return self.hermes
+
+    async def _call(self, fn, *args, **kwargs):
+        """Run a Hermes function off the event loop; its refusals become 400s with Hermes's message."""
+        h = self._need_hermes()
+        try:
+            return await asyncio.to_thread(fn, *args, **kwargs)
+        except h.HermesRefused as exc:
+            raise web.HTTPBadRequest(text=json.dumps({"error": str(exc)}), content_type="application/json")
+        except h.HermesUnavailable:
+            raise web.HTTPNotFound(text=json.dumps({"error": "This Hermes version can't do that."}), content_type="application/json")
+
+    async def h_agent(self, request: web.Request) -> web.Response:
+        """The configured model, and the one a chat is really using when Hermes knows it."""
+        device = self._require(request)
+        h = self._need_hermes()
+        configured = await self._call(h.configured_model)
+        chat_id = request.query.get("chat") or ""
+        chat = None
+        if chat_id and self.chat_model is not None and self.can_see(device, self.store.get_chat(chat_id)):
+            chat = self.chat_model(chat_id)
+        return _json({"configured": configured, "chat": chat})
+
+    async def h_models(self, request: web.Request) -> web.Response:
+        self._require(request)
+        data = await self._call(self._need_hermes().model_options)
+        data["providers"] = [p for p in data["providers"] if p["authenticated"] and p["models"]]
+        return _json(data)
+
+    async def h_model_default(self, request: web.Request) -> web.Response:
+        device = self._require(request)
+        body = await self._body(request)
+        provider, model = str(body.get("provider") or "").strip(), str(body.get("model") or "").strip()
+        if not provider or not model:
+            return _error(400, "provider and model are required")
+        result = await self._call(self._need_hermes().set_default_model, provider, model, confirm=bool(body.get("confirm")))
+        if result.get("ok"):
+            self.audit("model.default", device, f"{result['provider']} · {result['model']}")
+        return _json(result)
+
+    async def h_providers(self, request: web.Request) -> web.Response:
+        self._require(request)
+        data = await self._call(self._need_hermes().model_options, include_unconfigured=True)
+        providers = [{k: p[k] for k in ("slug", "name", "authenticated", "is_current", "auth_type", "key_env", "total_models", "warning")}
+                     for p in data["providers"]]
+        return _json({"providers": providers, "current": {"model": data["model"], "provider": data["provider"]}})
+
+    async def h_provider_key(self, request: web.Request) -> web.Response:
+        """Save a provider's API key. It arrives sealed to the server key and is never sent back."""
+        device = self._require(request)
+        h = self._need_hermes()
+        if device["platform"] == "web" and self.connection.get("mode") == "quick" \
+                and os.environ.get("WINGLET_ALLOW_WEB_SECRETS", "").lower() not in ("1", "true", "yes", "on"):
+            # Over the automatic tunnel the web app's own code passes through Cloudflare, so it can't
+            # promise a typed key stays private. The Android app can; so can a direct connection.
+            return _error(403, "For your security, add API keys from the Android app or over a direct connection. "
+                               "To allow it from the web app anyway, set WINGLET_ALLOW_WEB_SECRETS=true on the server.")
+        body = await self._body(request)
+        try:
+            data = self.keys.unseal_json(str(body.get("sealed") or ""), "provider-key", device["id"])
+        except (keys.SealError, ValueError):
+            return _error(400, "The key couldn't be opened. Make sure the app is up to date and try again.")
+        env, value = str(data.get("env") or ""), str(data.get("value") or "").strip()
+        known = {p["key_env"] for p in (await self._call(h.model_options, include_unconfigured=True))["providers"] if p.get("key_env")}
+        if env not in known or not _KEY_ENV.match(env):
+            return _error(400, "That isn't a provider key this server knows.")
+        if not value or len(value) > 4096 or any(c.isspace() for c in value):
+            return _error(400, "That doesn't look like an API key.")
+        check = await h.check_provider_key(env, value)
+        if not check["ok"] and check["reachable"]:
+            self.audit("provider.key", device, f"{env} rejected by the provider", outcome="refused")
+            return _error(400, check["message"])
+        await self._call(h.save_provider_key, env, value)
+        self.audit("provider.key", device, f"{env} set (ends {value[-4:]})")
+        return _json({"ok": True, "note": check.get("message", "")})
+
+    async def h_provider_key_delete(self, request: web.Request) -> web.Response:
+        device = self._require(request)
+        env = request.match_info["env"]
+        if not _KEY_ENV.match(env):
+            return _error(400, "That isn't a provider key.")
+        found = await self._call(self._need_hermes().remove_provider_key, env)
+        if not found:
+            return _error(404, "That key isn't set.")
+        self.audit("provider.key", device, f"{env} removed")
+        return _json({"ok": True})
+
+    async def h_identity(self, request: web.Request) -> web.Response:
+        self._require(request)
+        persona = await self._call(self._need_hermes().read_persona)
+        return _json({**persona, "bot": self.bot()})
+
+    async def h_identity_put(self, request: web.Request) -> web.Response:
+        device = self._require(request)
+        body = await self._body(request)
+        content = body.get("content")
+        if not isinstance(content, str) or len(content) > MAX_PERSONA:
+            return _error(400, f"The persona must be text, at most {MAX_PERSONA:,} characters.")
+        await self._call(self._need_hermes().write_persona, content)
+        self.audit("persona", device, f"edited ({len(content):,} characters); applies to new chats")
+        return _json({"ok": True})
+
+    async def h_memory(self, request: web.Request) -> web.Response:
+        self._require(request)
+        return _json(await self._call(self._need_hermes().memory))
+
+    async def h_memory_edit(self, request: web.Request) -> web.Response:
+        device = self._require(request)
+        body = await self._body(request)
+        action, target = str(body.get("action") or ""), str(body.get("target") or "")
+        data = await self._call(self._need_hermes().edit_memory, action, target,
+                                str(body.get("entry") or ""), str(body.get("content") or ""))
+        what = "about you" if target == "user" else "in its notes"
+        self.audit("memory", device, {"add": "added", "replace": "edited", "remove": "removed"}.get(action, action)
+                   + f" an entry {what}")
+        return _json(data)
+
+    async def h_usage(self, request: web.Request) -> web.Response:
+        self._require(request)
+        try:
+            days = int(request.query.get("days") or 30)
+        except ValueError:
+            return _error(400, "days must be a number")
+        return _json(await self._call(self._need_hermes().usage, days))
 
     # -- push ------------------------------------------------------------------------------
 

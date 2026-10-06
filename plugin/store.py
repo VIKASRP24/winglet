@@ -330,13 +330,15 @@ class Store:
         self._touch_chat(chat_id, text)
         return self.get_message(message_id)
 
-    def update_message(self, message_id: str, text: str, *, status: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    def update_message(self, message_id: str, text: str, *, status: Optional[str] = None,
+                       meta: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
         with self._lock:
             current = self.get_message(message_id)
             if current is None:
                 return None
-            self._exec("UPDATE messages SET text = ?, status = ?, updated_at = ? WHERE id = ?",
-                       (text, status or current["status"], _now(), message_id))
+            self._exec("UPDATE messages SET text = ?, status = ?, meta = ?, updated_at = ? WHERE id = ?",
+                       (text, status or current["status"], json.dumps(meta if meta is not None else current["meta"]),
+                        _now(), message_id))
             self._touch_chat(current["chat_id"], text)
             return self.get_message(message_id)
 

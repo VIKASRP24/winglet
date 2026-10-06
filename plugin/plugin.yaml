@@ -44,3 +44,7 @@ optional_env:
     description: "Chat that receives routine / cron results (default: home)"
     prompt: "Home chat id (or empty)"
     password: false
+  - name: WINGLET_ALLOW_WEB_SECRETS
+    description: "Allow entering API keys from the web app over the automatic HTTPS tunnel (default: off; the Android app and direct connections are always allowed)"
+    prompt: "Allow API keys from the web app over the tunnel? (true/false)"
+    password: false
