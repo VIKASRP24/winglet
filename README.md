@@ -44,7 +44,7 @@ the open-source agent by Nous Research, running on **your own machine or server*
 | | Feature | What it means | |
 |---|---|---|---|
 | 🤖 | **Your bots** | A home screen of named agents, each with a face, a description and live status | ✅ v0.1 |
-| 💬 | **Chat** | Separate chats per topic, streaming replies, Markdown, code, files and images | ✅ v0.1 |
+| 💬 | **Chat** | Separate chats per topic, streaming replies, Markdown, code, files and images, search across every chat | ✅ v0.1 |
 | ✅ | **Approvals** | Approve once, for the session, always, or deny, from the app or the notification | ✅ v0.1 |
 | ❓ | **Questions** | When a bot needs a decision, answer with one tap | ✅ v0.1 |
 | 📥 | **Inbox** | One place for everything that needs you, across all your bots | ✅ v0.1 |
@@ -53,7 +53,7 @@ the open-source agent by Nous Research, running on **your own machine or server*
 | 🖥️ | **Live screen** | Watch a bot use its computer and take over when it needs you (logins, 2FA, captchas) | v0.2 |
 | 📞 | **Call your bot** | Real-time voice conversation | v0.2 |
 | 🎛️ | **Control center** | Server health, pause, restart, updates, logs and scheduled routines, from your phone | ✅ |
-| 🎯 | **Goals** | See what each bot is working toward | v0.3 |
+| 🎯 | **Goals** | Give a chat a goal; it keeps working until a judge says it's done. Track it in the chat and on Home | ✅ |
 
 ## How it works
 
