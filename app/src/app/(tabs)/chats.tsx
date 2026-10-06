@@ -12,7 +12,7 @@ import { Sheet, SheetAction } from '../../components/Sheet';
 import { useTabBarSpace } from '../../components/TabBar';
 import { Button, Field, IconButton, SectionHeader, Skeleton, Tap } from '../../components/ui';
 import { ago, moodOf } from '../../lib/agent';
-import { isTyping, useApp } from '../../lib/store';
+import { homeChat, isTyping, useApp } from '../../lib/store';
 import { WIDE_BREAKPOINT } from '../../lib/theme';
 import { makeStyles, useTheme } from '../../lib/themeContext';
 import type { Chat, Server } from '../../lib/types';
@@ -26,7 +26,7 @@ export default function ChatsTab() {
   if (!servers.length) return <Redirect href="/pair" />;
   const server = servers.find((x) => x.id === selection.serverId) ?? servers[0];
   if (width < WIDE_BREAKPOINT) return <ChatList server={server} />;
-  const chatId = selection.chatId ?? 'general';
+  const chatId = selection.chatId ?? homeChat(useApp.getState().runtime[server.id]);
   return (
     <View style={s.split}>
       <View style={s.listPane}><ChatList server={server} activeChatId={chatId} /></View>
@@ -51,8 +51,9 @@ function ChatList({ server, activeChatId }: { server: Server; activeChatId?: str
   const q = query.trim().toLowerCase();
   const match = (c: Chat) => !q || c.title.toLowerCase().includes(q) || c.preview.toLowerCase().includes(q);
   const side = useMemo(() => Object.values(rt?.chats ?? {})
-    .filter((c) => c.kind === 'chat' && c.id !== 'general').sort((a, b) => b.updated_at - a.updated_at), [rt?.chats]);
-  const general = rt?.chats.general;
+    .filter((c) => c.kind === 'chat' && c.id !== homeChat(rt)).sort((a, b) => b.updated_at - a.updated_at), [rt]);
+  const mainId = homeChat(rt);
+  const general = rt?.chats[mainId];
   const updates = rt?.chats.home;
   const loading = !rt || (rt.status !== 'online' && !Object.keys(rt.chats).length);
 
@@ -92,15 +93,15 @@ function ChatList({ server, activeChatId }: { server: Server; activeChatId?: str
         ) : (
           <>
             {general && match(general) ? (
-              <Tap feedback="selection" scaleTo={0.98} accessibilityLabel={`Main chat. ${general.preview}`} onPress={() => open('general')}
-                style={({ hovered }) => [s.main, activeChatId === 'general' && s.active, hovered && { borderColor: t.colors.borderStrong }]}>
-                <BotAvatar name={server.bot.name} size={52} mood={moodOf(rt)} animated={isTyping(rt, 'general')} />
+              <Tap feedback="selection" scaleTo={0.98} accessibilityLabel={`Main chat. ${general.preview}`} onPress={() => open(mainId)}
+                style={({ hovered }) => [s.main, activeChatId === mainId && s.active, hovered && { borderColor: t.colors.borderStrong }]}>
+                <BotAvatar name={server.bot.name} size={52} mood={moodOf(rt)} animated={isTyping(rt, mainId)} />
                 <View style={{ flex: 1, minWidth: 0 }}>
                   <View style={s.rowHead}>
                     <Text style={s.mainTitle} numberOfLines={1}>{server.bot.title}</Text>
                     <Text style={s.time}>{ago(general.updated_at)}</Text>
                   </View>
-                  <Text style={s.preview} numberOfLines={2}>{isTyping(rt, 'general') ? 'Working…' : general.preview || 'Your main conversation'}</Text>
+                  <Text style={s.preview} numberOfLines={2}>{isTyping(rt, mainId) ? 'Working…' : general.preview || 'Your main conversation'}</Text>
                 </View>
               </Tap>
             ) : null}

@@ -18,7 +18,7 @@ import { haptic } from '../lib/haptics';
 import { spring, useReducedMotion } from '../lib/motion';
 import { usePrefs } from '../lib/prefs';
 import { mutedUntil, usePushPrefs } from '../lib/pushPrefs';
-import { isTyping, useApp } from '../lib/store';
+import { homeChat, isTyping, useApp } from '../lib/store';
 import { plainText } from '../lib/text';
 import { FIXED } from '../lib/theme';
 import { makeStyles, useTheme } from '../lib/themeContext';
@@ -117,7 +117,8 @@ export function ChatView({ server, chatId, showBack, embedded }: { server: Serve
   }
 
   const view = connectionView(network, runtime, server.bot.title);
-  const title = chatId === 'general' ? server.bot.title : chat?.kind === 'home' ? 'Updates' : `#${chat?.title ?? 'Chat'}`;
+  const main = chatId === homeChat(runtime);
+  const title = main ? server.bot.title : chat?.kind === 'home' ? 'Updates' : `#${chat?.title ?? 'Chat'}`;
   const status = view.kind === 'online' ? (typing ? 'working…' : 'online') : view.kind === 'connecting' ? 'connecting…'
     : view.kind === 'recovering' ? 'finding new address…' : view.kind === 'unreachable' ? 'offline' : view.title.toLowerCase();
   const topPad = embedded ? 0 : insets.top;
@@ -140,7 +141,7 @@ export function ChatView({ server, chatId, showBack, embedded }: { server: Serve
             <Text style={s.headerTitle} numberOfLines={1} accessibilityRole="header">{title}</Text>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
               <View style={[s.statusDot, { backgroundColor: view.kind !== 'online' ? t.colors.warning : typing ? t.colors.accent : t.colors.success }]} />
-              <Text style={s.headerSub} numberOfLines={1}>{chatId === 'general' ? status : `${server.bot.title} · ${status}`}</Text>
+              <Text style={s.headerSub} numberOfLines={1}>{main ? status : `${server.bot.title} · ${status}`}</Text>
             </View>
           </View>
           <IconButton label="Chat options" onPress={() => setMenu(true)}><MoreHorizontal size={22} color={t.colors.text} /></IconButton>
@@ -149,7 +150,7 @@ export function ChatView({ server, chatId, showBack, embedded }: { server: Serve
         <ConnectionBanner server={server} compact />
       </View>
       <Composer server={server} chatId={chatId} busy={typing} bottomInset={embedded ? 12 : insets.bottom} target={target}
-        onHeight={setComposerH} placeholder={chatId === 'general' || chat?.kind === 'home' ? `Message ${server.bot.title}` : `Message #${chat?.title ?? 'chat'}`} />
+        onHeight={setComposerH} placeholder={main || chat?.kind === 'home' ? `Message ${server.bot.title}` : `Message #${chat?.title ?? 'chat'}`} />
       <ChatMenu server={server} chatId={chatId} title={title} visible={menu} onClose={() => setMenu(false)} />
       <MessageMenu server={server} message={selected} busy={typing} onClose={() => setSelected(null)}
         onReply={reply} onSelectText={setSelectText} />
@@ -647,7 +648,7 @@ function ChatMenu({ server, chatId, title, visible, onClose }: { server: Server;
   const [mode, setMode] = useState<'menu' | 'rename' | 'delete' | 'mute'>('menu');
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
-  const side = chat?.kind === 'chat' && chatId !== 'general';
+  const side = chat?.kind === 'chat' && chatId !== homeChat(useApp.getState().runtime[server.id]);
   const until = mutedUntil(prefs, chatId);
   const close = () => { setMode('menu'); onClose(); };
 

@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { Text, View } from 'react-native';
 import { moodOf } from '../lib/agent';
 import { connectionView } from '../lib/connection';
-import { useApp } from '../lib/store';
+import { homeChat, useApp } from '../lib/store';
 import { makeStyles, useTheme } from '../lib/themeContext';
 import { BotAvatar } from './BotAvatar';
 import { Check, ChevronDown, Plus, Settings } from './icons';
@@ -40,7 +40,7 @@ export function BotSwitcher() {
           const on = x.id === server.id;
           return (
             <Tap key={x.id} feedback="selection" accessibilityLabel={`${x.bot.title}${on ? ', current' : ''}`}
-              onPress={() => { if (!on) select(x.id, 'general'); setOpen(false); }}
+              onPress={() => { if (!on) select(x.id, homeChat(useApp.getState().runtime[x.id])); setOpen(false); }}
               style={({ pressed }) => [s.botRow, pressed && { backgroundColor: t.colors.pressed }]}>
               <BotAvatar name={x.bot.name} size={44} mood={moodOf(rt)} />
               <View style={{ flex: 1, minWidth: 0 }}>
