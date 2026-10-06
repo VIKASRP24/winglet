@@ -20,7 +20,15 @@ export type Chat = {
   preview: string;
 };
 
-export type Attachment = { url: string; name: string; mime: string; kind: 'image' | 'audio' | 'video' | 'file'; size: number };
+export type AttachmentKind = 'image' | 'audio' | 'video' | 'file' | 'voice';
+
+export type Attachment = { url: string; name: string; mime: string; kind: AttachmentKind; size: number; id?: string };
+
+/** A file the server holds for this chat, ready to attach to a message. */
+export type Upload = Attachment & { id: string };
+
+/** The message being replied to, as the app shows it above yours. */
+export type ReplyRef = { id: string; role: 'user' | 'bot' | 'system'; text: string };
 
 export type Message = {
   id: string;
@@ -36,6 +44,9 @@ export type Message = {
     inbox_id?: string;
     kind?: 'approval' | 'question';
     attachments?: Attachment[];
+    reply_to?: ReplyRef;
+    /** Set on Hermes status lines (context pressure, fallback…) that update in place. */
+    status_key?: string;
   };
   created_at: number;
   updated_at: number;
@@ -72,4 +83,21 @@ export type ServerInfo = {
   min_app_protocol: number;
   hermes_version: string;
   features: Record<string, boolean>;
+};
+
+/** A file attached in the composer: uploading, ready to send, or failed. */
+export type DraftFile = {
+  localId: string;
+  name: string;
+  mime: string;
+  kind: AttachmentKind;
+  size?: number;
+  /** A local preview (photos), shown until the message is sent. */
+  previewUri?: string;
+  progress: number;
+  status: 'uploading' | 'ready' | 'failed';
+  upload?: Upload;
+  error?: string;
+  /** Voice notes send themselves as soon as they finish uploading. */
+  autoSend?: boolean;
 };

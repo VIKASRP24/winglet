@@ -21,17 +21,18 @@ import ipaddress
 import json
 import logging
 import mimetypes
+import os
 import secrets
 import shutil
 import time
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Set
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 
 from aiohttp import WSMsgType, web
 
-from . import recovery, webpush
-from .store import Store
+from . import recovery, uploads, webpush
+from .store import Store, new_id
 
 logger = logging.getLogger(__name__)
 
@@ -46,11 +47,27 @@ MAX_TEXT = 16_000
 PUSH_SUBJECT = "https://github.com/VIKASRP24/winglet"
 PAIR_FAILURES_PER_MINUTE = 10
 ALIVE_CACHE_SECONDS = 2.0
+MAX_ATTACHMENTS = 10
+UNSENT_UPLOAD_SECONDS = 24 * 3600
+JANITOR_SECONDS = 3600
+REPLY_EXCERPT = 280
+REPLY_CONTEXT = 4000
 # Raster formats only: SVG is a document that can carry script.
 INLINE_IMAGE_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp", "image/avif", "image/bmp"}
 
-InboundFn = Callable[[Dict[str, Any], str, Dict[str, Any], Dict[str, Any]], Awaitable[None]]
+InboundFn = Callable[..., Awaitable[None]]
 ResolveFn = Callable[[Dict[str, Any], Any], Awaitable[bool]]
+
+
+class MessageRejected(ValueError):
+    """A message the server won't accept (bad attachments, reply to a missing message, ...)."""
+
+
+def _env_mb(name: str, default: int) -> int:
+    try:
+        return max(1, int(os.environ.get(name) or default)) * 1024 * 1024
+    except ValueError:
+        return default * 1024 * 1024
 
 
 def _json(data: Any, status: int = 200) -> web.Response:
@@ -90,6 +107,13 @@ class Hub:
         self._recovery_due = {}
         self._recovery_wake = asyncio.Event()
         self._recovery_lock = asyncio.Lock()
+        self._janitor: Optional[asyncio.Task] = None
+        # Upload limits: one file, one device per day, and everything stored. Overridable in .env.
+        self.max_upload_bytes = _env_mb("WINGLET_MAX_UPLOAD_MB", 50)
+        self.device_daily_upload_bytes = _env_mb("WINGLET_DAILY_UPLOAD_MB", 500)
+        self.total_upload_bytes = _env_mb("WINGLET_UPLOAD_STORAGE_MB", 4096)
+        # Optional providers installed by the adapter (the hub never imports Hermes).
+        self.commands_provider: Optional[Callable[[], List[Dict[str, Any]]]] = None
         # Hermes-side callbacks, installed by the adapter.
         self.on_user_message: Optional[InboundFn] = None
         self.on_approval: Optional[ResolveFn] = None
@@ -115,6 +139,11 @@ class Hub:
         r.add_delete("/api/chats/{chat_id}", self.h_chat_delete)
         r.add_get("/api/chats/{chat_id}/messages", self.h_messages)
         r.add_post("/api/chats/{chat_id}/messages", self.h_message_send)
+        r.add_post("/api/chats/{chat_id}/uploads", self.h_upload)
+        r.add_get("/api/chats/{chat_id}/export", self.h_export)
+        r.add_get("/api/commands", self.h_commands)
+        r.add_get("/api/push/prefs", self.h_push_prefs)
+        r.add_put("/api/push/prefs", self.h_push_prefs_put)
         r.add_get("/api/inbox", self.h_inbox)
         r.add_post("/api/inbox/{item_id}/respond", self.h_inbox_respond)
         r.add_get("/api/push/vapid", self.h_vapid)
@@ -124,8 +153,35 @@ class Hub:
         r.add_post("/api/push/test", self.h_push_test)
         r.add_get("/api/media/{media_id}/{name}", self.h_media)
         r.add_get("/{tail:.*}", self.h_static)
+        app.on_startup.append(self._start_janitor)
         app.on_shutdown.append(self._close_sockets)
         return app
+
+    async def _start_janitor(self, _app: web.Application) -> None:
+        if self._janitor is None:
+            self._janitor = asyncio.create_task(self._janitor_loop())
+
+    async def _janitor_loop(self) -> None:
+        while True:
+            try:
+                self.sweep_uploads()
+            except Exception:
+                logger.warning("[winglet] upload cleanup failed", exc_info=True)
+            await asyncio.sleep(JANITOR_SECONDS)
+
+    def sweep_uploads(self, now: Optional[float] = None) -> int:
+        """Delete uploads that were never sent within a day: drafts abandoned, sends that never happened."""
+        removed = 0
+        for row in self.store.stale_uploads((now or time.time()) - UNSENT_UPLOAD_SECONDS):
+            self._remove_upload(row)
+            removed += 1
+        return removed
+
+    def _remove_upload(self, row: Dict[str, Any]) -> None:
+        directory = (self.media_dir / row["id"]).resolve()
+        if self.media_dir.resolve() in directory.parents:
+            shutil.rmtree(directory, ignore_errors=True)
+        self.store.delete_upload(row["id"])
 
     async def _close_sockets(self, _app: web.Application) -> None:
         for ws in list(self._sockets):
@@ -134,6 +190,9 @@ class Hub:
         for task in self._push_tasks.values():
             task.cancel()
         self._push_tasks.clear()
+        if self._janitor is not None:
+            self._janitor.cancel()
+            self._janitor = None
 
     @web.middleware
     async def _cors(self, request: web.Request, handler):
@@ -146,7 +205,7 @@ class Hub:
         if request.path.startswith("/api/"):
             resp.headers["Access-Control-Allow-Origin"] = "*"
             resp.headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type"
-            resp.headers["Access-Control-Allow-Methods"] = "GET, POST, PATCH, DELETE, OPTIONS"
+            resp.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, PATCH, DELETE, OPTIONS"
             resp.headers.setdefault("Cache-Control", "no-store")
         return resp
 
@@ -193,7 +252,9 @@ class Hub:
 
     def features(self) -> Dict[str, bool]:
         """What this server can do. The app hides anything that isn't listed as true."""
-        return {"webpush": True, "ntfy": True, "approvals": True, "questions": True}
+        return {"webpush": True, "ntfy": True, "approvals": True, "questions": True, "uploads": True, "voice": True,
+                "replies": True, "export": True, "mute": True, "status_updates": True,
+                "commands": self.commands_provider is not None}
 
     def about(self) -> Dict[str, Any]:
         return {"version": VERSION, "protocol": PROTOCOL, "min_app_protocol": MIN_APP_PROTOCOL,
@@ -343,8 +404,11 @@ class Hub:
         chat_id = request.match_info["chat_id"]
         if chat_id == HOME_CHAT_ID:
             return _error(400, "the Updates chat can't be deleted")
+        files = self.store.chat_uploads(chat_id)
         if not self.store.delete_chat(chat_id):
             return _error(404, "no such chat")
+        for row in files:
+            self._remove_upload(row)
         await self.broadcast({"type": "chat.delete", "chat_id": chat_id})
         return _json({"ok": True})
 
@@ -369,17 +433,28 @@ class Hub:
         body = await self._body(request)
         if self.store.get_chat(request.match_info["chat_id"]) is None:
             return _error(404, "This chat was deleted.")
-        message = await self.user_message(device, request.match_info["chat_id"], str(body.get("text") or ""),
-                                          str(body.get("client_id") or ""))
+        attachments = body.get("attachments") or []
+        if not isinstance(attachments, list) or not all(isinstance(a, str) for a in attachments):
+            return _error(400, "attachments must be a list of upload ids")
+        try:
+            message = await self.user_message(device, request.match_info["chat_id"], str(body.get("text") or ""),
+                                              str(body.get("client_id") or ""), attachments=attachments,
+                                              reply_to=str(body.get("reply_to") or ""))
+        except MessageRejected as exc:
+            return _error(400, str(exc))
         if message is None:
             return _error(400, "empty message")
         return _json({"message": message})
 
     async def user_message(self, device: Dict[str, Any], chat_id: str, text: str,
-                           client_id: str = "") -> Optional[Dict[str, Any]]:
+                           client_id: str = "", *, attachments: Optional[List[str]] = None,
+                           reply_to: str = "") -> Optional[Dict[str, Any]]:
         text = (text or "").strip()[:MAX_TEXT]
-        if not text or not chat_id:
+        attachments = list(dict.fromkeys(attachments or []))
+        if (not text and not attachments) or not chat_id:
             return None
+        if len(attachments) > MAX_ATTACHMENTS:
+            raise MessageRejected(f"At most {MAX_ATTACHMENTS} attachments per message.")
         if client_id:
             # A retry of something we already have (the reply to the first try was lost): don't run it twice.
             existing = self.store.find_user_message(chat_id, client_id)
@@ -388,18 +463,157 @@ class Hub:
         chat = self.store.get_chat(chat_id)
         if chat is None:
             return None  # deleted (or never created): don't bring it back
-        message = self.store.add_message(chat_id, "user", text,
-                                         meta={"device": device["name"], "client_id": client_id})
+        meta: Dict[str, Any] = {"device": device["name"], "client_id": client_id}
+        reply = None
+        if reply_to:
+            quoted = self.store.get_message(reply_to)
+            if quoted is None or quoted["chat_id"] != chat_id:
+                raise MessageRejected("The message you replied to no longer exists.")
+            reply = {"id": quoted["id"], "role": quoted["role"], "text": quoted["text"][:REPLY_CONTEXT]}
+            meta["reply_to"] = {"id": quoted["id"], "role": quoted["role"], "text": _clip(quoted["text"], REPLY_EXCERPT)}
+        message_id = new_id()
+        files: List[Dict[str, Any]] = []
+        if attachments:
+            rows = self.store.claim_uploads(attachments, device["id"], chat_id, message_id)
+            if rows is None:
+                raise MessageRejected("An attachment is missing, expired, or was already sent. Attach it again.")
+            meta["attachments"] = [self._upload_public(row) for row in rows]
+            files = [{"path": str(self.media_dir / row["id"] / row["name"]), "name": row["name"], "mime": row["mime"],
+                      "kind": row["kind"]} for row in rows]
+        message = self.store.add_message(chat_id, "user", text, meta=meta, message_id=message_id)
         await self.broadcast({"type": "message.new", "chat_id": chat_id, "message": message})
         await self.broadcast({"type": "chat.update", "chat": self.store.get_chat(chat_id)})
         if self.on_user_message is not None:
+            extra: Dict[str, Any] = {}
+            if files:
+                extra["files"] = files
+            if reply:
+                extra["reply"] = reply
             try:
-                await self.on_user_message(chat, text, device, message)
+                await self.on_user_message(chat, text, device, message, **extra)
             except Exception:
                 logger.exception("[winglet] failed to hand message to Hermes")
                 await self.post_message(chat_id, "⚠️ Couldn't reach the agent. Check the gateway logs.",
                                         role="system", push=False)
         return message
+
+    # -- uploads, export, commands ---------------------------------------------------------
+
+    def _upload_public(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        """What the app sees about an upload: never the server path."""
+        return {"id": row["id"], "name": row["name"], "mime": row["mime"], "kind": row["kind"], "size": row["size"],
+                "url": f"/api/media/{row['id']}/{quote(row['name'])}?sig={self.media_signature(row['id'])}"}
+
+    async def h_upload(self, request: web.Request) -> web.Response:
+        """Receive one file for a chat. It's held for a day until a message attaches it."""
+        device = self._require(request)
+        chat_id = request.match_info["chat_id"]
+        if self.store.get_chat(chat_id) is None:
+            return _error(404, "This chat was deleted.")
+        day_used = self.store.upload_bytes_since(device["id"], time.time() - 86400)
+        day_left = self.device_daily_upload_bytes - day_used
+        store_left = self.total_upload_bytes - self.store.total_upload_bytes()
+        if day_left <= 0:
+            return _error(429, "You've reached today's upload limit for this device. Try again tomorrow.")
+        if store_left <= 0:
+            return _error(507, "The server's upload storage is full. Delete old chats or raise WINGLET_UPLOAD_STORAGE_MB.")
+        limit = min(self.max_upload_bytes, day_left, store_left)
+        try:
+            reader = await request.multipart()
+        except Exception:
+            return _error(400, "expected a multipart upload")
+        voice = False
+        upload_id = secrets.token_urlsafe(12)
+        directory = self.media_dir / upload_id
+        try:
+            async for part in _parts(reader):
+                if part.name == "kind":
+                    voice = (await part.text()).strip() == "voice"
+                    continue
+                if part.name != "file":
+                    continue
+                # Some clients percent-encode the name (RFC 5987); decode before stripping directories.
+                name = uploads.safe_name(unquote(part.filename or ""), "voice-note" if voice else "file")
+                directory.mkdir(parents=True, exist_ok=True)
+                partial = directory / ".partial"
+                size, head = 0, b""
+                with open(partial, "wb") as out:
+                    while chunk := await part.read_chunk(256 * 1024):
+                        size += len(chunk)
+                        if size > limit:
+                            raise _TooLarge()
+                        if len(head) < 512:
+                            head += chunk[: 512 - len(head)]
+                        out.write(chunk)
+                if size == 0:
+                    raise MessageRejected("That file is empty.")
+                mime = uploads.sniff_mime(head, name)
+                if voice:
+                    mime = uploads.voice_mime(mime)
+                partial.rename(directory / name)
+                row = self.store.add_upload(upload_id, device["id"], chat_id, name, mime, uploads.kind_of(mime, voice), size)
+                return _json({"upload": self._upload_public(row)})
+        except _TooLarge:
+            shutil.rmtree(directory, ignore_errors=True)
+            mb = limit // (1024 * 1024)
+            reason = "the per-file limit" if limit == self.max_upload_bytes else "what's left of today's or the server's allowance"
+            return _error(413, f"That file is larger than {mb} MB, {reason}.")
+        except MessageRejected as exc:
+            shutil.rmtree(directory, ignore_errors=True)
+            return _error(400, str(exc))
+        except Exception:
+            shutil.rmtree(directory, ignore_errors=True)
+            logger.warning("[winglet] upload failed", exc_info=True)
+            return _error(400, "The upload was interrupted. Try again.")
+        return _error(400, "no file in the upload")
+
+    async def h_export(self, request: web.Request) -> web.Response:
+        """The whole chat as Markdown, to save or share."""
+        self._require(request)
+        chat = self.store.get_chat(request.match_info["chat_id"])
+        if chat is None:
+            return _error(404, "no such chat")
+        bot = self.bot()["title"]
+        title = "Updates" if chat["kind"] == "home" else chat["title"]
+        lines = [f"# {title}", "", f"_Exported from Winglet · {bot}_", ""]
+        for m in self.store.all_messages(chat["id"]):
+            when = time.strftime("%Y-%m-%d %H:%M", time.localtime(m["created_at"]))
+            if m["role"] == "system":
+                lines += [f"> {m['text']}", ""]
+                continue
+            who = bot if m["role"] == "bot" else "You"
+            lines += [f"**{who}** · {when}", "", m["text"] or ""]
+            for a in (m.get("meta") or {}).get("attachments") or []:
+                lines.append(f"- 📎 {a.get('name', 'attachment')}")
+            lines.append("")
+        safe = uploads.safe_name(f"{title}.md", "chat.md")
+        return web.Response(text="\n".join(lines), content_type="text/markdown", charset="utf-8",
+                            headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(safe)}"})
+
+    async def h_commands(self, request: web.Request) -> web.Response:
+        """Slash commands this Hermes accepts from the app, with their hints."""
+        self._require(request)
+        commands: List[Dict[str, Any]] = []
+        if self.commands_provider is not None:
+            try:
+                commands = list(self.commands_provider() or [])
+            except Exception:
+                logger.debug("[winglet] command list unavailable", exc_info=True)
+        return _json({"commands": commands or _DEFAULT_COMMANDS})
+
+    async def h_push_prefs(self, request: web.Request) -> web.Response:
+        device = self._require(request)
+        return _json({"prefs": self.store.get_push_prefs(device["id"])})
+
+    async def h_push_prefs_put(self, request: web.Request) -> web.Response:
+        """This device's notification preferences: muted chats and quiet hours."""
+        device = self._require(request)
+        body = await self._body(request)
+        try:
+            prefs = _clean_push_prefs(body.get("prefs") if isinstance(body.get("prefs"), dict) else body)
+        except ValueError as exc:
+            return _error(400, str(exc))
+        return _json({"prefs": self.store.set_push_prefs(device["id"], prefs)})
 
     # -- inbox ---------------------------------------------------------------------------
 
@@ -557,7 +771,9 @@ class Hub:
         path = (self.media_dir / media_id / name).resolve()
         if self.media_dir.resolve() not in path.parents or not path.is_file():
             return _error(404, "not found")
-        mime = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        # Uploads were sniffed on arrival; never trust a file's extension over its bytes.
+        upload = self.store.get_upload(media_id)
+        mime = upload["mime"] if upload else mimetypes.guess_type(path.name)[0] or "application/octet-stream"
         inline = mime in INLINE_IMAGE_TYPES or mime.startswith(("audio/", "video/"))
         # Agent output is untrusted: an HTML or SVG file must never run as part of the app's origin.
         # Anything that isn't plain media downloads, and the sandbox CSP neuters it even if opened.
@@ -603,8 +819,9 @@ class Hub:
         if kind == "ping":
             await ws.send_json({"type": "pong", "t": data.get("t")})
         elif kind == "message.send":
-            await self.user_message(device, str(data.get("chat_id") or ""), str(data.get("text") or ""),
-                                    str(data.get("client_id") or ""))
+            with contextlib.suppress(MessageRejected):
+                await self.user_message(device, str(data.get("chat_id") or ""), str(data.get("text") or ""),
+                                        str(data.get("client_id") or ""))
         elif kind == "inbox.respond":
             await self.respond(str(data.get("id") or ""), choice=str(data.get("choice") or ""),
                                answer=data.get("answer"))
@@ -675,6 +892,8 @@ class Hub:
         # No approve buttons on notifications: approving needs the card, with the full command in view.
         note = {**note, "tag": tag, "server_id": self.server_id()}
         for sub in subs:
+            if not _wants_push(self.store.get_push_prefs(sub["device_id"]), note):
+                continue
             try:
                 if sub["kind"] == "webpush":
                     status = await webpush.send(client, sub["data"], note, self.vapid_private_key(), PUSH_SUBJECT,
@@ -816,6 +1035,86 @@ class Hub:
         except Exception:
             return {}
         return data if isinstance(data, dict) else {}
+
+
+class _TooLarge(Exception):
+    pass
+
+
+async def _parts(reader):
+    while True:
+        part = await reader.next()
+        if part is None:
+            return
+        yield part
+
+
+# Used when the adapter can't read Hermes's own command list.
+_DEFAULT_COMMANDS = [
+    {"cmd": "/new", "hint": "Start a fresh conversation"},
+    {"cmd": "/stop", "hint": "Stop what the agent is doing"},
+    {"cmd": "/retry", "hint": "Retry the last reply"},
+    {"cmd": "/undo", "hint": "Remove the last exchange"},
+    {"cmd": "/model", "hint": "Show or switch the model"},
+    {"cmd": "/compress", "hint": "Compress the conversation context"},
+    {"cmd": "/usage", "hint": "Token usage for this session"},
+    {"cmd": "/help", "hint": "Everything Hermes can do"},
+]
+
+
+def _clean_push_prefs(raw: Any) -> Dict[str, Any]:
+    """Validate notification preferences: {muted: {chat_id|"*": until (0 = until turned off)},
+    quiet: {start: "HH:MM", end: "HH:MM", utc_offset_min, allow_urgent}}."""
+    if not isinstance(raw, dict):
+        raise ValueError("expected an object")
+    out: Dict[str, Any] = {}
+    muted = raw.get("muted") or {}
+    if not isinstance(muted, dict) or len(muted) > 200:
+        raise ValueError("muted must be an object of chat id to time")
+    now = time.time()
+    out["muted"] = {str(k)[:64]: float(v) for k, v in muted.items()
+                    if isinstance(v, (int, float)) and (v == 0 or v > now)}
+    quiet = raw.get("quiet")
+    if quiet:
+        if not isinstance(quiet, dict):
+            raise ValueError("quiet must be an object")
+        for key in ("start", "end"):
+            if not (isinstance(quiet.get(key), str) and len(quiet[key]) == 5 and quiet[key][2] == ":"
+                    and quiet[key][:2].isdigit() and quiet[key][3:].isdigit()
+                    and int(quiet[key][:2]) < 24 and int(quiet[key][3:]) < 60):
+                raise ValueError("quiet hours need start and end as HH:MM")
+        offset = quiet.get("utc_offset_min", 0)
+        if not isinstance(offset, (int, float)) or abs(offset) > 14 * 60:
+            raise ValueError("utc_offset_min must be minutes from UTC")
+        out["quiet"] = {"start": quiet["start"], "end": quiet["end"], "utc_offset_min": int(offset),
+                        "allow_urgent": bool(quiet.get("allow_urgent", True))}
+    return out
+
+
+def _wants_push(prefs: Dict[str, Any], note: Dict[str, Any], now: Optional[float] = None) -> bool:
+    """Whether a device's preferences let this notification through. Approvals and questions block the
+    agent, so a mute never silences them; quiet hours do unless urgent ones are allowed."""
+    if not prefs:
+        return True
+    now = time.time() if now is None else now
+    urgent = note.get("kind") in ("approval", "question")
+    if note.get("kind") == "test":
+        return True
+    muted = prefs.get("muted") or {}
+    if not urgent:
+        for key in ("*", str(note.get("chat_id") or "")):
+            until = muted.get(key)
+            if until is not None and (until == 0 or until > now):
+                return False
+    quiet = prefs.get("quiet")
+    if quiet and not (urgent and quiet.get("allow_urgent", True)):
+        minute = int((now // 60 + quiet.get("utc_offset_min", 0)) % (24 * 60))
+        start = int(quiet["start"][:2]) * 60 + int(quiet["start"][3:])
+        end = int(quiet["end"][:2]) * 60 + int(quiet["end"][3:])
+        inside = start <= minute < end if start <= end else (minute >= start or minute < end)
+        if inside:
+            return False
+    return True
 
 
 _NO_WEB_BUILD = """<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width">
