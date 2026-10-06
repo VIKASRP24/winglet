@@ -7,17 +7,19 @@ import Svg, { Defs, RadialGradient, Rect, Stop } from 'react-native-svg';
 import { BotAvatar, botColor } from '../../components/BotAvatar';
 import { BotSwitcher } from '../../components/BotSwitcher';
 import { ConnectionBanner } from '../../components/ConnectionBanner';
+import { GoalRing, goalStatus } from '../../components/Goal';
 import { ArrowUp, Hash, MessageSquarePlus, Plus, Sparkles, Square } from '../../components/icons';
 import { InboxCard } from '../../components/InboxCards';
 import { useTabBarSpace } from '../../components/TabBar';
 import { Chip, IconButton, SectionHeader, Tap } from '../../components/ui';
 import { ago, chatName, greeting, headline, moodOf, pendingItems, workingChats } from '../../lib/agent';
+import { api } from '../../lib/api';
 import { haptic } from '../../lib/haptics';
 import { useReducedMotion } from '../../lib/motion';
 import { homeChat, useApp } from '../../lib/store';
 import { WIDE_BREAKPOINT } from '../../lib/theme';
 import { makeStyles, useTheme } from '../../lib/themeContext';
-import type { Chat, InboxItem, Server } from '../../lib/types';
+import type { Chat, GoalEntry, InboxItem, Server } from '../../lib/types';
 
 const SUGGESTIONS = ['What can you do?', 'Plan my day', 'What did you get done today?'];
 
@@ -141,6 +143,8 @@ function HomeFor({ server }: { server: Server }) {
             </Section>
           ) : null}
 
+          <Goals server={server} />
+
           <Section title="Continue" action="All chats" onAction={() => router.navigate('/chats')}>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 12, paddingRight: 4 }}>
               {chats.map((chat, i) => <ChatCard key={chat.id} server={server} chat={chat} index={i} />)}
@@ -208,6 +212,42 @@ function QuickAsk({ server }: { server: Server }) {
         <ArrowUp size={20} color={text.trim() ? t.colors.onAccent : t.colors.textTertiary} strokeWidth={2.5} />
       </Tap>
     </View>
+  );
+}
+
+/** What each chat is working toward (/goal), active ones first. Hidden when there are none. */
+function Goals({ server }: { server: Server }) {
+  const t = useTheme();
+  const s = useStyles();
+  const supported = useApp((st) => !!st.runtime[server.id]?.info?.features?.goals);
+  const online = useApp((st) => st.runtime[server.id]?.status === 'online');
+  const lastReply = useApp((st) => st.runtime[server.id]?.lastReplyAt);
+  const rt = useApp((st) => st.runtime[server.id]);
+  const [goals, setGoals] = useState<GoalEntry[]>([]);
+  useEffect(() => {
+    if (!supported || !online) return;
+    api<{ goals: GoalEntry[] }>(server, '/api/goals').then((d) => setGoals(d.goals)).catch(() => undefined);
+  }, [server, supported, online, lastReply]);
+  const shown = goals.filter((g) => g.goal.status !== 'done').slice(0, 3);
+  if (!shown.length) return null;
+  return (
+    <Section title="Working toward">
+      <View style={s.group}>
+        {shown.map((g, i) => (
+          <Tap key={g.chat_id} feedback="selection" onPress={() => router.push(`/chat/${server.id}/${g.chat_id}`)}
+            accessibilityLabel={`Goal: ${g.goal.goal}. ${goalStatus(g.goal)}. In ${g.chat_id === homeChat(rt) ? 'the main chat' : g.title}`}
+            style={({ hovered }) => [s.goalRow, i > 0 && s.goalDivider, hovered && { backgroundColor: t.colors.surfaceRaised }]}>
+            <GoalRing goal={g.goal} size={40} />
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <Text style={s.goalText} numberOfLines={2}>{g.goal.goal}</Text>
+              <Text style={s.goalMeta} numberOfLines={1}>
+                {g.chat_id === homeChat(rt) ? server.bot.title : `#${g.title}`} · {goalStatus(g.goal)}
+              </Text>
+            </View>
+          </Tap>
+        ))}
+      </View>
+    </Section>
   );
 }
 
@@ -365,6 +405,10 @@ const useStyles = makeStyles((t) => ({
   newText: { ...t.type.callout, fontFamily: t.fonts.semibold, color: t.colors.text, marginTop: 6 },
   group: { backgroundColor: t.colors.surface, borderRadius: t.radius.lg, borderWidth: 1, borderColor: t.colors.border, overflow: 'hidden' },
   update: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 14, paddingVertical: 12, minHeight: 60 },
+  goalRow: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 14, paddingVertical: 14 },
+  goalDivider: { borderTopWidth: 1, borderTopColor: t.colors.border },
+  goalText: { ...t.type.callout, fontFamily: t.fonts.semibold, color: t.colors.text },
+  goalMeta: { ...t.type.caption, color: t.colors.textSecondary, marginTop: 3 },
   updateBorder: { borderTopWidth: 1, borderTopColor: t.colors.border },
   updateIcon: { width: 34, height: 34, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
 }));
