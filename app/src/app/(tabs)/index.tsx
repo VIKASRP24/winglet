@@ -15,6 +15,7 @@ import { Chip, IconButton, SectionHeader, Tap } from '../../components/ui';
 import { ago, chatName, greeting, headline, moodOf, pendingItems, workingChats } from '../../lib/agent';
 import { api } from '../../lib/api';
 import { haptic } from '../../lib/haptics';
+import { plainText } from '../../lib/text';
 import { useReducedMotion } from '../../lib/motion';
 import { homeChat, useApp } from '../../lib/store';
 import { WIDE_BREAKPOINT } from '../../lib/theme';
@@ -272,7 +273,7 @@ function WorkingRow({ server, chat }: { server: Server; chat: Chat }) {
       <PulseDot />
       <View style={{ flex: 1, minWidth: 0 }}>
         <Text style={s.cardTitle} numberOfLines={1}>{chatName(chat)}</Text>
-        <Text style={s.cardBody} numberOfLines={2}>{chat.preview || 'Thinking…'}</Text>
+        <Text style={s.cardBody} numberOfLines={2}>{plainText(chat.preview) || 'Thinking…'}</Text>
       </View>
       <Tap feedback="light" accessibilityLabel={`Stop the task in ${chatName(chat)}`} onPress={() => sendMessage(server.id, chat.id, '/stop')} style={s.stop}>
         <Square size={12} color={t.colors.text} fill={t.colors.text} />
@@ -299,14 +300,14 @@ function ChatCard({ server, chat, index }: { server: Server; chat: Chat; index: 
   const general = useApp((st) => homeChat(st.runtime[server.id])) === chat.id;
   return (
     <Animated.View entering={FadeInDown.delay(40 * index).springify().damping(18)}>
-      <Tap feedback="selection" scaleTo={0.97} accessibilityLabel={`${chat.title}. ${chat.preview}`} onPress={() => router.push(`/chat/${server.id}/${chat.id}`)}
+      <Tap feedback="selection" scaleTo={0.97} accessibilityLabel={`${chat.title}. ${plainText(chat.preview)}`} onPress={() => router.push(`/chat/${server.id}/${chat.id}`)}
         style={({ hovered }) => [s.chatCard, hovered && { borderColor: t.colors.borderStrong }]}>
         <View style={s.cardTop}>
           {general ? <BotAvatar name={server.bot.name} size={30} /> : <View style={s.hash}><Hash size={16} color={t.colors.onAccentSoft} /></View>}
           <Text style={s.time}>{ago(chat.updated_at)}</Text>
         </View>
         <Text style={s.cardTitle} numberOfLines={1}>{general ? 'Main chat' : chat.title}</Text>
-        <Text style={s.cardBody} numberOfLines={2}>{chat.preview || 'No messages yet'}</Text>
+        <Text style={s.cardBody} numberOfLines={2}>{plainText(chat.preview) || 'No messages yet'}</Text>
       </Tap>
     </Animated.View>
   );

@@ -97,3 +97,30 @@ async def test_status_updates_edit_one_line_in_place(adapter):
     message = adapter._hub.store.get_message(first.message_id)
     assert message["text"] == "Context 90% full" and message["role"] == "system"
     assert message["meta"]["status_key"] == "context_pressure"
+
+
+async def test_routine_results_drop_hermes_wrapper_and_carry_the_routine_name(adapter, monkeypatch):
+    monkeypatch.setattr(adapter.module, "_routine_name", lambda job_id: "Morning briefing")
+    wrapped = ("Cronjob Response: Morning briefing\n(job_id: abc123)\n-------------\n\n"
+               "Good morning! **9:30** Standup.\n\n"
+               'To stop or manage this job, send me a new message (e.g. "stop reminder Morning briefing").')
+    await adapter.send("home", wrapped, metadata={"job_id": "abc123"})
+    message = adapter._hub.store.list_messages("home")[-1]
+    assert message["text"] == "Good morning! **9:30** Standup."
+    assert message["meta"]["routine"] == "Morning briefing"
+    assert [i["title"] for i in adapter._hub.store.list_inbox()] == ["Routine finished: Morning briefing"]
+
+
+def test_routine_text_that_is_not_hermes_wrapper_is_left_alone(adapter):
+    unwrap = adapter.module._unwrap_routine
+    assert unwrap("Cronjob Response: x\nno divider here") == "Cronjob Response: x\nno divider here"
+    assert unwrap("Plain result") == "Plain result"
+
+
+def test_routine_targets_are_exact_chat_ids_not_name_lookups(adapter):
+    parse = adapter.module.parse_target_ref
+    assert parse("home") == ("home", None)
+    assert parse("general") == ("general", None)
+    assert parse("c-89cf8b687c0041c6") == ("c-89cf8b687c0041c6", None)
+    assert parse("m-34752f3d49a64e4d") == ("m-34752f3d49a64e4d", None)
+    assert parse("Homelab") is None and parse("Lisbon trip") is None

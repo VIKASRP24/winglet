@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Coroutine, Dict, Optional
@@ -114,7 +115,7 @@ def _env_enablement() -> Optional[dict]:
     return {"enabled": True, **seed}
 
 
-def _routine_title(job_id: str) -> str:
+def _routine_name(job_id: str) -> str:
     try:
         from cron.jobs import get_job
         job = get_job(job_id) or {}
@@ -122,11 +123,38 @@ def _routine_title(job_id: str) -> str:
         # Bot Mode names routines "[bot:<name>] <routine>"; the app already shows which bot it is.
         if name.startswith("[bot:") and "]" in name:
             name = name.split("]", 1)[1].strip()
-        if name:
-            return f"Routine finished: {name}"[:120]
+        return name[:100]
     except Exception:
-        pass
-    return "Routine finished"
+        return ""
+
+
+# Hermes wraps a routine's result in a header (its name and job id) and a footer about stopping it.
+# The app labels the message with the routine's name, so only the result is kept. Hermes's own
+# Yuanbao adapter does the same, with the same rule: leave anything that isn't exactly this shape.
+_CRON_HEADER = "Cronjob Response: "
+_CRON_DIVIDER = "\n-------------\n\n"
+_CRON_FOOTER = '\n\nTo stop or manage this job, send me a new message (e.g. "stop reminder '
+
+
+# Winglet's own chat ids: Updates, the main chat, side chats and members' chats. A routine set to
+# deliver to "winglet:home" must reach exactly that chat; without this, Hermes would look "home" up by
+# name among known chats and could pick one called "Homelab".
+_CHAT_ID = re.compile(r"^(?:home|general|[cm]-[0-9a-f]{8,32})$")
+
+
+def parse_target_ref(ref: str):
+    """A Winglet chat id as written; anything else (a chat's name) goes on to Hermes's lookup."""
+    ref = (ref or "").strip()
+    return (ref, None) if _CHAT_ID.match(ref) else None
+
+
+def _unwrap_routine(text: str) -> str:
+    if not text.startswith(_CRON_HEADER):
+        return text
+    divider, footer = text.find(_CRON_DIVIDER), text.rfind(_CRON_FOOTER)
+    if divider < 0 or footer <= divider or "\n(job_id: " not in text[:divider]:
+        return text
+    return text[divider + len(_CRON_DIVIDER):footer].strip() or text
 
 
 def _strip_cursor(text: str) -> str:
@@ -292,8 +320,10 @@ class WingletAdapter(BasePlatformAdapter):
         text = _strip_cursor(content or "")
         if metadata.get("job_id"):
             # A routine (cron job) delivered its result: keep it in the chat and surface it in the inbox.
-            message = await hub.post_message(chat_id, text, push=False)
-            await hub.add_inbox("result", chat_id, _routine_title(str(metadata["job_id"])), text,
+            name = _routine_name(str(metadata["job_id"]))
+            text = _unwrap_routine(text)
+            message = await hub.post_message(chat_id, text, push=False, meta={"routine": name} if name else None)
+            await hub.add_inbox("result", chat_id, f"Routine finished: {name}"[:120] if name else "Routine finished", text,
                                 {"message_id": message["id"], "job_id": metadata["job_id"]})
         elif metadata.get("expect_edits"):
             message = await hub.post_message(chat_id, text, status="streaming")
@@ -585,13 +615,17 @@ def _message_type(text: str, kinds: list):
 
 
 def register(ctx) -> None:
-    ctx.register_platform(
+    platform = dict(
         name=PLATFORM, label="Winglet", adapter_factory=lambda cfg: WingletAdapter(cfg),
         check_fn=check_requirements, validate_config=validate_config, is_connected=is_connected,
         required_env=[], install_hint="hermes winglet setup",
         env_enablement_fn=_env_enablement, cron_deliver_env_var="WINGLET_HOME_CHANNEL",
         max_message_length=MAX_MESSAGE_LENGTH, emoji="🪽", pii_safe=True, allow_update_command=True,
         platform_hint=PLATFORM_HINT)
+    try:
+        ctx.register_platform(**platform, parse_target_ref_fn=parse_target_ref)
+    except TypeError:
+        ctx.register_platform(**platform)  # a Hermes without target parsers looks targets up by name
     ctx.register_cli_command(
         name="winglet", help="Pair phones and manage the Winglet app",
         setup_fn=cli.setup_parser, handler_fn=cli.main,

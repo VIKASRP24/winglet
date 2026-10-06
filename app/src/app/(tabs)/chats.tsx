@@ -14,6 +14,7 @@ import { Button, Field, IconButton, SectionHeader, Skeleton, Tap } from '../../c
 import { ago, moodOf } from '../../lib/agent';
 import { api } from '../../lib/api';
 import { requestFocus } from '../../lib/focus';
+import { plainText } from '../../lib/text';
 import { homeChat, isTyping, useApp } from '../../lib/store';
 import { WIDE_BREAKPOINT } from '../../lib/theme';
 import { makeStyles, useTheme } from '../../lib/themeContext';
@@ -96,7 +97,7 @@ function ChatList({ server, activeChatId }: { server: Server; activeChatId?: str
         ) : (
           <>
             {general && match(general) ? (
-              <Tap feedback="selection" scaleTo={0.98} accessibilityLabel={`Main chat. ${general.preview}`} onPress={() => open(mainId)}
+              <Tap feedback="selection" scaleTo={0.98} accessibilityLabel={`Main chat. ${plainText(general.preview)}`} onPress={() => open(mainId)}
                 style={({ hovered }) => [s.main, activeChatId === mainId && s.active, hovered && { borderColor: t.colors.borderStrong }]}>
                 <BotAvatar name={server.bot.name} size={52} mood={moodOf(rt)} animated={isTyping(rt, mainId)} />
                 <View style={{ flex: 1, minWidth: 0 }}>
@@ -104,20 +105,20 @@ function ChatList({ server, activeChatId }: { server: Server; activeChatId?: str
                     <Text style={s.mainTitle} numberOfLines={1}>{server.bot.title}</Text>
                     <Text style={s.time}>{ago(general.updated_at)}</Text>
                   </View>
-                  <Text style={s.preview} numberOfLines={2}>{isTyping(rt, mainId) ? 'Working…' : general.preview || 'Your main conversation'}</Text>
+                  <Text style={s.preview} numberOfLines={2}>{isTyping(rt, mainId) ? 'Working…' : plainText(general.preview) || 'Your main conversation'}</Text>
                 </View>
               </Tap>
             ) : null}
             {updates && match(updates) ? (
               <ChatRow icon={<Sparkles size={17} color={t.colors.success} />} tint={t.colors.successSoft} title="Updates"
-                subtitle={updates.preview || 'Results from your routines land here'} time={updates.updated_at}
+                subtitle={plainText(updates.preview) || 'Results from your routines land here'} time={updates.updated_at}
                 active={activeChatId === 'home'} onPress={() => open('home')} />
             ) : null}
             {!q || side.some(match) ? <SectionHeader title="Side chats" /> : null}
             {side.filter(match).map((c) => (
               <Animated.View key={c.id} entering={FadeIn.duration(200)} layout={LinearTransition.springify().damping(20)}>
                 <ChatRow icon={<Hash size={17} color={t.colors.onAccentSoft} />} tint={t.colors.accentSoft} title={c.title}
-                  subtitle={isTyping(rt, c.id) ? 'Working…' : c.preview || 'No messages yet'} time={c.updated_at} working={isTyping(rt, c.id)}
+                  subtitle={isTyping(rt, c.id) ? 'Working…' : plainText(c.preview) || 'No messages yet'} time={c.updated_at} working={isTyping(rt, c.id)}
                   active={activeChatId === c.id} onPress={() => open(c.id)} onMenu={() => setMenu(c)} />
               </Animated.View>
             ))}

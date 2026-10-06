@@ -1,6 +1,6 @@
 # Releasing Winglet
 
-Pushing a tag like `v0.1.1` builds the Android APK and the plugin bundle and publishes them as a
+Pushing a tag like `v0.1.1` or `v0.2.0-beta.1` builds the Android APK and the plugin bundle and publishes them as a
 GitHub Release. The tag sets the app version: `v0.1.1` becomes version `0.1.1`, Android versionCode
 `101` (major × 10000 + minor × 100 + patch), so every release installs as an update over the last.
 
@@ -39,6 +39,17 @@ and the key proves the APK came from you. CI refuses to publish a release withou
 git tag v0.1.1
 git push origin v0.1.1
 ```
+
+### Betas
+
+A tag like `v0.2.0-beta.1` (or `-rc.1`) publishes a **pre-release**: the app shows `0.2.0-beta.1`,
+and GitHub keeps "Latest release" on the last full release. A beta shares its release's versionCode
+(`v0.2.0-beta.1` and `v0.2.0` are both `200`), so the final release installs over the beta as an update.
+
+### Release notes
+
+If `docs/releases/<tag>.md` exists (for example `docs/releases/v0.2.0-beta.1.md`), it becomes the top of
+the release page, above GitHub's list of merged pull requests.
 
 Manual runs from the Actions tab build test artifacts only. Without the key secrets those APKs are
 signed with the public debug key and named `…-debugkey.apk`: fine for trying things out, not for

@@ -66,6 +66,8 @@ export type Message = {
     hidden?: boolean;
     /** A choice the agent offers: a model, a setting, or a command to confirm. */
     picker?: Picker;
+    /** The routine (scheduled job) whose result this is. */
+    routine?: string;
   };
   created_at: number;
   updated_at: number;

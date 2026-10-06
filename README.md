@@ -8,23 +8,25 @@ Named AI agents that live on *your* server, work while you're away,
 and tap you on the shoulder when they need you.
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-![Status: early preview](https://img.shields.io/badge/status-v0.1%20preview-orange)
+[![Latest release](https://img.shields.io/github/v/release/VIKASRP24/winglet?include_prereleases&label=release)](../../releases)
+![Status: beta](https://img.shields.io/badge/status-v0.2%20beta-blueviolet)
 ![Android APK](https://img.shields.io/badge/android-APK-3DDC84)
 ![iPhone PWA](https://img.shields.io/badge/iPhone-PWA-lightgrey)
 
 <br/>
 
-<img src="docs/screenshots/home.png" width="200" alt="Your bots" />&nbsp;
-<img src="docs/screenshots/chat.png" width="200" alt="Chat" />&nbsp;
-<img src="docs/screenshots/approval.png" width="200" alt="One-tap approval" />&nbsp;
-<img src="docs/screenshots/inbox.png" width="200" alt="Inbox" />
+<img src="docs/screenshots/home.png" width="200" alt="Home: what your agent needs from you" />&nbsp;
+<img src="docs/screenshots/trip.png" width="200" alt="A chat working toward a goal, with a question to answer" />&nbsp;
+<img src="docs/screenshots/goal.png" width="200" alt="A goal's progress and requirements" />&nbsp;
+<img src="docs/screenshots/server.png" width="200" alt="Server health and controls" />
 
 </div>
 
 ---
 
-> **Status: v0.1 early preview.** Chat, approvals, questions, inbox and notifications work end to end
-> against a real Hermes gateway. Expect rough edges, and please [open an issue](../../issues) when you hit one.
+> **Status: v0.2 beta.** Everything below works end to end against a real Hermes gateway, and every
+> release builds the Android APK and the iPhone/desktop web app. It's a beta, so expect rough edges, and
+> please [open an issue](../../issues) when you hit one.
 
 ## What is this?
 
@@ -39,36 +41,79 @@ the open-source agent by Nous Research, running on **your own machine or server*
 - **No app store needed.** Android gets an APK. iPhone gets an installable web app with push notifications.
 - **Not another chat window.** Winglet is built around your agents and what they're doing, not around a text box.
 
-## Features
+## What it does
 
-| | Feature | What it means | |
-|---|---|---|---|
-| 🤖 | **Your bots** | A home screen of named agents, each with a face, a description and live status | ✅ v0.1 |
-| 💬 | **Chat** | Separate chats per topic, streaming replies, Markdown, code, files and images, search across every chat | ✅ v0.1 |
-| ✅ | **Approvals** | Approve once, for the session, always, or deny, from the app or the notification | ✅ v0.1 |
-| ❓ | **Questions** | When a bot needs a decision, answer with one tap | ✅ v0.1 |
-| 📥 | **Inbox** | One place for everything that needs you, across all your bots | ✅ v0.1 |
-| 🔔 | **Push** | Your phone buzzes when a bot needs you, even when the app is closed | ✅ v0.1 |
-| 📷 | **QR pairing** | Scan a code from your server and you're connected. No typing keys | ✅ v0.1 |
-| 🖥️ | **Live screen** | Watch a bot use its computer and take over when it needs you (logins, 2FA, captchas) | v0.2 |
-| 📞 | **Call your bot** | Real-time voice conversation | v0.2 |
-| 🎛️ | **Control center** | Server health, pause, restart, updates, logs and scheduled routines, from your phone | ✅ |
-| 🎯 | **Goals** | Give a chat a goal; it keeps working until a judge says it's done. Track it in the chat and on Home | ✅ |
+### Talk to it
+- **A chat for every topic.** A main chat plus side chats, each its own Hermes session. Replies stream in
+  with Markdown, tables and highlighted code.
+- **Photos, files and voice notes**, both ways, with a full-screen viewer. Reply to a message, copy, retry
+  or stop a reply, and export a chat.
+- **Search every chat** and jump straight to the message. Each chat keeps its **files and photos** in one place.
+- **Works on a bad connection.** Chats open from the phone's cache, and what you send waits until the
+  server is back.
+
+### It asks, you answer
+- **Approvals.** Approve a risky command once, for the session, always, or deny it, from the app or the
+  notification.
+- **Questions** with one-tap answers, and an **Inbox** for everything waiting on you, across all your bots.
+- **Notifications** through Web Push on iPhone and desktop and ntfy on Android, with per-chat mute and
+  quiet hours.
+
+### Your agent
+- **Models.** Switch the model for one chat from its header, or set the default. Add providers and API keys
+  from the phone; keys are encrypted for your server before they leave the phone.
+- **Persona, memory and usage.** Edit who it is, see and fix what it remembers, and track tokens and cost.
+- **Goals.** Give a chat an outcome and Hermes keeps working on it, turn after turn, until its judge says
+  it's done. Add requirements, pause it, and follow its progress in the chat and on Home.
+
+### Your server
+- **Control center.** Processor, memory and disk at a glance. Pause new work, restart, and update Hermes and
+  Winglet with progress that carries on across the restart.
+- **Schedule.** Routines in plain words ("weekdays at 9am", "every 2h"), with their results in the Updates chat.
+- **Logs** from Hermes, with keys and tokens hidden.
+
+### Safe by default
+- **Owners and members.** Share your agent with someone without sharing your chats or the controls.
+- **Verified pairing** from a QR code, **signed owner actions**, an **activity log** of who changed what,
+  and an optional **app lock** on Android.
+
+### Looks good everywhere
+- Light and true-black dark themes with accent colors, smooth motion and haptics, a sidebar layout on
+  tablets and desktop, and more than one bot side by side.
+
+## Tour
+
+<table>
+  <tr>
+    <td align="center"><img src="docs/screenshots/home-goals.png" width="190" alt="Home: working now and working toward" /><br/><sub>What it's working on</sub></td>
+    <td align="center"><img src="docs/screenshots/chat.png" width="190" alt="A reply with highlighted code" /><br/><sub>Code, highlighted</sub></td>
+    <td align="center"><img src="docs/screenshots/model.png" width="190" alt="Choosing a model for one chat" /><br/><sub>A model per chat</sub></td>
+    <td align="center"><img src="docs/screenshots/agent.png" width="190" alt="The Agent tab" /><br/><sub>Your agent</sub></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="docs/screenshots/schedule.png" width="190" alt="Scheduled routines" /><br/><sub>Routines</sub></td>
+    <td align="center"><img src="docs/screenshots/updates.png" width="190" alt="A routine's result in the Updates chat" /><br/><sub>Results in Updates</sub></td>
+    <td align="center"><img src="docs/screenshots/search.png" width="190" alt="Searching every chat" /><br/><sub>Search every chat</sub></td>
+    <td align="center"><img src="docs/screenshots/home-light.png" width="190" alt="Home in light mode" /><br/><sub>Light mode</sub></td>
+  </tr>
+</table>
+
+<img src="docs/screenshots/desktop.png" alt="Winglet in a desktop browser: chats on the left, a chat working toward a goal on the right" />
 
 ## How it works
 
 ```
- ┌──────────────────────┐                ┌───────────────────────────────────┐
- │  Winglet app         │   HTTPS / WS   │  Your server                      │
- │  • Android (APK)     │ ─────────────▶ │                                   │
- │  • iPhone (web app)  │                │  Hermes gateway                   │
- │  • Desktop browser   │                │   └─ Winglet plugin               │
- └──────────▲───────────┘                │        • chats ⇄ Hermes sessions  │
-            │                            │        • approvals & questions    │
-            │   push notifications       │        • QR pairing, devices      │
-            └─────────────────────────── │        • push notifications       │
-               (Web Push / ntfy)         │        • serves the web app       │
-                                         └───────────────────────────────────┘
+ ┌──────────────────────┐                ┌──────────────────────────────────────┐
+ │  Winglet app         │   HTTPS / WS   │  Your server                         │
+ │  • Android (APK)     │ ─────────────▶ │                                      │
+ │  • iPhone (web app)  │                │  Hermes gateway                      │
+ │  • Desktop browser   │                │   └─ Winglet plugin                  │
+ └──────────▲───────────┘                │        • chats ⇄ Hermes sessions     │
+            │                            │        • approvals and questions     │
+            │   push notifications       │        • goals, schedule, server     │
+            └─────────────────────────── │        • pairing, roles, signing     │
+               (Web Push / ntfy)         │        • serves the web app          │
+                                         └──────────────────────────────────────┘
 ```
 
 Winglet has two parts:
@@ -76,14 +121,14 @@ Winglet has two parts:
 1. **The app** (`app/`): one [Expo](https://expo.dev) / React Native codebase that builds
    the Android APK and the iPhone/desktop web app.
 2. **The plugin** (`plugin/`): a Hermes plugin that adds Winglet as a messaging platform, the same way
-   Telegram or Discord plug into Hermes. Each Winglet chat is a Hermes session, and approvals,
-   questions and routine results flow through Hermes' own mechanisms.
+   Telegram or Slack plug into Hermes. Each Winglet chat is a Hermes session, and approvals, questions,
+   model and setting pickers, goals and routines all go through Hermes's own mechanisms.
    **No fork of Hermes.** Setup provides HTTPS through Cloudflare, or you can use your own connection.
 
 ## Install
 
 You need a machine running [Hermes Agent](https://github.com/NousResearch/hermes-agent) with its
-messaging gateway (`hermes gateway`), the same one you'd use for Telegram or Discord.
+messaging gateway (`hermes gateway`), the same one you'd use for Telegram or Slack.
 
 ### 1. On your Hermes machine
 
@@ -185,42 +230,27 @@ hermes -p researcher winglet pair
 
 ## Roadmap
 
-**v0.1: Connect**
-- [x] Hermes plugin + QR pairing
-- [x] Bots home screen, multiple bots
+**v0.1: Connect** ✅
+- [x] Hermes plugin and QR pairing, a home screen of bots
 - [x] Chat with streaming, Markdown, files and images
-- [x] Inbox + push notifications (Web Push for iPhone/desktop, ntfy for Android)
-- [x] Approvals and answers to the agent's questions, from the phone
+- [x] Inbox, push notifications, approvals and answers from the phone
 
-**v0.1.3: Reliable basics**
-- [ ] Fast reconnect after a server restart, clear connection states and diagnostics
-- [ ] Copyable replies, saved drafts, offline queue and chat cache
+**v0.2 beta: Every day** ✅
+- [x] Fast reconnects, clear connection states, an offline queue, drafts and a chat cache
+- [x] The new look: themes, accents, glass, motion, haptics, wide layout
+- [x] Photos, files and voice notes, replies, a media viewer, export, mute and quiet hours
+- [x] Owners and members, verified pairing, signed owner actions, activity log, app lock
+- [x] Model per chat, default model, providers, persona, memory and usage
+- [x] Control center: health, pause, restart, updates, logs and schedule
+- [x] Goals, message search, and each chat's files and photos
 
-**v0.2: New look**
-- [ ] Light and true-black dark themes, accent colors, accessible by default
-- [ ] Glass surfaces, smooth animations and haptics
-- [ ] New home screen and tab navigation, inbox across all bots
-
-**v0.3: Chat essentials**
-- [ ] Send photos, files and voice notes, and share into Winglet from other apps
-- [ ] Full-screen media viewer, copy, reply, retry and stop
-
-**v0.4: Trust and control**
-- [ ] Owner and member roles that apply to every command
-- [ ] Verified pairing, encrypted API keys, signed admin actions, activity log
-- [ ] Manage devices and pair a new phone from the app
-
-**v0.5: Your agent**
-- [ ] Model picker per chat, default model, reasoning effort
-- [ ] Add model providers from the phone
-- [ ] Persona, memory, and an animated pet
-
-**v0.6: Control center**
-- [ ] Server health, restart, pause new work, Hermes and Winglet updates
-- [ ] Logs, scheduled tasks, skills and tools
-
-**Later**
-- [ ] Goals, live screen, real-time voice, widgets
+**Next**
+- [ ] Skills, toolsets and MCP servers from the phone
+- [ ] Connection settings in one place
+- [ ] Share into Winglet from other apps
+- [ ] Live screen: watch the agent's computer and take over when it needs you
+- [ ] Real-time voice
+- [ ] Widgets, backups and a sessions browser
 
 The full plan, with priorities and the work behind each item, is in [docs/APP_PLAN.md](docs/APP_PLAN.md).
 
@@ -273,7 +303,7 @@ pytest
 # App (Expo)
 cd app && npm install
 npx expo start            # press "w" for web, or scan with a development build
-npx tsc --noEmit
+npx tsc --noEmit && npm test
 
 # Rebuild the web app bundled into the plugin
 ./scripts/build-web.sh

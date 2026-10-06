@@ -9,6 +9,7 @@ import { Screen } from '../components/Screen';
 import { Button, Card, ListGroup, ListRow, SectionHeader } from '../components/ui';
 import { APP_PROTOCOL, useApp } from '../lib/store';
 import { makeStyles, useTheme } from '../lib/themeContext';
+import { compareVersions } from '../lib/version';
 
 /** Versions on both sides, what to update, and the on-device cache. */
 export default function AboutScreen() {
@@ -68,15 +69,6 @@ export default function AboutScreen() {
       </ListGroup>
     </Screen>
   );
-}
-
-/** Compare dotted versions numerically: -1 if a is older than b. */
-function compareVersions(a: string, b: string): number {
-  const pa = a.split('.').map((n) => parseInt(n, 10) || 0), pb = b.split('.').map((n) => parseInt(n, 10) || 0);
-  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-    if ((pa[i] ?? 0) !== (pb[i] ?? 0)) return (pa[i] ?? 0) < (pb[i] ?? 0) ? -1 : 1;
-  }
-  return 0;
 }
 
 const useStyles = makeStyles((t) => ({

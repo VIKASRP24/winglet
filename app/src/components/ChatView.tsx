@@ -32,7 +32,7 @@ import { GoalSheet, GoalStrip, useChatGoal } from './Goal';
 import { PausedBanner } from './PausedBanner';
 import { Glass } from './Glass';
 import {
-  Activity, ArrowDown, Bell, BellOff, ChevronLeft, Clock, Copy, Download, FileText, Images, Info, MoreHorizontal, Pencil, Reply,
+  Activity, ArrowDown, Bell, BellOff, CalendarClock, ChevronLeft, Clock, Copy, Download, FileText, Images, Info, MoreHorizontal, Pencil, Reply,
   RotateCcw, Share, Target, Trash2,
 } from './icons';
 import { InboxCard } from './InboxCards';
@@ -390,8 +390,15 @@ const MessageRow = memo(function MessageRow({ server, message, first, last, live
   const replyTo = message.meta?.reply_to;
   const sendable = message.status === 'final';
   const quote = (onAccent: boolean) => replyTo ? <ReplyQuote server={server} reply={replyTo} onAccent={onAccent} onPress={() => actions.jump(replyTo.id)} /> : null;
+  const routine = typeof message.meta?.routine === 'string' ? message.meta.routine : '';
   const text = (onAccent: boolean) => message.meta?.picker ? <PickerCard server={server} message={message} /> : (
     <>
+      {routine ? (
+        <View style={s.routine} accessibilityLabel={`From the routine ${routine}`}>
+          <CalendarClock size={13} color={t.colors.onAccentSoft} />
+          <Text style={s.routineText} numberOfLines={1}>{routine}</Text>
+        </View>
+      ) : null}
       {message.text ? <Markdown text={message.text} resolveUrl={resolve} tone={onAccent ? 'onAccent' : 'default'} selectable={!TOUCH} /> : null}
       {message.status === 'streaming' && live ? <Cursor onAccent={onAccent} /> : null}
     </>
@@ -807,6 +814,11 @@ const useStyles = makeStyles((t) => ({
   gutter: { width: 48 },
   compactHead: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 3 },
   author: { fontFamily: t.fonts.semibold, fontSize: 15 },
+  routine: {
+    flexDirection: 'row', alignItems: 'center', gap: 6, alignSelf: 'flex-start', paddingHorizontal: 10, paddingVertical: 4,
+    borderRadius: t.radius.pill, backgroundColor: t.colors.accentSoft, marginBottom: 6,
+  },
+  routineText: { ...t.type.caption, fontFamily: t.fonts.semibold, color: t.colors.onAccentSoft },
   systemCard: { paddingHorizontal: 14, marginTop: 14 },
   systemLine: { alignItems: 'center', marginVertical: 10, paddingHorizontal: 24 },
   systemText: { ...t.type.caption, color: t.colors.textSecondary, textAlign: 'center' },
