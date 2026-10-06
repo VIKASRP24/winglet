@@ -551,6 +551,30 @@ class Store:
         rows = self._all("SELECT rowid AS position, * FROM messages WHERE chat_id = ? ORDER BY rowid", (chat_id,))
         return [self._message(r) for r in rows]
 
+    def search_messages(self, query: str, chat_ids: List[str], *, limit: int = 50) -> List[Dict[str, Any]]:
+        """Newest messages in these chats whose text contains the query, ignoring case. Hidden helper
+        messages and status lines are left out."""
+        if not chat_ids or not query:
+            return []
+        escaped = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        marks = ",".join("?" * len(chat_ids))
+        rows = self._all(f"SELECT rowid AS position, * FROM messages WHERE chat_id IN ({marks}) AND role != 'system' "
+                         "AND text LIKE ? ESCAPE '\\' AND COALESCE(json_extract(meta, '$.hidden'), 0) = 0 "
+                         "ORDER BY rowid DESC LIMIT ?", (*chat_ids, f"%{escaped}%", max(1, min(limit, 100))))
+        return [self._message(r) for r in rows]
+
+    def chat_attachments(self, chat_id: str, *, limit: int = 300) -> List[Dict[str, Any]]:
+        """Every file and photo in a chat, newest first, each with the message it came in."""
+        rows = self._all("SELECT id, role, meta, created_at FROM messages WHERE chat_id = ? "
+                         "AND json_array_length(json_extract(meta, '$.attachments')) > 0 ORDER BY rowid DESC LIMIT ?",
+                         (chat_id, max(1, min(limit, 1000))))
+        out: List[Dict[str, Any]] = []
+        for r in rows:
+            for a in json.loads(r["meta"] or "{}").get("attachments") or []:
+                if isinstance(a, dict):
+                    out.append({**a, "message_id": r["id"], "role": r["role"], "created_at": r["created_at"]})
+        return out
+
     # -- audit log -------------------------------------------------------------------
 
     def add_audit(self, action: str, *, device: Optional[Dict[str, Any]] = None, summary: str = "",

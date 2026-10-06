@@ -1,0 +1,107 @@
+"""Goals, message search and the files in a chat."""
+
+import pytest
+
+from plugin.hub import Hub, _snippet
+from plugin.store import Store
+from test_trust import pair_phone
+
+
+@pytest.fixture
+def store(tmp_path):
+    s = Store(tmp_path / "data.db")
+    yield s
+    s.close()
+
+
+@pytest.fixture
+def hub(store, tmp_path):
+    store.ensure_chat("general", "General")
+    store.ensure_chat("trip", "Trip to Lisbon")
+    h = Hub(store, web_root=tmp_path / "web", bot_info=lambda: {"name": "hermes", "title": "Hermes"})
+    goals = {"trip": {"goal": "Book the whole trip", "status": "active", "turns_used": 3, "max_turns": 20,
+                      "subgoals": ["Hotel under 150/night"], "last_verdict": "continue", "last_reason": "Flights found",
+                      "paused_reason": None, "waiting_reason": None, "created_at": 1.0, "last_turn_at": 5.0}}
+    h.chat_goal = goals.get
+    return h
+
+
+@pytest.fixture
+async def client(aiohttp_client, hub):
+    return await aiohttp_client(hub.build_app())
+
+
+async def test_a_chat_shows_its_goal(client, hub):
+    owner = await pair_phone(client, hub)
+    data = await (await client.get("/api/chats/trip/goal", headers=owner.auth)).json()
+    assert data["goal"]["goal"] == "Book the whole trip" and data["goal"]["subgoals"] == ["Hotel under 150/night"]
+    assert (await (await client.get("/api/chats/general/goal", headers=owner.auth)).json())["goal"] is None
+    listed = await (await client.get("/api/goals", headers=owner.auth)).json()
+    assert [(g["chat_id"], g["title"]) for g in listed["goals"]] == [("trip", "Trip to Lisbon")]
+
+
+async def test_members_only_see_goals_in_their_own_chats(client, hub):
+    await pair_phone(client, hub)
+    member = await pair_phone(client, hub, "Alex", role="member")
+    assert (await client.get("/api/chats/trip/goal", headers=member.auth)).status == 404
+    assert (await (await client.get("/api/goals", headers=member.auth)).json())["goals"] == []
+
+
+async def test_a_broken_goal_lookup_reads_as_no_goal(client, hub):
+    owner = await pair_phone(client, hub)
+
+    def broken(chat_id):
+        raise RuntimeError("session db locked")
+    hub.chat_goal = broken
+    assert (await (await client.get("/api/chats/trip/goal", headers=owner.auth)).json())["goal"] is None
+    assert (await (await client.get("/api/goals", headers=owner.auth)).json())["goals"] == []
+
+
+async def test_search_finds_words_in_chats_you_can_see(client, hub):
+    owner = await pair_phone(client, hub)
+    member = await pair_phone(client, hub, "Alex", role="member")
+    hub.store.add_message("trip", "bot", "The cheapest flight to Lisbon leaves at 7:40 on Friday.")
+    hub.store.add_message("general", "user", "remind me about lisbon")
+    hub.store.add_message("general", "system", "Lisbon status line")
+    hub.store.add_message("general", "user", "lisbon secret helper", meta={"hidden": True})
+    mine = hub.store.ensure_chat("m-" + member.id, "Alex", owner_device=member.id)
+    hub.store.add_message(mine["id"], "user", "Is Lisbon nice in May?")
+
+    results = (await (await client.get("/api/search?q=LISBON", headers=owner.auth)).json())["results"]
+    assert [r["chat"]["id"] for r in results] == [mine["id"], "general", "trip"]
+    assert results[-1]["snippet"].startswith("The cheapest flight to Lisbon")
+    assert results[-1]["message"]["position"] > 0
+
+    theirs = (await (await client.get("/api/search?q=lisbon", headers=member.auth)).json())["results"]
+    assert [r["chat"]["id"] for r in theirs] == [mine["id"]]
+    assert (await (await client.get("/api/search?q=l", headers=owner.auth)).json())["results"] == []
+
+
+async def test_search_treats_wildcards_as_text(client, hub):
+    owner = await pair_phone(client, hub)
+    hub.store.add_message("general", "bot", "Disk is 95% full")
+    hub.store.add_message("general", "bot", "Disk is 95 full")
+    results = (await (await client.get("/api/search?q=95%25", headers=owner.auth)).json())["results"]
+    assert len(results) == 1
+
+
+def test_snippets_center_on_the_match():
+    text = "word " * 40 + "the needle is here " + "tail " * 40
+    snip = _snippet(text, "needle")
+    assert "needle" in snip and snip.startswith("…") and snip.endswith("…")
+    assert not snip[1:].startswith(" ")
+    assert _snippet("short needle", "needle") == "short needle"
+
+
+async def test_files_lists_everything_shared_newest_first(client, hub):
+    owner = await pair_phone(client, hub)
+    photo = {"id": "u1", "name": "beach.jpg", "mime": "image/jpeg", "kind": "image", "size": 10, "url": "/api/media/u1/beach.jpg?sig=x"}
+    doc = {"id": "u2", "name": "plan.pdf", "mime": "application/pdf", "kind": "file", "size": 20, "url": "/api/media/u2/plan.pdf?sig=y"}
+    hub.store.add_message("trip", "user", "here", meta={"attachments": [photo]})
+    hub.store.add_message("trip", "bot", "no files here")
+    hub.store.add_message("trip", "bot", "the plan", meta={"attachments": [doc]})
+    files = (await (await client.get("/api/chats/trip/files", headers=owner.auth)).json())["files"]
+    assert [(f["name"], f["role"]) for f in files] == [("plan.pdf", "bot"), ("beach.jpg", "user")]
+    assert files[0]["message_id"]
+    member = await pair_phone(client, hub, "Alex", role="member")
+    assert (await client.get("/api/chats/trip/files", headers=member.auth)).status == 404

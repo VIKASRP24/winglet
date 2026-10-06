@@ -195,6 +195,7 @@ class WingletAdapter(BasePlatformAdapter):
             hub.commands_provider = hermes_api.list_commands
             hub.hermes = hermes_api
             hub.chat_model = self._chat_model
+            hub.chat_goal = self._chat_goal
             hub.command_resolver = hermes_api.resolve_command
             from gateway.platforms.shared_ingress import bind_listener
             # No access log: device tokens ride in WebSocket/media query strings and must not reach log files.
@@ -363,20 +364,35 @@ class WingletAdapter(BasePlatformAdapter):
             resolve, ttl=300)
         return SendResult(success=True, message_id=posted["id"])
 
-    def _chat_model(self, chat_id: str) -> Optional[Dict[str, Any]]:
+    def _session_key(self, chat_id: str) -> Optional[str]:
+        """The key Hermes files this chat's session under, or None outside a gateway."""
         runner = getattr(self, "gateway_runner", None)
         if runner is None:
             return None
+        source = self.build_source(chat_id=chat_id, chat_name=chat_id, chat_type="dm", user_id=USER_PREFIX + "app",
+                                   user_name="Winglet", role_authorized=True)
+        # The runner's own key (it adds the profile's namespace); a DM key leaves the sender out.
+        key_for = getattr(runner, "_session_key_for_source", None)
+        if key_for is None:
+            from gateway.session import build_session_key as key_for
+        return key_for(source)
+
+    def _chat_model(self, chat_id: str) -> Optional[Dict[str, Any]]:
         try:
-            source = self.build_source(chat_id=chat_id, chat_name=chat_id, chat_type="dm", user_id=USER_PREFIX + "app",
-                                       user_name="Winglet", role_authorized=True)
-            # The runner's own key (it adds the profile's namespace); a DM key leaves the sender out.
-            key_for = getattr(runner, "_session_key_for_source", None)
-            if key_for is None:
-                from gateway.session import build_session_key as key_for
-            return hermes_api.chat_model(runner, key_for(source))
+            key = self._session_key(chat_id)
+            return hermes_api.chat_model(self.gateway_runner, key) if key else None
         except Exception:
             logger.debug("[%s] chat model unavailable", self.name, exc_info=True)
+            return None
+
+    def _chat_goal(self, chat_id: str) -> Optional[Dict[str, Any]]:
+        try:
+            key = self._session_key(chat_id)
+            return hermes_api.chat_goal(self.gateway_runner, key) if key else None
+        except hermes_api.HermesUnavailable:
+            raise
+        except Exception:
+            logger.debug("[%s] chat goal unavailable", self.name, exc_info=True)
             return None
 
     async def send_or_update_status(self, chat_id: str, status_key: str, content: str, *,
