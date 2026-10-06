@@ -10,6 +10,8 @@ import { useEffect } from 'react';
 import { AppState, Platform, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { Toasts } from '../components/Toasts';
+import { watchNetwork } from '../lib/network';
+import { attachPersistence } from '../lib/persist';
 import { registerServiceWorker } from '../lib/push';
 import { useApp } from '../lib/store';
 import { colors } from '../lib/theme';
@@ -19,11 +21,16 @@ export default function RootLayout() {
   const ready = useApp((s) => s.ready);
   const init = useApp((s) => s.init);
   const setForeground = useApp((s) => s.setForeground);
+  const setNetwork = useApp((s) => s.setNetwork);
 
   useEffect(() => {
+    const detach = attachPersistence();
     init();
     registerServiceWorker();
+    return detach;
   }, [init]);
+
+  useEffect(() => watchNetwork(setNetwork), [setNetwork]);
 
   useEffect(() => {
     if (Platform.OS === 'web') {

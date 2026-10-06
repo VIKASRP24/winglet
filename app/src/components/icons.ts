@@ -6,6 +6,11 @@ export { default as CheckCircle2 } from 'lucide-react-native/icons/circle-check'
 export { default as ChevronLeft } from 'lucide-react-native/icons/chevron-left';
 export { default as CircleHelp } from 'lucide-react-native/icons/circle-question-mark';
 export { default as Clock } from 'lucide-react-native/icons/clock';
+export { default as Copy } from 'lucide-react-native/icons/copy';
+export { default as CloudOff } from 'lucide-react-native/icons/cloud-off';
+export { default as WifiOff } from 'lucide-react-native/icons/wifi-off';
+export { default as RefreshCw } from 'lucide-react-native/icons/refresh-cw';
+export { default as Activity } from 'lucide-react-native/icons/activity';
 export { default as ExternalLink } from 'lucide-react-native/icons/external-link';
 export { default as FileText } from 'lucide-react-native/icons/file-text';
 export { default as Hash } from 'lucide-react-native/icons/hash';

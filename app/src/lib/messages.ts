@@ -1,6 +1,6 @@
 import type { Message } from './types';
 
-const isLocal = (m: Message) => m.status === 'pending' || m.status === 'failed';
+const isLocal = (m: Message) => m.status === 'pending' || m.status === 'queued' || m.status === 'failed';
 
 /**
  * Preserve newer live replies and older pages while applying durable deletions from history or the

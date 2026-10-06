@@ -3,10 +3,12 @@ import { Hash, Inbox, MoreHorizontal, Plus, Settings, Sparkles, Trash2, Pencil }
 import { useMemo, useState } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { connectionView } from '../lib/connection';
 import { isTyping, useApp } from '../lib/store';
 import { colors, fonts, radius } from '../lib/theme';
 import type { Chat, Server } from '../lib/types';
 import { BotAvatar } from './BotAvatar';
+import { ConnectionBanner } from './ConnectionBanner';
 import { Logo } from './Logo';
 import { Badge, Button, IconButton, Row, SectionLabel, tap } from './ui';
 
@@ -84,7 +86,8 @@ export function ChannelList({ server, activeChatId, onOpenChat, onOpenInbox, wid
     [runtime?.chats],
   );
   const home = runtime?.chats.home;
-  const status = runtime?.status ?? 'connecting';
+  const network = useApp((s) => s.network);
+  const view = connectionView(network, runtime, server.bot.title);
 
   const newChat = async () => {
     try {
@@ -102,14 +105,15 @@ export function ChannelList({ server, activeChatId, onOpenChat, onOpenInbox, wid
         <View style={{ flex: 1 }}>
           <Text style={styles.botTitle} numberOfLines={1}>{server.bot.title}</Text>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-            <View style={[styles.statusDot, { backgroundColor: status === 'online' ? colors.green : status === 'unauthorized' ? colors.red : colors.yellow }]} />
+            <View style={[styles.statusDot, { backgroundColor: view.tone === 'ok' ? colors.green : view.tone === 'error' ? colors.red : colors.yellow }]} />
             <Text style={styles.botSub} numberOfLines={1}>
-              {status === 'online' ? hostOf(server.url) : status === 'unauthorized' ? 'This phone was unpaired' : status === 'offline' ? 'Offline · retrying' : 'Connecting…'}
+              {view.kind === 'online' ? hostOf(server.url) : view.title}
             </Text>
           </View>
         </View>
       </View>
       {server.bot.description ? <Text style={styles.botDesc} numberOfLines={3}>{server.bot.description}</Text> : null}
+      <ConnectionBanner server={server} compact />
       <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: 8, paddingBottom: insets.bottom + 16 }}>
         <Row onPress={onOpenInbox} style={{ marginTop: 8 }}>
           <Inbox size={20} color={colors.textMuted} />

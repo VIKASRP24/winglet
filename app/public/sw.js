@@ -1,6 +1,55 @@
-/* Winglet service worker: shows push notifications and handles taps on them. */
-self.addEventListener('install', () => self.skipWaiting());
+/* Winglet service worker: keeps the app shell for offline use, shows push notifications, handles taps. */
+const SHELL = 'winglet-shell-v1';
+const HASHED = /^\/(_expo\/static|assets)\//;
+
+/** Cache the page and every bundle it references, dropping bundles from older builds. */
+async function cacheShell(response) {
+  const cache = await caches.open(SHELL);
+  const html = await response.clone().text();
+  await cache.put('/', response.clone());
+  const refs = new Set([...html.matchAll(/(?:src|href)="(\/(?:_expo\/static|icons)\/[^"]+)"/g)].map((m) => m[1]));
+  await Promise.all([...refs].map((ref) => cache.match(ref).then((hit) => hit || cache.add(ref).catch(() => undefined))));
+  for (const request of await cache.keys()) {
+    const path = new URL(request.url).pathname;
+    if (path.startsWith('/_expo/static/') && !refs.has(path)) await cache.delete(request);
+  }
+}
+
+self.addEventListener('install', (event) => {
+  event.waitUntil(fetch('/', { cache: 'no-store' }).then((r) => (r.ok ? cacheShell(r) : undefined)).catch(() => undefined)
+    .then(() => self.skipWaiting()));
+});
 self.addEventListener('activate', (event) => event.waitUntil(self.clients.claim()));
+
+self.addEventListener('fetch', (event) => {
+  const request = event.request;
+  const url = new URL(request.url);
+  // The API is never cached: it's live data, and responses can be private to this device.
+  if (request.method !== 'GET' || url.origin !== self.location.origin || url.pathname.startsWith('/api/')) return;
+  if (request.mode === 'navigate') {
+    // Network first so updates arrive at once; the cached shell opens the app when the server is down.
+    event.respondWith(fetch(request).then((response) => {
+      if (response.ok && (response.headers.get('content-type') || '').includes('text/html')) {
+        event.waitUntil(cacheShell(response.clone()).catch(() => undefined));
+      }
+      return response;
+    }).catch(() => caches.match('/').then((hit) => hit || Response.error())));
+    return;
+  }
+  const keep = (response) => {
+    if (response.ok) {
+      const copy = response.clone();
+      event.waitUntil(caches.open(SHELL).then((cache) => cache.put(request, copy)));
+    }
+    return response;
+  };
+  if (HASHED.test(url.pathname)) {
+    // Bundles and fonts are content-hashed, so a cached copy is always the right one.
+    event.respondWith(caches.match(request).then((hit) => hit || fetch(request).then(keep)));
+  } else if (url.pathname.startsWith('/icons/') || url.pathname === '/manifest.webmanifest') {
+    event.respondWith(fetch(request).then(keep).catch(() => caches.match(request).then((hit) => hit || Response.error())));
+  }
+});
 
 self.addEventListener('push', (event) => {
   let note = {};

@@ -1,19 +1,37 @@
 import { create } from 'zustand';
 import { Platform } from 'react-native';
-import { recoverAddress } from './recovery';
+import { RecoveryCoordinator } from './recovery';
 import { api, ApiError, wsUrl } from './api';
+import { cacheGet, cacheRemove, cacheSet } from './cache';
 import { markFailed, mergeMessages } from './messages';
 import { getJSON, setJSON } from './storage';
-import type { Chat, ConnStatus, InboxItem, Message, Server } from './types';
+import type { Chat, ConnStatus, InboxItem, Message, Server, ServerInfo } from './types';
 
 const SERVERS_KEY = 'winglet.servers';
 const SELECTION_KEY = 'winglet.selection';
 const TYPING_TTL_MS = 8000;
+const HISTORY_LIMIT = 30;
+/** The wire protocol this app speaks, and the oldest server protocol it still works with. */
+export const APP_PROTOCOL = 1;
+export const MIN_SERVER_PROTOCOL = 1;
 
 export type Toast = { id: string; serverId: string; title: string; body: string; href?: string };
 
+/** What the diagnostics screen shows; never contains tokens, URLs or message text. */
+export type ConnDetail = {
+  recovering: boolean;
+  nextRetryAt?: number;
+  lastError?: string;
+  history: { t: number; status: string; note?: string }[];
+};
+
+export type OutboxEntry = { client_id: string; chat_id: string; text: string; created_at: number; failed?: boolean };
+
 export type ServerState = {
   status: ConnStatus;
+  conn: ConnDetail;
+  info?: ServerInfo;
+  compat?: 'update-app' | 'update-server';
   chats: Record<string, Chat>;
   messages: Record<string, Message[]>;
   deleted: Record<string, string[]>;
@@ -21,6 +39,7 @@ export type ServerState = {
   inbox: Record<string, InboxItem>;
   pending: number;
   typing: Record<string, number>;
+  outbox: OutboxEntry[];
 };
 
 type Selection = { serverId?: string; chatId?: string };
@@ -32,6 +51,8 @@ type AppState = {
   selection: Selection;
   toasts: Toast[];
   foreground: boolean;
+  network: boolean;
+  drafts: Record<string, string>;
   visibleChat?: { serverId: string; chatId: string };
   init: () => Promise<void>;
   addServer: (server: Server) => Promise<void>;
@@ -39,21 +60,40 @@ type AppState = {
   select: (serverId?: string, chatId?: string) => void;
   setVisibleChat: (v?: { serverId: string; chatId: string }) => void;
   setForeground: (fg: boolean) => void;
+  setNetwork: (online: boolean) => void;
+  retryNow: (serverId: string) => void;
+  hydrateChat: (serverId: string, chatId: string) => Promise<void>;
   loadMessages: (serverId: string, chatId: string, older?: boolean) => Promise<void>;
   loadInbox: (serverId: string) => Promise<void>;
   sendMessage: (serverId: string, chatId: string, text: string, retryClientId?: string) => Promise<void>;
+  discardMessage: (serverId: string, chatId: string, clientId: string) => void;
+  setDraft: (serverId: string, chatId: string, text: string) => void;
   respond: (serverId: string, itemId: string, reply: { choice?: string; answer?: string | string[] }) => Promise<void>;
   createChat: (serverId: string, title?: string) => Promise<Chat | undefined>;
   renameChat: (serverId: string, chatId: string, title: string) => Promise<void>;
   deleteChat: (serverId: string, chatId: string) => Promise<void>;
+  toast: (t: Omit<Toast, 'id'>) => void;
   dismissToast: (id: string) => void;
+  clearCache: () => Promise<void>;
 };
 
-const emptyRuntime = (): ServerState => ({
-  status: 'connecting', chats: {}, messages: {}, deleted: {}, loaded: {}, inbox: {}, pending: 0, typing: {},
+export const emptyRuntime = (): ServerState => ({
+  status: 'connecting', conn: { recovering: false, history: [] }, chats: {}, messages: {}, deleted: {}, loaded: {},
+  inbox: {}, pending: 0, typing: {}, outbox: [],
 });
 
+export const draftKey = (serverId: string, chatId: string) => `${serverId}:${chatId}`;
+
 const connections = new Map<string, Connection>();
+const coordinator = new RecoveryCoordinator();
+/** Per-bot send queue: keeps messages in order, and stops at the first one the network loses. */
+const sendChains = new Map<string, Promise<void>>();
+const sendPaused = new Set<string>();
+
+/** A network failure is worth retrying later; an HTTP error from the server is not. */
+const isNetworkError = (e: unknown) => !(e instanceof ApiError) || e.status === 0;
+
+const isLocal = (m: Message) => m.status === 'pending' || m.status === 'queued' || m.status === 'failed';
 
 export const useApp = create<AppState>((set, get) => {
   const patch = (serverId: string, fn: (s: ServerState) => Partial<ServerState>) =>
@@ -72,6 +112,19 @@ export const useApp = create<AppState>((set, get) => {
       return { messages: { ...s.messages, [chatId]: mergeMessages(next, []) } };
     });
 
+  const setLocalStatus = (serverId: string, chatId: string, clientId: string, status: Message['status']) =>
+    patch(serverId, (s) => ({
+      messages: { ...s.messages, [chatId]: (s.messages[chatId] ?? []).map((m) =>
+        m.id === clientId && isLocal(m) ? { ...m, status } : m) },
+    }));
+
+  const saveOutbox = (serverId: string) => cacheSet(`outbox:${serverId}`, get().runtime[serverId]?.outbox ?? []);
+
+  const updateOutbox = (serverId: string, fn: (o: OutboxEntry[]) => OutboxEntry[]) => {
+    patch(serverId, (s) => ({ outbox: fn(s.outbox) }));
+    saveOutbox(serverId);
+  };
+
   const toast = (t: Omit<Toast, 'id'>) => {
     const id = Math.random().toString(36).slice(2);
     set((state) => ({ toasts: [...state.toasts.slice(-2), { ...t, id }] }));
@@ -79,6 +132,13 @@ export const useApp = create<AppState>((set, get) => {
   };
 
   const persist = () => setJSON(SERVERS_KEY, get().servers);
+
+  const note = (serverId: string, status: string, extra?: string) =>
+    patch(serverId, (s) => {
+      const last = s.conn.history[s.conn.history.length - 1];
+      if (last && last.status === status && last.note === extra) return {};
+      return { conn: { ...s.conn, history: [...s.conn.history.slice(-(HISTORY_LIMIT - 1)), { t: Date.now(), status, note: extra }] } };
+    });
 
   /** Drop everything the app holds for a deleted chat and move off it if it was open. */
   const forgetChat = (serverId: string, chatId: string) => {
@@ -88,11 +148,62 @@ export const useApp = create<AppState>((set, get) => {
       const { [chatId]: _deleted, ...deleted } = s.deleted;
       const { [chatId]: _loaded, ...loaded } = s.loaded;
       const { [chatId]: _typing, ...typing } = s.typing;
-      return { chats, messages, deleted, loaded, typing };
+      return { chats, messages, deleted, loaded, typing, outbox: s.outbox.filter((o) => o.chat_id !== chatId) };
     });
+    saveOutbox(serverId);
+    cacheRemove(`msgs:${serverId}:${chatId}`);
     const { selection, select } = get();
     if (selection.serverId === serverId && selection.chatId === chatId) select(serverId, 'general');
   };
+
+  /** Deliver one queued message. Network failures pause the queue (order matters); HTTP errors fail it. */
+  const deliver = async (serverId: string, entry: OutboxEntry) => {
+    const server = get().servers.find((s) => s.id === serverId);
+    const queued = get().runtime[serverId]?.outbox.find((o) => o.client_id === entry.client_id);
+    if (!server || !queued || queued.failed) return;
+    if (sendPaused.has(serverId) || get().runtime[serverId]?.status !== 'online') {
+      sendPaused.add(serverId);
+      setLocalStatus(serverId, entry.chat_id, entry.client_id, 'queued');
+      return;
+    }
+    setLocalStatus(serverId, entry.chat_id, entry.client_id, 'pending');
+    try {
+      const data = await api<{ message: Message }>(server, `/api/chats/${encodeURIComponent(entry.chat_id)}/messages`, {
+        method: 'POST', body: JSON.stringify({ text: entry.text, client_id: entry.client_id }),
+      });
+      upsertMessage(serverId, entry.chat_id, data.message);
+      updateOutbox(serverId, (o) => o.filter((x) => x.client_id !== entry.client_id));
+    } catch (e) {
+      if (isNetworkError(e)) {
+        // Lost on the way (maybe after the server stored it): resend with the same id later.
+        sendPaused.add(serverId);
+        setLocalStatus(serverId, entry.chat_id, entry.client_id, 'queued');
+        setTimeout(() => { if (get().runtime[serverId]?.status === 'online') flushOutbox(serverId); }, 5000);
+      } else {
+        updateOutbox(serverId, (o) => o.map((x) => (x.client_id === entry.client_id ? { ...x, failed: true } : x)));
+        patch(serverId, (s) => ({ messages: { ...s.messages, [entry.chat_id]: markFailed(s.messages[entry.chat_id] ?? [], entry.client_id) } }));
+      }
+    }
+  };
+
+  const enqueue = (serverId: string, entry: OutboxEntry) => {
+    const chain = (sendChains.get(serverId) ?? Promise.resolve()).then(() => deliver(serverId, entry));
+    sendChains.set(serverId, chain);
+    return chain;
+  };
+
+  /** Resend everything still queued for this bot, oldest first. */
+  const flushOutbox = (serverId: string) => {
+    sendPaused.delete(serverId);
+    const entries = [...(get().runtime[serverId]?.outbox ?? [])].filter((o) => !o.failed)
+      .sort((a, b) => a.created_at - b.created_at);
+    entries.forEach((entry) => enqueue(serverId, entry));
+  };
+
+  const localMessage = (entry: OutboxEntry): Message => ({
+    id: entry.client_id, chat_id: entry.chat_id, role: 'user', text: entry.text, status: entry.failed ? 'failed' : 'queued',
+    meta: { client_id: entry.client_id }, created_at: entry.created_at, updated_at: entry.created_at,
+  });
 
   const handleEvent = (serverId: string, ev: any) => {
     const server = get().servers.find((s) => s.id === serverId);
@@ -102,7 +213,14 @@ export const useApp = create<AppState>((set, get) => {
         for (const c of ev.chats as Chat[]) chats[c.id] = c;
         const typing: Record<string, number> = {};
         for (const chatId of ev.typing ?? []) typing[chatId] = Date.now() + TYPING_TTL_MS;
-        patch(serverId, () => ({ status: 'online', chats, typing, pending: ev.pending ?? 0, loaded: {} }));
+        const info: ServerInfo = {
+          version: ev.version ?? '', protocol: ev.protocol ?? 1, min_app_protocol: ev.min_app_protocol ?? 1,
+          hermes_version: ev.hermes_version ?? '', features: ev.features ?? {},
+        };
+        const compat = info.min_app_protocol > APP_PROTOCOL ? 'update-app' as const
+          : info.protocol < MIN_SERVER_PROTOCOL ? 'update-server' as const : undefined;
+        patch(serverId, () => ({ status: 'online', chats, typing, pending: ev.pending ?? 0, loaded: {}, info, compat }));
+        cacheSet(`chats:${serverId}`, chats);
         if (server && ev.bot && JSON.stringify(ev.bot) !== JSON.stringify(server.bot)) {
           set((state) => ({ servers: state.servers.map((s) => (s.id === serverId ? { ...s, bot: ev.bot } : s)) }));
           persist();
@@ -110,12 +228,18 @@ export const useApp = create<AppState>((set, get) => {
         get().loadInbox(serverId);
         const vis = get().visibleChat;
         if (vis?.serverId === serverId) get().loadMessages(serverId, vis.chatId);
+        flushOutbox(serverId);
         break;
       }
       case 'message.new':
       case 'message.update': {
         const m = ev.message as Message;
         upsertMessage(serverId, ev.chat_id, m);
+        const clientId = m.meta?.client_id;
+        if (m.role === 'user' && clientId && get().runtime[serverId]?.outbox.some((o) => o.client_id === clientId)) {
+          // The server has it (the HTTP reply may have been lost): it's no longer ours to resend.
+          updateOutbox(serverId, (o) => o.filter((x) => x.client_id !== clientId));
+        }
         if (m.role === 'bot' && m.status === 'final') {
           patch(serverId, (s) => {
             const typing = { ...s.typing };
@@ -166,17 +290,53 @@ export const useApp = create<AppState>((set, get) => {
 
   const connect = (server: Server) => {
     connections.get(server.id)?.close();
-    const conn = new Connection(server, {
+    const conn = new Connection(server, coordinator, {
       onEvent: (ev) => handleEvent(server.id, ev),
-      onStatus: (status) => patch(server.id, () => ({ status })),
+      onStatus: (status, why) => {
+        patch(server.id, () => ({ status }));
+        note(server.id, status, why);
+        if (status !== 'online') sendPaused.add(server.id);
+      },
+      onDetail: (detail) => patch(server.id, (s) => ({ conn: { ...s.conn, ...detail } })),
+      onRecovering: (on) => {
+        patch(server.id, (s) => ({ conn: { ...s.conn, recovering: on } }));
+        if (on) note(server.id, 'recovering');
+      },
       onServer: async (updated) => {
         if (connections.get(server.id) !== conn || !get().servers.some(s => s.id === server.id)) return;
         set(state => ({ servers: state.servers.map(s => s.id === server.id ? updated : s) }));
+        note(server.id, 'address-changed');
         await persist();
       },
     });
     connections.set(server.id, conn);
     conn.open();
+  };
+
+  /** Load what this phone remembers about a bot, so it opens instantly and works offline. */
+  const hydrateServer = async (serverId: string) => {
+    const [chats, inbox, outbox] = await Promise.all([
+      cacheGet<Record<string, Chat>>(`chats:${serverId}`, {}),
+      cacheGet<InboxItem[]>(`inbox:${serverId}`, []),
+      cacheGet<OutboxEntry[]>(`outbox:${serverId}`, []),
+    ]);
+    patch(serverId, (s) => {
+      const messages = { ...s.messages };
+      for (const entry of outbox) {
+        messages[entry.chat_id] = mergeMessages(messages[entry.chat_id] ?? [], [localMessage(entry)]);
+      }
+      const cachedInbox: Record<string, InboxItem> = {};
+      for (const item of inbox) cachedInbox[item.id] = item;
+      const live = Object.keys(s.inbox).length > 0;
+      return {
+        // A live hello may already have arrived; the server's view always wins.
+        chats: Object.keys(s.chats).length ? s.chats : chats,
+        inbox: live ? s.inbox : cachedInbox,
+        pending: live ? s.pending : inbox.filter((i) => i.status === 'pending').length,
+        outbox: [...s.outbox, ...outbox.filter((o) => !s.outbox.some((x) => x.client_id === o.client_id))],
+        messages,
+      };
+    });
   };
 
   return {
@@ -186,14 +346,18 @@ export const useApp = create<AppState>((set, get) => {
     selection: {},
     toasts: [],
     foreground: true,
+    network: true,
+    drafts: {},
 
     init: async () => {
       if (get().ready) return;
       const servers = await getJSON<Server[]>(SERVERS_KEY, []);
       const selection = await getJSON<Selection>(SELECTION_KEY, {});
+      const drafts = await cacheGet<Record<string, string>>('drafts', {});
       const runtime: Record<string, ServerState> = {};
       for (const s of servers) runtime[s.id] = emptyRuntime();
-      set({ servers, runtime, selection: selection.serverId ? selection : { serverId: servers[0]?.id }, ready: true });
+      set({ servers, runtime, drafts, selection: selection.serverId ? selection : { serverId: servers[0]?.id }, ready: true });
+      await Promise.all(servers.map((s) => hydrateServer(s.id)));
       servers.forEach(connect);
     },
 
@@ -201,7 +365,7 @@ export const useApp = create<AppState>((set, get) => {
       const others = get().servers.filter((s) => s.id !== server.id);
       set((state) => ({
         servers: [...others, server],
-        runtime: { ...state.runtime, [server.id]: emptyRuntime() },
+        runtime: { ...state.runtime, [server.id]: state.runtime[server.id] ?? emptyRuntime() },
         selection: { serverId: server.id, chatId: 'general' },
       }));
       await persist();
@@ -213,6 +377,8 @@ export const useApp = create<AppState>((set, get) => {
       const server = get().servers.find((s) => s.id === serverId);
       connections.get(serverId)?.close();
       connections.delete(serverId);
+      sendChains.delete(serverId);
+      sendPaused.delete(serverId);
       if (server && unpair) {
         api(server, '/api/me', { method: 'DELETE' }).catch(() => undefined);
       }
@@ -221,8 +387,10 @@ export const useApp = create<AppState>((set, get) => {
         delete runtime[serverId];
         const servers = state.servers.filter((s) => s.id !== serverId);
         const selection = state.selection.serverId === serverId ? { serverId: servers[0]?.id } : state.selection;
-        return { servers, runtime, selection };
+        const drafts = Object.fromEntries(Object.entries(state.drafts).filter(([k]) => !k.startsWith(`${serverId}:`)));
+        return { servers, runtime, selection, drafts };
       });
+      for (const prefix of [`chats:${serverId}`, `inbox:${serverId}`, `outbox:${serverId}`, `msgs:${serverId}:`]) cacheRemove(prefix);
       await persist();
     },
 
@@ -235,8 +403,33 @@ export const useApp = create<AppState>((set, get) => {
 
     setForeground: (fg) => {
       set({ foreground: fg });
+      coordinator.setForeground(fg);
       connections.forEach((c) => c.presence(fg));
       if (fg) connections.forEach((c) => c.ensureOpen());
+    },
+
+    setNetwork: (online) => {
+      const was = get().network;
+      set({ network: online });
+      coordinator.setOnline(online);
+      // Coming back online is the best moment to try again: don't wait out the backoff.
+      if (online && !was) connections.forEach((c) => c.retryNow());
+    },
+
+    retryNow: (serverId) => {
+      connections.get(serverId)?.retryNow();
+      coordinator.retryNow();
+    },
+
+    hydrateChat: async (serverId, chatId) => {
+      if (get().runtime[serverId]?.loaded[chatId]) return;
+      const cached = await cacheGet<Message[]>(`msgs:${serverId}:${chatId}`, []);
+      if (!cached.length) return;
+      patch(serverId, (s) => {
+        // Fresh server data already arrived: it supersedes the cache.
+        if (s.loaded[chatId]) return {};
+        return { messages: { ...s.messages, [chatId]: mergeMessages(cached, s.messages[chatId] ?? [], s.deleted[chatId] ?? []) } };
+      });
     },
 
     loadMessages: async (serverId, chatId, older = false) => {
@@ -244,7 +437,7 @@ export const useApp = create<AppState>((set, get) => {
       if (!server) return;
       const existing = get().runtime[serverId]?.messages[chatId] ?? [];
       // Page from the oldest message the server knows (optimistic rows have no server position).
-      const oldest = existing.find((m) => m.status !== 'pending' && m.status !== 'failed');
+      const oldest = existing.find((m) => !isLocal(m));
       const before = older && oldest ? (oldest.position !== undefined
         ? `&before_position=${oldest.position}` : `&before_id=${encodeURIComponent(oldest.id)}`) : '';
       try {
@@ -255,8 +448,15 @@ export const useApp = create<AppState>((set, get) => {
           // A live delete may have arrived after this snapshot was taken. Keep both sets so a stale
           // response cannot bring it back, and reconnect can apply deletes missed while offline.
           const deleted = [...new Set([...(s.deleted[chatId] ?? []), ...(data.deleted_ids ?? [])])];
+          // Rows from the cache or before a reconnect may end before this page starts, if more than a
+          // page arrived meanwhile. Unless the page overlaps them (or is the whole chat), drop them and
+          // let scrolling page the history in again, rather than show a silent gap.
+          const current = s.messages[chatId] ?? [];
+          const have = new Set(current.filter((m) => !isLocal(m)).map((m) => m.id));
+          const joined = older || s.loaded[chatId] || data.messages.length < 60 || data.messages.some((m) => have.has(m.id));
+          const base = joined ? current : current.filter(isLocal);
           return {
-            messages: { ...s.messages, [chatId]: mergeMessages(s.messages[chatId] ?? [], data.messages, deleted, older) },
+            messages: { ...s.messages, [chatId]: mergeMessages(base, data.messages, deleted, older) },
             deleted: { ...s.deleted, [chatId]: deleted },
             loaded: { ...s.loaded, [chatId]: true },
           };
@@ -284,20 +484,31 @@ export const useApp = create<AppState>((set, get) => {
       if (!server || !text.trim()) return;
       // A retry reuses the original id so the server can tell it already has the message.
       const clientId = retryClientId ?? `c-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
-      const now = Date.now() / 1000;
-      const optimistic: Message = {
-        id: clientId, chat_id: chatId, role: 'user', text: text.trim(), status: 'pending',
-        meta: { client_id: clientId }, created_at: now, updated_at: now,
-      };
-      upsertMessage(serverId, chatId, optimistic);
-      try {
-        const data = await api<{ message: Message }>(server, `/api/chats/${encodeURIComponent(chatId)}/messages`, {
-          method: 'POST', body: JSON.stringify({ text: text.trim(), client_id: clientId }),
-        });
-        upsertMessage(serverId, chatId, data.message);
-      } catch {
-        patch(serverId, (s) => ({ messages: { ...s.messages, [chatId]: markFailed(s.messages[chatId] ?? [], clientId) } }));
-      }
+      const existing = get().runtime[serverId]?.outbox.find((o) => o.client_id === clientId);
+      const entry: OutboxEntry = existing ? { ...existing, failed: false }
+        : { client_id: clientId, chat_id: chatId, text: text.trim(), created_at: Date.now() / 1000 };
+      updateOutbox(serverId, (o) => [...o.filter((x) => x.client_id !== clientId), entry]);
+      upsertMessage(serverId, chatId, { ...localMessage(entry), status: get().runtime[serverId]?.status === 'online' ? 'pending' : 'queued' });
+      if (retryClientId) sendPaused.delete(serverId);
+      await enqueue(serverId, entry);
+    },
+
+    discardMessage: (serverId, chatId, clientId) => {
+      updateOutbox(serverId, (o) => o.filter((x) => x.client_id !== clientId));
+      patch(serverId, (s) => ({
+        messages: { ...s.messages, [chatId]: (s.messages[chatId] ?? []).filter((m) => !(m.id === clientId && isLocal(m))) },
+      }));
+    },
+
+    setDraft: (serverId, chatId, text) => {
+      const key = draftKey(serverId, chatId);
+      if ((get().drafts[key] ?? '') === text) return;
+      set((state) => {
+        const drafts = { ...state.drafts };
+        if (text) drafts[key] = text;
+        else delete drafts[key];
+        return { drafts };
+      });
     },
 
     respond: async (serverId, itemId, reply) => {
@@ -311,8 +522,9 @@ export const useApp = create<AppState>((set, get) => {
       } catch (e) {
         if (e instanceof ApiError && e.status === 409) {
           get().loadInbox(serverId);
-          toast({ serverId, title: 'Too late', body: 'That request already expired or was answered elsewhere.' });
+          toast({ serverId, title: 'Already answered', body: 'That request expired or was answered on another device.' });
         } else {
+          // Never queued: an approval must not fire later, after the moment has passed.
           toast({ serverId, title: "Couldn't send", body: (e as Error).message });
         }
       }
@@ -342,32 +554,58 @@ export const useApp = create<AppState>((set, get) => {
       forgetChat(serverId, chatId);
     },
 
+    toast,
+
     dismissToast: (id) => set((state) => ({ toasts: state.toasts.filter((t) => t.id !== id) })),
+
+    clearCache: async () => {
+      for (const prefix of ['msgs:', 'chats:', 'inbox:']) await cacheRemove(prefix);
+    },
   };
 });
 
-/** One WebSocket per paired server, with reconnect + backoff. */
+type ConnCallbacks = {
+  onEvent: (ev: any) => void;
+  onStatus: (s: ConnStatus, why?: string) => void;
+  onDetail: (d: Partial<ConnDetail>) => void;
+  onRecovering: (on: boolean) => void;
+  onServer: (server: Server) => Promise<void>;
+};
+
+/** One WebSocket per paired server, with reconnect, backoff and (on Android) address recovery. */
 class Connection {
   private ws?: WebSocket;
   private closed = false;
   private attempt = 0;
   private timer?: ReturnType<typeof setTimeout>;
   private pingTimer?: ReturnType<typeof setInterval>;
+  private pongTimer?: ReturnType<typeof setTimeout>;
+  private awaitingPong = false;
   private visible = true;
-  private recovering = false;
 
-  constructor(private server: Server, private cb: { onEvent: (ev: any) => void; onStatus: (s: ConnStatus) => void;
-    onServer: (server: Server) => Promise<void> }) {}
+  constructor(private server: Server, private coordinator: RecoveryCoordinator, private cb: ConnCallbacks) {
+    coordinator.join(server.id, {
+      server: () => this.server,
+      recovering: (on) => cb.onRecovering(on),
+      recovered: (updated) => this.adopt(updated),
+    });
+  }
+
+  private get recovers() {
+    return Platform.OS === 'android' && !!this.server.recovery;
+  }
 
   open() {
     if (this.closed) return;
-    if (Platform.OS === 'android' && this.attempt === 0) this.recover();
+    // A quick tunnel gets a new address when the server restarts: look for one straight away.
+    if (this.recovers && this.attempt === 0) this.coordinator.want(this.server.id);
     this.cb.onStatus('connecting');
+    this.cb.onDetail({ nextRetryAt: undefined });
     let ws: WebSocket;
     try {
       ws = new WebSocket(wsUrl(this.server));
     } catch {
-      this.retry();
+      this.retry('could not open a connection');
       return;
     }
     this.ws = ws;
@@ -380,6 +618,14 @@ class Connection {
     ws.onmessage = (e) => {
       try {
         const event = JSON.parse(String(e.data));
+        if (event.type === 'pong') {
+          this.awaitingPong = false;
+          clearTimeout(this.pongTimer);
+        }
+        if (event.type === 'hello') {
+          this.coordinator.satisfied(this.server.id);
+          this.cb.onDetail({ lastError: undefined });
+        }
         this.cb.onEvent(event);
         if (event.type === 'hello' && Platform.OS === 'android' && !this.server.recovery) this.enrollRecovery();
       } catch {
@@ -388,24 +634,28 @@ class Connection {
     };
     ws.onclose = (e) => {
       clearInterval(this.pingTimer);
+      clearTimeout(this.pongTimer);
       if (this.ws !== ws) return;
       this.ws = undefined;
       if (this.closed) return;
       // The server rejects the upgrade with 401 when this device was unpaired.
       if (e.code === 1008 || e.code === 4401) {
-        this.cb.onStatus('unauthorized');
+        this.cb.onStatus('unauthorized', 'device removed');
         return;
       }
       this.cb.onStatus('offline');
-      this.retry();
+      this.retry(e.code && e.code !== 1006 ? `closed (${e.code})` : 'connection lost');
     };
     ws.onerror = () => undefined;
   }
 
-  private retry() {
+  private retry(why: string) {
     clearTimeout(this.timer);
-    const delay = Math.min(30000, 1000 * 2 ** this.attempt) * (0.7 + Math.random() * 0.6);
+    const cap = this.visible ? 10000 : 30000;
+    const delay = Math.min(cap, 1000 * 2 ** this.attempt) * (0.7 + Math.random() * 0.6);
     this.attempt += 1;
+    this.cb.onDetail({ lastError: why, nextRetryAt: Date.now() + delay });
+    if (this.recovers) this.coordinator.want(this.server.id);
     if (this.attempt > 1) this.probeAuth();
     this.timer = setTimeout(() => this.open(), delay);
   }
@@ -418,9 +668,10 @@ class Connection {
       if (this.closed || this.server !== before) return;
       if (e instanceof ApiError && e.status === 401) {
         this.closed = true;
-        this.cb.onStatus('unauthorized');
-      } else if (Platform.OS === 'android') {
-        await this.recover();
+        clearTimeout(this.timer);
+        this.cb.onStatus('unauthorized', 'token rejected');
+      } else if (this.recovers) {
+        this.coordinator.want(this.server.id);
       }
     }
   }
@@ -434,31 +685,50 @@ class Connection {
     } catch { /* Older or direct-only servers have no recovery endpoint. */ }
   }
 
-  private async recover() {
-    if (this.closed || this.recovering || !this.server.recovery) return;
-    this.recovering = true;
-    const before = this.server;
-    try {
-      const updated = await recoverAddress(before);
-      if (!updated || this.closed || this.server !== before) return;
-      this.server = updated;
-      await this.cb.onServer(updated);
-      clearTimeout(this.timer);
-      this.ws?.close();
-      this.ws = undefined;
-      this.attempt = 0;
-      this.open();
-    } catch { /* Stay offline and retry; never adopt an unverified endpoint. */ }
-    finally { this.recovering = false; }
+  /** Switch to a verified new address and reconnect there at once. */
+  private async adopt(updated: Server) {
+    if (this.closed) return;
+    this.server = updated;
+    await this.cb.onServer(updated);
+    if (this.closed) return;
+    clearTimeout(this.timer);
+    const old = this.ws;
+    this.ws = undefined;
+    old?.close();
+    this.attempt = 0;
+    this.open();
   }
 
+  /** Back in the foreground: make sure the socket is really alive, not just open on paper. */
   ensureOpen() {
-    if (!this.closed && !this.ws) {
-      clearTimeout(this.timer);
-      this.attempt = 0;
-      this.open();
+    if (this.closed) return;
+    if (!this.ws) {
+      this.retryNow();
+      return;
     }
-    if (Platform.OS === 'android') this.recover();
+    if (this.ws.readyState !== 1) return;
+    clearTimeout(this.pongTimer);
+    this.awaitingPong = true;
+    this.send({ type: 'ping', t: Date.now() });
+    const ws = this.ws;
+    // A socket the OS silently killed while we were away never answers. Drop it and reconnect.
+    this.pongTimer = setTimeout(() => {
+      if (!this.awaitingPong || this.ws !== ws || this.closed) return;
+      this.awaitingPong = false;
+      this.ws = undefined;
+      ws.close();
+      this.cb.onStatus('offline', 'no answer after resume');
+      this.attempt = 0;
+      this.retry('no answer after resume');
+    }, 4000);
+  }
+
+  /** Skip the backoff and try right away (the "Try now" button, or the network coming back). */
+  retryNow() {
+    if (this.closed || this.ws) return;
+    clearTimeout(this.timer);
+    this.attempt = 0;
+    this.open();
   }
 
   send(data: unknown) {
@@ -472,7 +742,9 @@ class Connection {
 
   close() {
     this.closed = true;
+    this.coordinator.leave(this.server.id);
     clearTimeout(this.timer);
+    clearTimeout(this.pongTimer);
     clearInterval(this.pingTimer);
     this.ws?.close();
     this.ws = undefined;
