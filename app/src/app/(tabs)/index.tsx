@@ -14,17 +14,19 @@ import { Chip, IconButton, SectionHeader, Tap } from '../../components/ui';
 import { ago, chatName, greeting, headline, moodOf, pendingItems, workingChats } from '../../lib/agent';
 import { haptic } from '../../lib/haptics';
 import { useReducedMotion } from '../../lib/motion';
-import { useApp } from '../../lib/store';
+import { homeChat, useApp } from '../../lib/store';
 import { WIDE_BREAKPOINT } from '../../lib/theme';
 import { makeStyles, useTheme } from '../../lib/themeContext';
 import type { Chat, InboxItem, Server } from '../../lib/types';
 
 const SUGGESTIONS = ['What can you do?', 'Plan my day', 'What did you get done today?'];
 
-function pairFromHash(): string | null {
+function pairFromHash(): { code: string; fp?: string } | null {
   if (Platform.OS !== 'web') return null;
-  const m = (globalThis.location?.hash ?? '').match(/pair=([A-Za-z0-9-]+)/);
-  return m ? m[1] : null;
+  const hash = globalThis.location?.hash ?? '';
+  const m = hash.match(/pair=([A-Za-z0-9-]+)/);
+  const fp = hash.match(/[&#]fp=([A-Za-z0-9_-]{16,64})/);
+  return m ? { code: m[1], ...(fp ? { fp: fp[1] } : {}) } : null;
 }
 
 /**
@@ -35,14 +37,14 @@ export default function Home() {
   const servers = useApp((s) => s.servers);
   const selection = useApp((s) => s.selection);
   const select = useApp((s) => s.select);
-  const hashCode = pairFromHash();
+  const hashLink = pairFromHash();
   useEffect(() => {
-    if (!selection.serverId && servers[0]) select(servers[0].id, 'general');
+    if (!selection.serverId && servers[0]) select(servers[0].id, homeChat(useApp.getState().runtime[servers[0].id]));
   }, [selection.serverId, servers, select]);
 
-  if (hashCode) {
+  if (hashLink) {
     globalThis.history?.replaceState(null, '', '/');
-    return <Redirect href={{ pathname: '/pair', params: { code: hashCode, url: globalThis.location.origin } }} />;
+    return <Redirect href={{ pathname: '/pair', params: { ...hashLink, url: globalThis.location.origin } }} />;
   }
   if (!servers.length) return <Redirect href="/pair" />;
   const server = servers.find((s) => s.id === selection.serverId) ?? servers[0];
@@ -174,8 +176,9 @@ async function newChat(serverId: string) {
 /** Send a question to the main chat and go there to watch the answer arrive. */
 function ask(serverId: string, text: string) {
   haptic.light();
-  useApp.getState().sendMessage(serverId, 'general', text);
-  router.push(`/chat/${serverId}/general`);
+  const main = homeChat(useApp.getState().runtime[serverId]);
+  useApp.getState().sendMessage(serverId, main, text);
+  router.push(`/chat/${serverId}/${main}`);
 }
 
 function QuickAsk({ server }: { server: Server }) {
@@ -253,7 +256,7 @@ function PulseDot() {
 function ChatCard({ server, chat, index }: { server: Server; chat: Chat; index: number }) {
   const t = useTheme();
   const s = useStyles();
-  const general = chat.id === 'general';
+  const general = useApp((st) => homeChat(st.runtime[server.id])) === chat.id;
   return (
     <Animated.View entering={FadeInDown.delay(40 * index).springify().damping(18)}>
       <Tap feedback="selection" scaleTo={0.97} accessibilityLabel={`${chat.title}. ${chat.preview}`} onPress={() => router.push(`/chat/${server.id}/${chat.id}`)}

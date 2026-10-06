@@ -25,7 +25,7 @@ export default function PairScreen() {
   const s = useStyles();
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
-  const params = useLocalSearchParams<{ code?: string; url?: string }>();
+  const params = useLocalSearchParams<{ code?: string; url?: string; fp?: string }>();
   const hasServers = useApp((st) => st.servers.length > 0);
   const addServer = useApp((st) => st.addServer);
   const [url, setUrl] = useState(params.url ?? '');
@@ -46,10 +46,11 @@ export default function PairScreen() {
     fetchInfo(origin).then(() => setUrl(origin)).catch(() => undefined);
   }, [url]);
 
-  const connect = async (u = url, c = code) => {
+  const connect = async (u = url, c = code, fp = params.fp) => {
     const link = parsePairLink(u);
     const target = link ? link.url : normalizeUrl(u);
     const theCode = link ? link.code : c;
+    const fingerprint = link ? link.fp : fp;
     if (!target || !theCode) {
       setError('Enter your server address and the code from `hermes winglet pair`.');
       return;
@@ -57,7 +58,7 @@ export default function PairScreen() {
     setBusy(true);
     setError(null);
     try {
-      const server = await pair(target, theCode, deviceName.trim() || defaultDeviceName());
+      const server = await pair(target, theCode, deviceName.trim() || defaultDeviceName(), fingerprint);
       await addServer(server);
       router.replace('/');
     } catch (e) {
