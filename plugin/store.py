@@ -552,15 +552,18 @@ class Store:
         return [self._message(r) for r in rows]
 
     def search_messages(self, query: str, chat_ids: List[str], *, limit: int = 50) -> List[Dict[str, Any]]:
-        """Newest messages in these chats whose text contains the query, ignoring case. Hidden helper
-        messages and status lines are left out."""
-        if not chat_ids or not query:
+        """Newest messages in these chats whose text contains every word of the query, in any order and
+        ignoring case (so a phrase still matches across a line break). Hidden helper messages and status
+        lines are left out."""
+        words = [w.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") for w in query.split()[:10]]
+        if not chat_ids or not words:
             return []
-        escaped = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         marks = ",".join("?" * len(chat_ids))
+        likes = " AND ".join(["text LIKE ? ESCAPE '\\'"] * len(words))
         rows = self._all(f"SELECT rowid AS position, * FROM messages WHERE chat_id IN ({marks}) AND role != 'system' "
-                         "AND text LIKE ? ESCAPE '\\' AND COALESCE(json_extract(meta, '$.hidden'), 0) = 0 "
-                         "ORDER BY rowid DESC LIMIT ?", (*chat_ids, f"%{escaped}%", max(1, min(limit, 100))))
+                         f"AND {likes} AND COALESCE(json_extract(meta, '$.hidden'), 0) = 0 "
+                         "ORDER BY rowid DESC LIMIT ?",
+                         (*chat_ids, *(f"%{w}%" for w in words), max(1, min(limit, 100))))
         return [self._message(r) for r in rows]
 
     def chat_attachments(self, chat_id: str, *, limit: int = 300) -> List[Dict[str, Any]]:

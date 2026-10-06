@@ -195,7 +195,8 @@ class WingletAdapter(BasePlatformAdapter):
             hub.commands_provider = hermes_api.list_commands
             hub.hermes = hermes_api
             hub.chat_model = self._chat_model
-            hub.chat_goal = self._chat_goal
+            # The app only offers goals when this Hermes has them (features.goals).
+            hub.chat_goal = self._chat_goal if hermes_api.goals_available() else None
             hub.command_resolver = hermes_api.resolve_command
             from gateway.platforms.shared_ingress import bind_listener
             # No access log: device tokens ride in WebSocket/media query strings and must not reach log files.
@@ -389,8 +390,6 @@ class WingletAdapter(BasePlatformAdapter):
         try:
             key = self._session_key(chat_id)
             return hermes_api.chat_goal(self.gateway_runner, key) if key else None
-        except hermes_api.HermesUnavailable:
-            raise
         except Exception:
             logger.debug("[%s] chat goal unavailable", self.name, exc_info=True)
             return None

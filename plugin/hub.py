@@ -142,12 +142,16 @@ def _iso_ts(value: Any) -> float:
 
 
 def _snippet(text: str, query: str, before: int = 50, after: int = 110) -> str:
-    """The part of a message around the first match, on one line, with … where it was cut."""
+    """The part of a message around the first match (the whole query, else its earliest word), on one
+    line, with … where it was cut."""
     flat = " ".join((text or "").split())
-    at = flat.lower().find(query.lower())
+    lower, q = flat.lower(), query.lower()
+    at, size = lower.find(q), len(q)
+    if at < 0:
+        at, size = min(((lower.find(w), len(w)) for w in q.split() if w in lower), default=(-1, 0))
     if at < 0:
         return _clip(flat, before + after)
-    start, end = max(0, at - before), min(len(flat), at + len(query) + after)
+    start, end = max(0, at - before), min(len(flat), at + size + after)
     if start:
         space = flat.find(" ", start, at)
         start = space + 1 if space != -1 else start

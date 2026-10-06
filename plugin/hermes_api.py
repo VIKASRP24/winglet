@@ -605,6 +605,15 @@ def change_routine(job_id: str, action: str, updates: Optional[dict] = None) -> 
 # -- goals ---------------------------------------------------------------------------------
 
 
+def goals_available() -> bool:
+    """Whether this Hermes has standing goals (/goal). Older versions don't."""
+    try:
+        import hermes_cli.goals  # noqa: F401
+    except Exception:
+        return False
+    return True
+
+
 def chat_goal(runner, session_key: str) -> Optional[dict]:
     """The standing goal (/goal) a chat's Hermes session is working on, or None. Read-only: the app
     changes goals by sending /goal and /subgoal, so Hermes's own rules and judge apply."""

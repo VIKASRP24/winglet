@@ -1,7 +1,11 @@
 """Goals, message search and the files in a chat."""
 
+import sys
+from types import ModuleType
+
 import pytest
 
+from plugin import hermes_api
 from plugin.hub import Hub, _snippet
 from plugin.store import Store
 from test_trust import pair_phone
@@ -85,12 +89,32 @@ async def test_search_treats_wildcards_as_text(client, hub):
     assert len(results) == 1
 
 
+async def test_search_matches_every_word_across_line_breaks(client, hub):
+    owner = await pair_phone(client, hub)
+    hub.store.add_message("trip", "bot", "Found a place in Lisbon\nhotel Avenida, 140 a night")
+    hub.store.add_message("trip", "bot", "Lisbon is sunny")
+    for q in ("lisbon hotel", "hotel  lisbon"):
+        results = (await (await client.get("/api/search", params={"q": q}, headers=owner.auth)).json())["results"]
+        assert len(results) == 1 and "Lisbon hotel Avenida" in results[0]["snippet"]
+
+
 def test_snippets_center_on_the_match():
     text = "word " * 40 + "the needle is here " + "tail " * 40
     snip = _snippet(text, "needle")
     assert "needle" in snip and snip.startswith("…") and snip.endswith("…")
     assert not snip[1:].startswith(" ")
     assert _snippet("short needle", "needle") == "short needle"
+    # Words that aren't next to each other: centered on the earliest one.
+    spread = "word " * 40 + "the hotel " + "word " * 40 + "in lisbon"
+    assert "the hotel" in _snippet(spread, "lisbon hotel")
+
+
+def test_goals_are_only_offered_when_hermes_has_them(monkeypatch):
+    monkeypatch.setitem(sys.modules, "hermes_cli", ModuleType("hermes_cli"))
+    monkeypatch.setitem(sys.modules, "hermes_cli.goals", None)
+    assert hermes_api.goals_available() is False
+    monkeypatch.setitem(sys.modules, "hermes_cli.goals", ModuleType("hermes_cli.goals"))
+    assert hermes_api.goals_available() is True
 
 
 async def test_files_lists_everything_shared_newest_first(client, hub):
