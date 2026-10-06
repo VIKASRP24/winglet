@@ -1,27 +1,33 @@
-import { LinearGradient } from 'expo-linear-gradient';
 import { router, useLocalSearchParams } from 'expo-router';
-import { BellRing, ChevronLeft, QrCode, Server as ServerIcon, ShieldCheck, Share, SquarePlus } from '../components/icons';
 import { useEffect, useRef, useState } from 'react';
-import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { KeyboardAvoidingView, Platform, ScrollView, Text, useWindowDimensions, View } from 'react-native';
+import Animated, { FadeInDown, ZoomIn } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import Svg, { Defs, RadialGradient, Rect, Stop } from 'react-native-svg';
+import { BotAvatar } from '../components/BotAvatar';
+import { BellRing, ChevronLeft, QrCode, Server as ServerIcon, Share, ShieldCheck, SquarePlus } from '../components/icons';
 import { Logo } from '../components/Logo';
-import { Button, Field, GradientButton, IconButton } from '../components/ui';
+import { Button, Field, IconButton } from '../components/ui';
 import { defaultDeviceName, fetchInfo, normalizeUrl, pair, parsePairLink } from '../lib/api';
 import { isIOS, isStandalone } from '../lib/push';
 import { useApp } from '../lib/store';
-import { colors, fonts, radius } from '../lib/theme';
+import { BRAND } from '../lib/theme';
+import { makeStyles, useTheme } from '../lib/themeContext';
 
 const FEATURES = [
   { icon: ServerIcon, title: 'Runs on your machine', text: 'Your Hermes agents, your models, your data.' },
   { icon: BellRing, title: 'Taps you when needed', text: 'Approvals, questions and results as notifications.' },
-  { icon: ShieldCheck, title: 'One tap to approve', text: 'Stay in control of anything risky, from anywhere.' },
+  { icon: ShieldCheck, title: 'You stay in control', text: 'Approve anything risky, from anywhere.' },
 ];
 
 export default function PairScreen() {
+  const t = useTheme();
+  const s = useStyles();
   const insets = useSafeAreaInsets();
+  const { width } = useWindowDimensions();
   const params = useLocalSearchParams<{ code?: string; url?: string }>();
-  const hasServers = useApp((s) => s.servers.length > 0);
-  const addServer = useApp((s) => s.addServer);
+  const hasServers = useApp((st) => st.servers.length > 0);
+  const addServer = useApp((st) => st.addServer);
   const [url, setUrl] = useState(params.url ?? '');
   const [code, setCode] = useState(params.code ?? '');
   const [deviceName, setDeviceName] = useState(defaultDeviceName());
@@ -73,83 +79,91 @@ export default function PairScreen() {
   const showInstall = iosBrowser && !skipInstall;
 
   return (
-    <KeyboardAvoidingView style={{ flex: 1, backgroundColor: colors.rail }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-      <LinearGradient colors={['#2A2170', '#1E1F22']} locations={[0, 0.55]} style={StyleSheet.absoluteFill} />
-      <ScrollView contentContainerStyle={[styles.scroll, { paddingTop: insets.top + 16, paddingBottom: insets.bottom + 24 }]} keyboardShouldPersistTaps="handled">
+    <KeyboardAvoidingView style={s.root} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 560 }}>
+        <Svg width={width} height={560}>
+          <Defs>
+            <RadialGradient id="g1" cx="30%" cy="12%" rx="65%" ry="40%">
+              <Stop offset="0" stopColor={BRAND.from} stopOpacity={t.scheme === 'dark' ? 0.45 : 0.22} />
+              <Stop offset="1" stopColor={BRAND.from} stopOpacity={0} />
+            </RadialGradient>
+            <RadialGradient id="g2" cx="85%" cy="28%" rx="55%" ry="35%">
+              <Stop offset="0" stopColor={BRAND.to} stopOpacity={t.scheme === 'dark' ? 0.35 : 0.18} />
+              <Stop offset="1" stopColor={BRAND.to} stopOpacity={0} />
+            </RadialGradient>
+          </Defs>
+          <Rect x={0} y={0} width={width} height={560} fill="url(#g1)" />
+          <Rect x={0} y={0} width={width} height={560} fill="url(#g2)" />
+        </Svg>
+      </View>
+      <ScrollView contentContainerStyle={[s.scroll, { paddingTop: insets.top + 12, paddingBottom: insets.bottom + 28 }]} keyboardShouldPersistTaps="handled">
         {hasServers ? (
-          <IconButton label="Back" onPress={() => (router.canGoBack() ? router.back() : router.replace('/'))} style={{ alignSelf: 'flex-start' }}>
-            <ChevronLeft size={26} color={colors.textDim} />
+          <IconButton label="Back" variant="filled" style={{ alignSelf: 'flex-start' }} onPress={() => (router.canGoBack() ? router.back() : router.replace('/'))}>
+            <ChevronLeft size={24} color={t.colors.text} />
           </IconButton>
         ) : null}
-        <View style={styles.hero}>
-          <Logo size={84} />
-          <Text style={styles.brand}>Winglet</Text>
-          <Text style={styles.tagline}>{hasServers ? 'Add another bot' : 'Your agents, in your pocket.'}</Text>
+
+        <Animated.View entering={ZoomIn.springify().damping(14)} style={s.family}>
+          <BotAvatar name="atlas" size={58} mood="happy" animated style={{ marginRight: -14, marginTop: 26 }} />
+          <BotAvatar name="hermes" size={92} mood="idle" animated glow />
+          <BotAvatar name="nova" size={58} mood="idle" animated style={{ marginLeft: -14, marginTop: 26 }} />
+        </Animated.View>
+        <View style={s.hero}>
+          <View style={s.brandRow}><Logo size={28} /><Text style={s.brand}>Winglet</Text></View>
+          <Text style={s.tagline}>{hasServers ? 'Add another bot' : 'Your agents,\nin your pocket.'}</Text>
         </View>
 
         {!hasServers ? (
-          <View style={styles.features}>
-            {FEATURES.map(({ icon: Icon, title, text }) => (
-              <View key={title} style={styles.feature}>
-                <View style={styles.featureIcon}><Icon size={20} color="#B9C0FF" /></View>
+          <View style={s.features}>
+            {FEATURES.map(({ icon: Icon, title, text }, i) => (
+              <Animated.View key={title} entering={FadeInDown.delay(120 + i * 80).springify().damping(18)} style={s.feature}>
+                <View style={s.featureIcon}><Icon size={20} color={t.colors.onAccentSoft} /></View>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.featureTitle}>{title}</Text>
-                  <Text style={styles.featureText}>{text}</Text>
+                  <Text style={s.featureTitle}>{title}</Text>
+                  <Text style={s.featureText}>{text}</Text>
                 </View>
-              </View>
+              </Animated.View>
             ))}
           </View>
         ) : null}
 
-        <View style={styles.card}>
+        <Animated.View entering={FadeInDown.delay(320).springify().damping(18)} style={s.card}>
           {showInstall ? (
             <>
-              <Text style={styles.cardTitle}>Install Winglet on your iPhone</Text>
-              <Text style={styles.cardText}>Notifications on iPhone need Winglet on your Home Screen. It takes 5 seconds:</Text>
-              <View style={styles.step}><Share size={18} color={colors.link} /><Text style={styles.stepText}>Tap <Text style={styles.bold}>Share</Text> in Safari's toolbar</Text></View>
-              <View style={styles.step}><SquarePlus size={18} color={colors.link} /><Text style={styles.stepText}>Choose <Text style={styles.bold}>Add to Home Screen</Text></Text></View>
-              <View style={styles.step}><QrCode size={18} color={colors.link} /><Text style={styles.stepText}>Open Winglet from your Home Screen and enter code <Text style={styles.code}>{formatCode(params.code ?? '')}</Text></Text></View>
+              <Text style={s.cardTitle}>Install Winglet on your iPhone</Text>
+              <Text style={s.cardText}>Notifications on iPhone need Winglet on your Home Screen. It takes five seconds:</Text>
+              <View style={s.step}><Share size={18} color={t.colors.accent} /><Text style={s.stepText}>Tap <Text style={s.bold}>Share</Text> in Safari's toolbar</Text></View>
+              <View style={s.step}><SquarePlus size={18} color={t.colors.accent} /><Text style={s.stepText}>Choose <Text style={s.bold}>Add to Home Screen</Text></Text></View>
+              <View style={s.step}><QrCode size={18} color={t.colors.accent} /><Text style={s.stepText}>Open Winglet from your Home Screen and enter code <Text style={s.code}>{formatCode(params.code ?? '')}</Text></Text></View>
               <Button title="Continue in Safari instead" variant="ghost" onPress={() => setSkipInstall(true)} />
             </>
           ) : (
             <>
-              <Text style={styles.cardTitle}>{params.code ? 'Pairing…' : 'Connect to your Hermes'}</Text>
-              <Text style={styles.cardText}>
-                On the machine running Hermes, run <Text style={styles.code}>hermes winglet pair</Text> and {Platform.OS === 'web' ? 'enter the code below.' : 'scan the QR code it shows.'}
+              <Text style={s.cardTitle}>{params.code ? 'Pairing…' : 'Connect to your Hermes'}</Text>
+              <Text style={s.cardText}>
+                On the machine running Hermes, run <Text style={s.code}>hermes winglet pair</Text> and {Platform.OS === 'web' ? 'enter the code below.' : 'scan the QR code it shows.'}
               </Text>
               {Platform.OS !== 'web' ? (
-                <GradientButton title="Scan QR code" icon={<QrCode size={20} color={colors.white} />} onPress={() => router.push('/scan')} />
+                <Button size="lg" title="Scan QR code" icon={<QrCode size={20} color={t.colors.onAccent} />} onPress={() => router.push('/scan')} />
               ) : null}
               {manual ? (
                 <View style={{ gap: 14, marginTop: 4 }}>
                   <Field label="Server address" value={url} onChangeText={setUrl} placeholder="192.168.1.20:8787 or https://box.ts.net" autoCapitalize="none" autoCorrect={false} keyboardType="url" />
-                  <Field
-                    label="Pairing code"
-                    value={code}
-                    onChangeText={setCode}
-                    placeholder="ABCD-2345"
-                    autoCapitalize="characters"
-                    autoCorrect={false}
-                    style={styles.codeInput}
-                    onSubmitEditing={() => connect()}
-                  />
+                  <Field label="Pairing code" value={code} onChangeText={setCode} placeholder="ABCD-2345" autoCapitalize="characters" autoCorrect={false}
+                    style={s.codeInput} onSubmitEditing={() => connect()} />
                   <Field label="This device's name" value={deviceName} onChangeText={setDeviceName} placeholder="My phone" />
-                  {Platform.OS === 'web' ? (
-                    <GradientButton title="Connect" loading={busy} onPress={() => connect()} />
-                  ) : (
-                    <Button title="Connect" loading={busy} onPress={() => connect()} size="lg" />
-                  )}
+                  <Button size="lg" title="Connect" loading={busy} onPress={() => connect()} variant={Platform.OS === 'web' ? 'primary' : 'secondary'} />
                 </View>
               ) : (
                 <Button title="Enter a code instead" variant="ghost" onPress={() => setManual(true)} />
               )}
-              {error ? <Text style={styles.error}>{error}</Text> : null}
+              {error ? <Text style={s.error} accessibilityRole="alert">{error}</Text> : null}
             </>
           )}
-        </View>
+        </Animated.View>
 
-        <Text style={styles.footer}>
-          New to this? Winglet is an app for <Text style={styles.bold}>Hermes Agent</Text>. Install the Winglet plugin on your Hermes machine first — see github.com/VIKASRP24/winglet
+        <Text style={s.footer}>
+          New here? Winglet is an app for <Text style={s.bold}>Hermes Agent</Text>. Install the Winglet plugin on your Hermes machine first: see github.com/VIKASRP24/winglet
         </Text>
       </ScrollView>
     </KeyboardAvoidingView>
@@ -161,27 +175,33 @@ function formatCode(code: string) {
   return c.length === 8 ? `${c.slice(0, 4)}-${c.slice(4)}` : c;
 }
 
-const styles = StyleSheet.create({
+const useStyles = makeStyles((t) => ({
+  root: { flex: 1, backgroundColor: t.colors.bg },
   scroll: { flexGrow: 1, paddingHorizontal: 20, alignItems: 'center', gap: 22 },
-  hero: { alignItems: 'center', gap: 6, marginTop: 20 },
-  brand: { color: colors.white, fontFamily: fonts.extrabold, fontSize: 36, letterSpacing: -0.8, marginTop: 10 },
-  tagline: { color: '#C9CDFB', fontFamily: fonts.medium, fontSize: 17 },
-  features: { width: '100%', maxWidth: 440, gap: 14 },
-  feature: { flexDirection: 'row', alignItems: 'center', gap: 14 },
-  featureIcon: { width: 40, height: 40, borderRadius: 12, backgroundColor: 'rgba(88,101,242,0.22)', alignItems: 'center', justifyContent: 'center' },
-  featureTitle: { color: colors.text, fontFamily: fonts.bold, fontSize: 15.5 },
-  featureText: { color: colors.textMuted, fontFamily: fonts.regular, fontSize: 14, marginTop: 1 },
-  card: {
-    width: '100%', maxWidth: 440, backgroundColor: colors.chat, borderRadius: radius.xl, padding: 20, gap: 14,
-    borderWidth: 1, borderColor: colors.border,
+  family: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'center', marginTop: 24 },
+  hero: { alignItems: 'center', gap: 10 },
+  brandRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  brand: { ...t.type.heading, color: t.colors.text },
+  tagline: { ...t.type.display, fontSize: 34, lineHeight: 40, color: t.colors.text, textAlign: 'center' },
+  features: { width: '100%', maxWidth: 440, gap: 10 },
+  feature: {
+    flexDirection: 'row', alignItems: 'center', gap: 14, padding: 14, borderRadius: t.radius.lg,
+    backgroundColor: t.colors.surface, borderWidth: 1, borderColor: t.colors.border,
   },
-  cardTitle: { color: colors.text, fontFamily: fonts.extrabold, fontSize: 21 },
-  cardText: { color: colors.textMuted, fontFamily: fonts.regular, fontSize: 15, lineHeight: 22 },
-  code: { fontFamily: fonts.mono, color: colors.text, backgroundColor: colors.rail, fontSize: 14 },
-  codeInput: { fontFamily: fonts.bold, fontSize: 22, letterSpacing: 4, textAlign: 'center' },
-  bold: { fontFamily: fonts.bold, color: colors.text },
-  step: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: colors.rail, borderRadius: radius.md, padding: 12 },
-  stepText: { flex: 1, color: colors.textDim, fontFamily: fonts.regular, fontSize: 15, lineHeight: 21 },
-  error: { color: colors.red, fontFamily: fonts.medium, fontSize: 14, lineHeight: 20 },
-  footer: { color: colors.textFaint, fontFamily: fonts.regular, fontSize: 13, lineHeight: 19, textAlign: 'center', maxWidth: 400 },
-});
+  featureIcon: { width: 40, height: 40, borderRadius: 13, backgroundColor: t.colors.accentSoft, alignItems: 'center', justifyContent: 'center' },
+  featureTitle: { ...t.type.bodyStrong, color: t.colors.text },
+  featureText: { ...t.type.callout, color: t.colors.textSecondary, marginTop: 1 },
+  card: {
+    width: '100%', maxWidth: 440, backgroundColor: t.colors.surface, borderRadius: t.radius.xl, padding: 20, gap: 14,
+    borderWidth: 1, borderColor: t.colors.border,
+  },
+  cardTitle: { ...t.type.title, color: t.colors.text },
+  cardText: { ...t.type.callout, fontSize: 15, lineHeight: 22, color: t.colors.textSecondary },
+  code: { fontFamily: t.fonts.mono, color: t.colors.text, backgroundColor: t.colors.surfaceSunken, fontSize: 14 },
+  codeInput: { fontFamily: t.fonts.bold, fontSize: 22, letterSpacing: 4, textAlign: 'center' },
+  bold: { fontFamily: t.fonts.semibold, color: t.colors.text },
+  step: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: t.colors.surfaceSunken, borderRadius: t.radius.md, padding: 12 },
+  stepText: { flex: 1, ...t.type.callout, fontSize: 15, color: t.colors.text },
+  error: { ...t.type.callout, color: t.colors.danger },
+  footer: { ...t.type.caption, fontFamily: t.fonts.regular, color: t.colors.textSecondary, textAlign: 'center', maxWidth: 400, lineHeight: 18 },
+}));

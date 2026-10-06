@@ -5,16 +5,17 @@ import { Inter_700Bold } from '@expo-google-fonts/inter/700Bold';
 import { Inter_800ExtraBold } from '@expo-google-fonts/inter/800ExtraBold';
 import { useFonts } from 'expo-font';
 import { Stack } from 'expo-router';
-import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
 import { AppState, Platform, View } from 'react-native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { Toasts } from '../components/Toasts';
 import { watchNetwork } from '../lib/network';
 import { attachPersistence } from '../lib/persist';
+import { usePrefs } from '../lib/prefs';
 import { registerServiceWorker } from '../lib/push';
 import { useApp } from '../lib/store';
-import { colors } from '../lib/theme';
+import { ThemeProvider, useTheme } from '../lib/themeContext';
 
 export default function RootLayout() {
   const [fontsLoaded, fontError] = useFonts({ Inter_400Regular, Inter_500Medium, Inter_600SemiBold, Inter_700Bold, Inter_800ExtraBold });
@@ -22,13 +23,16 @@ export default function RootLayout() {
   const init = useApp((s) => s.init);
   const setForeground = useApp((s) => s.setForeground);
   const setNetwork = useApp((s) => s.setNetwork);
+  const prefsLoaded = usePrefs((s) => s.loaded);
+  const loadPrefs = usePrefs((s) => s.load);
 
   useEffect(() => {
     const detach = attachPersistence();
+    loadPrefs();
     init();
     registerServiceWorker();
     return detach;
-  }, [init]);
+  }, [init, loadPrefs]);
 
   useEffect(() => watchNetwork(setNetwork), [setNetwork]);
 
@@ -42,13 +46,30 @@ export default function RootLayout() {
     return () => sub.remove();
   }, [setForeground]);
 
-  // A font that fails to load falls back to the system font rather than a blank screen.
-  if ((!fontsLoaded && !fontError) || !ready) return <View style={{ flex: 1, backgroundColor: colors.rail }} />;
-
   return (
-    <SafeAreaProvider style={{ backgroundColor: colors.rail }}>
-      <StatusBar style="light" />
-      <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.chat }, animation: 'slide_from_right' }} />
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <ThemeProvider>
+        {/* A font that fails to load falls back to the system font rather than a blank screen. */}
+        {(!fontsLoaded && !fontError) || !ready || !prefsLoaded ? <Splash /> : <Navigator />}
+      </ThemeProvider>
+    </GestureHandlerRootView>
+  );
+}
+
+function Splash() {
+  const t = useTheme();
+  return <View style={{ flex: 1, backgroundColor: t.colors.bg }} />;
+}
+
+function Navigator() {
+  const t = useTheme();
+  return (
+    <SafeAreaProvider style={{ backgroundColor: t.colors.bg }}>
+      <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: t.colors.bg }, animation: 'slide_from_right' }}>
+        <Stack.Screen name="(tabs)" options={{ animation: 'fade' }} />
+        <Stack.Screen name="pair" options={{ animation: 'fade_from_bottom' }} />
+        <Stack.Screen name="scan" options={{ animation: 'fade', presentation: 'fullScreenModal' }} />
+      </Stack>
       <Toasts />
     </SafeAreaProvider>
   );

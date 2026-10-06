@@ -12,12 +12,15 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="Winglet" />
     <style>
-      html, body { height: 100%; margin: 0; background: #1e1f22; }
+      html, body { height: 100%; margin: 0; background: #000; }
+      @media (prefers-color-scheme: light) { html, body { background: #f6f6f9; } }
       body { overflow: hidden; overscroll-behavior: none; -webkit-tap-highlight-color: transparent; }
       #root { display: flex; height: 100%; flex: 1; }
       input, textarea { outline: none; }
+      /* Keyboard users see where they are; mouse and touch users don't get rings. */
+      [tabindex]:focus-visible, button:focus-visible, a:focus-visible { outline: 2px solid #8b7cff; outline-offset: 2px; border-radius: 12px; }
       ::-webkit-scrollbar { width: 8px; height: 8px; }
-      ::-webkit-scrollbar-thumb { background: #1a1b1e; border-radius: 8px; }
+      ::-webkit-scrollbar-thumb { background: rgba(128,128,140,0.35); border-radius: 8px; }
       ::-webkit-scrollbar-track { background: transparent; }
     </style>
   </head>

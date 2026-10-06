@@ -40,6 +40,8 @@ export type ServerState = {
   pending: number;
   typing: Record<string, number>;
   outbox: OutboxEntry[];
+  /** When the agent last finished a reply, for a moment of celebration on its face. */
+  lastReplyAt?: number;
 };
 
 type Selection = { serverId?: string; chatId?: string };
@@ -244,7 +246,7 @@ export const useApp = create<AppState>((set, get) => {
           patch(serverId, (s) => {
             const typing = { ...s.typing };
             delete typing[ev.chat_id];
-            return { typing };
+            return { typing, lastReplyAt: Date.now() };
           });
         }
         const vis = get().visibleChat;
@@ -281,7 +283,8 @@ export const useApp = create<AppState>((set, get) => {
         const item = ev.item as InboxItem;
         patch(serverId, (s) => ({ inbox: { ...s.inbox, [item.id]: item }, pending: ev.pending ?? s.pending }));
         if (ev.type === 'inbox.new' && item.kind !== 'result' && server) {
-          toast({ serverId, title: `${server.bot.title} · ${item.title}`, body: item.body.slice(0, 140), href: `/inbox` });
+          toast({ serverId, title: `${server.bot.title} · ${item.title}`, body: item.body.slice(0, 140),
+            href: `/inbox?server=${encodeURIComponent(serverId)}&item=${encodeURIComponent(item.id)}` });
         }
         break;
       }

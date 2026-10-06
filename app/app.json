@@ -6,8 +6,8 @@
     "scheme": "winglet",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "dark",
-    "backgroundColor": "#1E1F22",
+    "userInterfaceStyle": "automatic",
+    "backgroundColor": "#000000",
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "io.github.vikasrp24.winglet"
@@ -29,8 +29,8 @@
       "favicon": "./assets/favicon.png",
       "name": "Winglet",
       "shortName": "Winglet",
-      "themeColor": "#1E1F22",
-      "backgroundColor": "#1E1F22"
+      "themeColor": "#000000",
+      "backgroundColor": "#000000"
     },
     "plugins": [
       "expo-router",

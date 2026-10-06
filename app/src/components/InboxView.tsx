@@ -1,113 +1,131 @@
-import { router } from 'expo-router';
-import { ChevronLeft, Inbox as InboxIcon } from './icons';
-import { useEffect, useMemo } from 'react';
-import { FlatList, StyleSheet, Text, View } from 'react-native';
+import { router, useLocalSearchParams } from 'expo-router';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { FlatList, ScrollView, Text, useWindowDimensions, View } from 'react-native';
+import Animated, { FadeInDown } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { ago, moodOf } from '../lib/agent';
 import { useApp } from '../lib/store';
-import { colors, fonts } from '../lib/theme';
+import { WIDE_BREAKPOINT } from '../lib/theme';
+import { makeStyles, useTheme } from '../lib/themeContext';
 import type { InboxItem, Server } from '../lib/types';
 import { BotAvatar } from './BotAvatar';
+import { CheckCheck } from './icons';
 import { InboxCard } from './InboxCards';
-import { IconButton, SectionLabel } from './ui';
+import { useTabBarSpace } from './TabBar';
+import { Chip, Segmented } from './ui';
 
-type Entry = { server: Server; item: InboxItem } | { header: string };
+type Entry = { server: Server; item: InboxItem };
 
-/** Everything that needs you, across every paired bot. */
-export function InboxView({ showBack, onlyServerId }: { showBack?: boolean; onlyServerId?: string }) {
+/** Everything that needs you, across every paired bot, with a filter per bot. */
+export function InboxView() {
+  const t = useTheme();
+  const s = useStyles();
   const insets = useSafeAreaInsets();
-  const servers = useApp((s) => s.servers);
-  const runtime = useApp((s) => s.runtime);
-  const loadInbox = useApp((s) => s.loadInbox);
+  const tabSpace = useTabBarSpace();
+  const { width } = useWindowDimensions();
+  const params = useLocalSearchParams<{ item?: string; server?: string }>();
+  const servers = useApp((st) => st.servers);
+  const runtime = useApp((st) => st.runtime);
+  const loadInbox = useApp((st) => st.loadInbox);
+  const [view, setView] = useState<'pending' | 'all'>('pending');
+  const [only, setOnly] = useState<string | null>(null);
+  const list = useRef<FlatList<Entry>>(null);
 
   useEffect(() => {
-    servers.forEach((s) => (!onlyServerId || s.id === onlyServerId) && loadInbox(s.id));
-  }, [servers, onlyServerId, loadInbox]);
+    servers.forEach((srv) => loadInbox(srv.id));
+  }, [servers, loadInbox]);
 
   const entries = useMemo(() => {
-    const all: { server: Server; item: InboxItem }[] = [];
+    const all: Entry[] = [];
     for (const server of servers) {
-      if (onlyServerId && server.id !== onlyServerId) continue;
+      if (only && server.id !== only) continue;
       for (const item of Object.values(runtime[server.id]?.inbox ?? {})) all.push({ server, item });
     }
     all.sort((a, b) => b.item.created_at - a.item.created_at);
     const pending = all.filter((e) => e.item.status === 'pending');
-    const earlier = all.filter((e) => e.item.status !== 'pending').slice(0, 30);
-    const out: Entry[] = [];
-    if (pending.length) out.push({ header: `Needs you · ${pending.length}` }, ...pending);
-    if (earlier.length) out.push({ header: 'Recent' }, ...earlier);
-    return out;
-  }, [servers, runtime, onlyServerId]);
+    return view === 'pending' ? pending : [...pending, ...all.filter((e) => e.item.status !== 'pending').slice(0, 60)];
+  }, [servers, runtime, only, view]);
 
-  const title = onlyServerId ? `${servers.find((s) => s.id === onlyServerId)?.bot.title ?? ''} inbox` : 'Inbox';
+  const pendingCount = servers.reduce((n, x) => n + (only && x.id !== only ? 0 : runtime[x.id]?.pending ?? 0), 0);
+
+  // A notification opens the exact card it was about.
+  useEffect(() => {
+    if (!params.item) return;
+    const target = entries.findIndex((e) => e.item.id === params.item);
+    if (target < 0) {
+      if (view === 'pending') setView('all');
+      return;
+    }
+    setTimeout(() => list.current?.scrollToIndex({ index: target, animated: true, viewPosition: 0.1 }), 300);
+  }, [params.item, entries, view]);
 
   return (
-    <View style={[styles.root, { paddingTop: insets.top }]}>
-      <View style={styles.header}>
-        {showBack ? (
-          <IconButton label="Back" onPress={() => (router.canGoBack() ? router.back() : router.replace('/'))}>
-            <ChevronLeft size={24} color={colors.textDim} />
-          </IconButton>
-        ) : null}
-        <InboxIcon size={20} color={colors.textMuted} />
-        <Text style={styles.title}>{title}</Text>
-      </View>
+    <View style={s.root}>
       <FlatList
+        ref={list}
         data={entries}
-        keyExtractor={(e, i) => ('header' in e ? `h${i}` : e.item.id)}
-        contentContainerStyle={{ padding: 12, paddingBottom: insets.bottom + 24, gap: 12, flexGrow: 1 }}
-        ListEmptyComponent={
-          <View style={styles.empty}>
-            <View style={styles.emptyIcon}><InboxIcon size={34} color={colors.accent} /></View>
-            <Text style={styles.emptyTitle}>You're all caught up</Text>
-            <Text style={styles.emptyText}>Approvals, questions and routine results from your bots show up here. You'll get a notification when something needs you.</Text>
+        keyExtractor={(e) => `${e.server.id}:${e.item.id}`}
+        onScrollToIndexFailed={() => undefined}
+        contentContainerStyle={[s.content, { paddingTop: insets.top + 8, paddingBottom: (width >= WIDE_BREAKPOINT ? 24 : tabSpace) + 8 }]}
+        ListHeaderComponent={
+          <View style={{ gap: 14, marginBottom: 6 }}>
+            <Text style={s.title} accessibilityRole="header">Inbox</Text>
+            <Segmented
+              label="Show"
+              value={view}
+              onChange={setView}
+              options={[{ value: 'pending', label: pendingCount ? `Needs you · ${pendingCount}` : 'Needs you' }, { value: 'all', label: 'Everything' }]}
+            />
+            {servers.length > 1 ? (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+                <Chip label="All bots" selected={!only} onPress={() => setOnly(null)} />
+                {servers.map((srv) => (
+                  <Chip key={srv.id} label={`${srv.bot.title}${runtime[srv.id]?.pending ? ` · ${runtime[srv.id]!.pending}` : ''}`}
+                    icon={<BotAvatar name={srv.bot.name} size={20} />} selected={only === srv.id} onPress={() => setOnly(only === srv.id ? null : srv.id)} />
+                ))}
+              </ScrollView>
+            ) : null}
           </View>
         }
-        renderItem={({ item: e }) =>
-          'header' in e ? (
-            <SectionLabel>{e.header}</SectionLabel>
-          ) : (
-            <View style={{ gap: 8 }}>
-              <View style={styles.meta}>
-                <BotAvatar name={e.server.bot.name} size={22} />
-                <Text style={styles.metaText} numberOfLines={1}>
-                  <Text style={styles.metaBot}>{e.server.bot.title}</Text>
-                  {'  ·  '}#{runtime[e.server.id]?.chats[e.item.chat_id]?.title ?? e.item.chat_id}
-                  {'  ·  '}{ago(e.item.created_at)}
-                </Text>
-                <Text
-                  style={styles.open}
-                  onPress={() => router.push(`/chat/${e.server.id}/${e.item.chat_id}`)}
-                >
-                  Open chat
-                </Text>
-              </View>
-              <InboxCard serverId={e.server.id} item={e.item} />
-            </View>
-          )
+        ItemSeparatorComponent={() => <View style={{ height: 14 }} />}
+        ListEmptyComponent={
+          <View style={s.empty}>
+            <View style={s.emptyIcon}><CheckCheck size={34} color={t.colors.onAccentSoft} /></View>
+            <Text style={s.emptyTitle}>{view === 'pending' ? "You're all caught up" : 'Nothing here yet'}</Text>
+            <Text style={s.emptyText}>Approvals, questions and routine results from your bots land here. You'll get a notification when something needs you.</Text>
+          </View>
         }
+        renderItem={({ item: e, index }) => (
+          <Animated.View entering={FadeInDown.delay(Math.min(index, 6) * 40).springify().damping(18)}
+            style={[{ gap: 8 }, params.item === e.item.id && s.highlight]}>
+            <View style={s.meta}>
+              <BotAvatar name={e.server.bot.name} size={24} mood={moodOf(runtime[e.server.id])} />
+              <Text style={s.metaText} numberOfLines={1}>
+                <Text style={s.metaBot}>{e.server.bot.title}</Text>
+                {'  ·  '}{runtime[e.server.id]?.chats[e.item.chat_id]?.kind === 'home' ? 'Updates' : `#${runtime[e.server.id]?.chats[e.item.chat_id]?.title ?? e.item.chat_id}`}
+                {'  ·  '}{ago(e.item.created_at)}
+              </Text>
+              <Text accessibilityRole="link" style={s.open} onPress={() => router.push(`/chat/${e.server.id}/${e.item.chat_id}`)}>Open chat</Text>
+            </View>
+            <InboxCard serverId={e.server.id} item={e.item} />
+          </Animated.View>
+        )}
       />
     </View>
   );
 }
 
-function ago(ts: number) {
-  const s = Math.max(0, Date.now() / 1000 - ts);
-  if (s < 60) return 'just now';
-  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
-  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
-  return `${Math.floor(s / 86400)}d ago`;
-}
-
-const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: colors.chat },
-  header: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: colors.divider },
-  title: { color: colors.text, fontFamily: fonts.bold, fontSize: 17 },
-  meta: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  metaText: { flex: 1, color: colors.textMuted, fontFamily: fonts.medium, fontSize: 12.5 },
-  metaBot: { color: colors.textDim, fontFamily: fonts.bold },
-  open: { color: colors.link, fontFamily: fonts.semibold, fontSize: 12.5 },
-  empty: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32, gap: 10 },
-  emptyIcon: { width: 72, height: 72, borderRadius: 24, backgroundColor: colors.accentSoft, alignItems: 'center', justifyContent: 'center', marginBottom: 6 },
-  emptyTitle: { color: colors.text, fontFamily: fonts.extrabold, fontSize: 21 },
-  emptyText: { color: colors.textMuted, fontFamily: fonts.regular, fontSize: 14.5, lineHeight: 21, textAlign: 'center', maxWidth: 380 },
-});
+const useStyles = makeStyles((t) => ({
+  root: { flex: 1, backgroundColor: t.colors.bg },
+  content: { paddingHorizontal: 16, flexGrow: 1, maxWidth: 760, width: '100%', alignSelf: 'center' },
+  title: { ...t.type.display, color: t.colors.text, marginTop: 52 },
+  meta: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 2 },
+  metaText: { flex: 1, ...t.type.caption, color: t.colors.textSecondary },
+  metaBot: { color: t.colors.text, fontFamily: t.fonts.semibold },
+  open: { ...t.type.caption, fontFamily: t.fonts.semibold, color: t.colors.accent, paddingVertical: 8, paddingLeft: 8 },
+  highlight: { borderRadius: t.radius.lg, padding: 6, margin: -6, backgroundColor: t.colors.accentSoft },
+  empty: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32, gap: 10, minHeight: 360 },
+  emptyIcon: { width: 76, height: 76, borderRadius: 26, backgroundColor: t.colors.accentSoft, alignItems: 'center', justifyContent: 'center', marginBottom: 6 },
+  emptyTitle: { ...t.type.title, color: t.colors.text },
+  emptyText: { ...t.type.callout, color: t.colors.textSecondary, textAlign: 'center', maxWidth: 360 },
+}));
