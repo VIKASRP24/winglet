@@ -1,16 +1,19 @@
 import Constants from 'expo-constants';
+import { useEffect, useState } from 'react';
+import { Platform } from 'react-native';
 import { Redirect, router } from 'expo-router';
 import { ScrollView, Text, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BotAvatar } from '../../components/BotAvatar';
 import { BotSwitcher } from '../../components/BotSwitcher';
-import { Activity, Bell, Info, MessageCircle, Palette, Plus, Smartphone, Sparkles } from '../../components/icons';
+import { Activity, Bell, Fingerprint, Info, MessageCircle, Palette, Plus, ShieldCheck, Smartphone, Sparkles } from '../../components/icons';
 import { useTabBarSpace } from '../../components/TabBar';
-import { ListGroup, ListRow, SectionHeader } from '../../components/ui';
+import { ListGroup, ListRow, SectionHeader, Toggle } from '../../components/ui';
+import { lockAvailable, unlock } from '../../lib/appLock';
 import { moodOf } from '../../lib/agent';
 import { connectionView } from '../../lib/connection';
 import { usePrefs } from '../../lib/prefs';
-import { useApp } from '../../lib/store';
+import { homeChat, type ServerState, useApp } from '../../lib/store';
 import { ACCENTS, WIDE_BREAKPOINT } from '../../lib/theme';
 import { makeStyles, useTheme } from '../../lib/themeContext';
 
@@ -52,12 +55,15 @@ export default function AgentTab() {
 
         <SectionHeader title="This bot" />
         <ListGroup>
-          <ListRow icon={<MessageCircle size={18} color={t.colors.onAccentSoft} />} title="Main chat" onPress={() => router.push(`/chat/${server.id}/general`)} />
+          <ListRow icon={<MessageCircle size={18} color={t.colors.onAccentSoft} />} title="Main chat" onPress={() => router.push(`/chat/${server.id}/${homeChat(rt)}`)} />
           <ListRow icon={<Sparkles size={18} color={t.colors.success} />} iconColor={t.colors.success} title="Updates" subtitle="Results from scheduled routines"
             onPress={() => router.push(`/chat/${server.id}/home`)} />
           <ListRow icon={<Activity size={18} color={t.colors.onAccentSoft} />} title="Connection" value={view.kind === 'online' ? 'Online' : view.title}
             onPress={() => router.push(`/diagnostics/${server.id}`)} />
         </ListGroup>
+
+        {rt?.info?.features?.roles || Platform.OS !== 'web' ? <SectionHeader title="Security" /> : null}
+        <SecurityRows rt={rt} />
 
         <SectionHeader title="Bots" />
         <ListGroup>
@@ -74,6 +80,36 @@ export default function AgentTab() {
         <Text style={s.footer}>Winglet {Constants.expoConfig?.version ?? ''} · open source · not affiliated with Nous Research</Text>
       </ScrollView>
     </View>
+  );
+}
+
+/** Devices and roles on this bot, and the optional app lock on this phone. */
+function SecurityRows({ rt }: { rt?: ServerState }) {
+  const t = useTheme();
+  const appLock = usePrefs((st) => st.prefs.appLock);
+  const update = usePrefs((st) => st.update);
+  const [canLock, setCanLock] = useState<boolean | null>(null);
+  useEffect(() => { lockAvailable().then(setCanLock); }, []);
+  const me = rt?.me;
+  if (!rt?.info?.features?.roles && Platform.OS === 'web') return null;
+  return (
+    <ListGroup>
+      {rt?.info?.features?.roles ? (
+        <ListRow icon={<ShieldCheck size={18} color={t.colors.onAccentSoft} />} title="Devices"
+          value={me ? `${me.role === 'owner' ? 'Owner' : 'Member'}${me.verified ? '' : ' · verify'}` : undefined}
+          onPress={() => router.push('/devices')} />
+      ) : null}
+      {Platform.OS !== 'web' ? (
+        <ListRow icon={<Fingerprint size={18} color={t.colors.onAccentSoft} />} title="App lock"
+          subtitle={canLock === false ? 'Set up a fingerprint, face or screen lock on this phone first' : 'Ask for your fingerprint or PIN after a minute away'}
+          right={<Toggle label="App lock" value={appLock} onValueChange={async (on) => {
+            if (!canLock) return;
+            // Turning it on proves the phone's unlock works, so nobody gets locked out.
+            if (on && !(await unlock('Turn on app lock'))) return;
+            update({ appLock: on });
+          }} />} />
+      ) : null}
+    </ListGroup>
   );
 }
 

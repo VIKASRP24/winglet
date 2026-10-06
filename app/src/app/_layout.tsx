@@ -9,7 +9,9 @@ import { useEffect } from 'react';
 import { AppState, Platform, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { LockScreen } from '../components/LockScreen';
 import { Toasts } from '../components/Toasts';
+import { lockOnStart, onAppVisibility } from '../lib/appLock';
 import { watchNetwork } from '../lib/network';
 import { attachPersistence } from '../lib/persist';
 import { usePrefs } from '../lib/prefs';
@@ -37,12 +39,19 @@ export default function RootLayout() {
   useEffect(() => watchNetwork(setNetwork), [setNetwork]);
 
   useEffect(() => {
+    if (prefsLoaded) lockOnStart();
+  }, [prefsLoaded]);
+
+  useEffect(() => {
     if (Platform.OS === 'web') {
       const onVis = () => setForeground(document.visibilityState === 'visible');
       document.addEventListener('visibilitychange', onVis);
       return () => document.removeEventListener('visibilitychange', onVis);
     }
-    const sub = AppState.addEventListener('change', (s) => setForeground(s === 'active'));
+    const sub = AppState.addEventListener('change', (s) => {
+      setForeground(s === 'active');
+      onAppVisibility(s === 'active');
+    });
     return () => sub.remove();
   }, [setForeground]);
 
@@ -71,6 +80,7 @@ function Navigator() {
         <Stack.Screen name="scan" options={{ animation: 'fade', presentation: 'fullScreenModal' }} />
       </Stack>
       <Toasts />
+      <LockScreen />
     </SafeAreaProvider>
   );
 }
