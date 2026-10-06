@@ -105,6 +105,16 @@ def test_registration_still_exposes_setup_when_server_dependencies_are_missing(a
     module.register(context)
     assert registrations["cli"]["name"] == "winglet"
     assert registrations["platform"]["install_hint"] == "hermes winglet setup"
+    assert registrations["platform"]["parse_target_ref_fn"]("home") == ("home", None)
+
+    # A Hermes that doesn't know target parsers still registers the platform.
+    def older(**kwargs):
+        if "parse_target_ref_fn" in kwargs:
+            raise TypeError("unexpected keyword argument 'parse_target_ref_fn'")
+        registrations.update(platform=kwargs)
+    registrations.clear()
+    module.register(SimpleNamespace(register_platform=older, register_cli_command=lambda **kwargs: None))
+    assert registrations["platform"]["name"] == "winglet"
 
 
 async def test_missing_or_withdrawn_identity_never_creates_an_actionable_card(adapter, monkeypatch):
