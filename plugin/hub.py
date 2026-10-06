@@ -7,7 +7,8 @@ Wire protocol (JSON over one WebSocket at ``/api/ws``; the app's first frame is
 ``{"type": "auth", "token"}`` so the token never sits in a URL; ``?token=`` still works for older apps):
 
 server -> app  ``{"type": "hello" | "message.new" | "message.update" | "message.delete" | "typing" |
-                  "chat.update" | "chat.delete" | "inbox.new" | "inbox.update" | "pong", ...}``
+                  "chat.update" | "chat.delete" | "inbox.new" | "inbox.update" | "system.paused" |
+                  "system.job" | "pong", ...}``
 app -> server  ``{"type": "message.send", "chat_id", "text", "client_id"}``,
                ``{"type": "inbox.respond", "id", "choice" | "answer"}``, ``{"type": "ping"}``
 """
@@ -44,6 +45,10 @@ VERSION = "0.1.2"
 PROTOCOL = 2
 MIN_APP_PROTOCOL = 1
 HOME_CHAT_ID = "home"
+RESTART_DELAY_SECONDS = 0.8
+UPDATE_TIMEOUT_SECONDS = 30 * 60
+UPDATE_CHECK_SECONDS = 10 * 60
+MAX_ROUTINE_PROMPT = 8000
 PUSH_DEBOUNCE_SECONDS = 2.5
 MAX_TEXT = 16_000
 PUSH_SUBJECT = "https://github.com/VIKASRP24/winglet"
@@ -94,6 +99,11 @@ ROUTE_POLICY = {
     "h_models": "owner", "h_providers": "owner", "h_identity": "owner", "h_memory": "owner", "h_usage": "owner",
     "h_model_default": "owner_signed", "h_provider_key": "owner_signed", "h_provider_key_delete": "owner_signed",
     "h_identity_put": "owner_signed", "h_memory_edit": "owner_signed",
+    "h_system": "owner", "h_system_updates": "owner", "h_jobs": "owner", "h_job": "owner", "h_logs": "owner",
+    "h_schedule": "owner", "h_schedule_parse": "owner",
+    "h_pause": "owner_signed", "h_restart": "owner_signed", "h_update": "owner_signed",
+    "h_routine_create": "owner_signed", "h_routine_edit": "owner_signed", "h_routine_delete": "owner_signed",
+    "h_routine_action": "owner_signed",
     "h_rotate_token": "signed",
     "h_device_update": "owner_signed", "h_device_delete": "owner_signed", "h_pairing_code": "owner_signed",
 }
@@ -118,6 +128,15 @@ def _json(data: Any, status: int = 200) -> web.Response:
 
 def _error(status: int, message: str) -> web.Response:
     return _json({"error": message}, status=status)
+
+
+def _iso_ts(value: Any) -> float:
+    """Seconds since the epoch for an ISO timestamp, or 0 when there isn't a readable one."""
+    from datetime import datetime
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).timestamp()
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def _clip(text: str, n: int) -> str:
@@ -165,6 +184,11 @@ class Hub:
         # chat id -> the model that chat is really using, when Hermes knows (installed by the adapter).
         self.chat_model: Optional[Callable[[str], Optional[Dict[str, Any]]]] = None
         self._pickers: Dict[str, Dict[str, Any]] = {}
+        # Restarts and updates outlive this process; jobs started by this one carry its boot id.
+        self.boot_id = new_id()
+        self.started_at = time.time()
+        self._tasks: Set[asyncio.Task] = set()
+        self._update_check: Dict[str, Any] = {}
         # Hermes-side callbacks, installed by the adapter.
         self.on_user_message: Optional[InboundFn] = None
         self.on_approval: Optional[ResolveFn] = None
@@ -223,6 +247,20 @@ class Hub:
         r.add_get("/api/memory", self.h_memory)
         r.add_post("/api/memory", self.h_memory_edit)
         r.add_get("/api/usage", self.h_usage)
+        r.add_get("/api/system", self.h_system)
+        r.add_get("/api/system/updates", self.h_system_updates)
+        r.add_post("/api/system/pause", self.h_pause)
+        r.add_post("/api/system/restart", self.h_restart)
+        r.add_post("/api/system/update", self.h_update)
+        r.add_get("/api/jobs", self.h_jobs)
+        r.add_get("/api/jobs/{job_id}", self.h_job)
+        r.add_get("/api/logs", self.h_logs)
+        r.add_get("/api/schedule", self.h_schedule)
+        r.add_post("/api/schedule", self.h_routine_create)
+        r.add_post("/api/schedule/parse", self.h_schedule_parse)
+        r.add_patch("/api/schedule/{routine_id}", self.h_routine_edit)
+        r.add_delete("/api/schedule/{routine_id}", self.h_routine_delete)
+        r.add_post("/api/schedule/{routine_id}/{action}", self.h_routine_action)
         r.add_get("/{tail:.*}", self.h_static)
         app.on_startup.append(self._start_janitor)
         app.on_shutdown.append(self._close_sockets)
@@ -231,14 +269,23 @@ class Hub:
     async def _start_janitor(self, _app: web.Application) -> None:
         if self._janitor is None:
             self._janitor = asyncio.create_task(self._janitor_loop())
+            self._spawn(self.reconcile_jobs())
 
     async def _janitor_loop(self) -> None:
         while True:
             try:
                 self.sweep_uploads()
+                self.expire_jobs()
             except Exception:
-                logger.warning("[winglet] upload cleanup failed", exc_info=True)
+                logger.warning("[winglet] cleanup failed", exc_info=True)
             await asyncio.sleep(JANITOR_SECONDS)
+
+    def _spawn(self, coro) -> asyncio.Task:
+        """A background task the hub keeps a reference to, so it isn't collected mid-run."""
+        task = asyncio.ensure_future(coro)
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+        return task
 
     def sweep_uploads(self, now: Optional[float] = None) -> int:
         """Delete uploads that were never sent within a day: drafts abandoned, sends that never happened."""
@@ -264,6 +311,8 @@ class Hub:
         if self._janitor is not None:
             self._janitor.cancel()
             self._janitor = None
+        for task in list(self._tasks):
+            task.cancel()
 
     @web.middleware
     async def _cors(self, request: web.Request, handler):
@@ -420,6 +469,7 @@ class Hub:
         return {"webpush": True, "ntfy": True, "approvals": True, "questions": True, "uploads": True, "voice": True,
                 "replies": True, "export": True, "mute": True, "status_updates": True, "roles": True,
                 "signed_actions": True, "ws_auth": True, "pickers": True, "agent": self.hermes is not None,
+                "control": self.hermes is not None,
                 "commands": self.commands_provider is not None}
 
     def about(self) -> Dict[str, Any]:
@@ -1042,7 +1092,7 @@ class Hub:
             await ws.send_json({"type": "hello", "server_id": self.server_id(), "bot": self.bot(), "device": device,
                                 "me": self.me(device), **self.about(), "chats": self.visible_chats(device),
                                 "typing": sorted(c for c in self._typing if self.can_see(device, self.store.get_chat(c))),
-                                "pending": self.pending_for(device)})
+                                "pending": self.pending_for(device), "paused": self.paused_for(device)})
             async for msg in ws:
                 if msg.type != WSMsgType.TEXT:
                     continue
@@ -1084,6 +1134,10 @@ class Hub:
         """Members only hear about their own chats; owners hear everything."""
         if device.get("role") == "owner":
             return True
+        if event.get("type") == "system.paused":
+            return True
+        if str(event.get("type") or "").startswith("system."):
+            return False
         if event.get("type") == "chat.delete":
             return event.get("owner_device") == device["id"]
         chat_id = event.get("chat_id")
@@ -1109,6 +1163,8 @@ class Hub:
             out = event
             if "pending" in event and device.get("role") != "owner":
                 out = {**event, "pending": self.pending_for(device)}
+            if event.get("type") == "system.paused" and device.get("role") != "owner":
+                out = {**event, "paused": self._member_pause(event.get("paused"))}
             try:
                 await ws.send_json(out)
             except Exception:
@@ -1406,6 +1462,306 @@ class Hub:
         except ValueError:
             return _error(400, "days must be a number")
         return _json(await self._call(self._need_hermes().usage, days))
+
+    # -- control center: health, pause, restart, updates, logs, schedule --------------------------
+
+    async def h_system(self, request: web.Request) -> web.Response:
+        """Everything the Server screen shows at once: versions, host health, pause and recent jobs."""
+        self._require(request)
+        h = self._need_hermes()
+        host = await asyncio.to_thread(h.system_stats)
+        try:
+            paused = await asyncio.to_thread(h.paused)
+            can_pause = True
+        except h.HermesUnavailable:
+            paused, can_pause = None, False
+        return _json({"version": VERSION, "hermes_version": self.hermes_version() or "",
+                       "uptime_seconds": int(time.time() - self.started_at), "host": host,
+                       "paused": paused, "can_pause": can_pause, "connection": self.connection,
+                       "devices": len(self.store.list_devices()), "jobs": self.store.list_jobs(limit=5)})
+
+    def paused_for(self, device: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Whether new work is on hold. Members learn that it is, not the owner's note about why."""
+        if self.hermes is None:
+            return None
+        try:
+            state = self.hermes.paused()
+        except Exception:
+            return None
+        return state if device.get("role") == "owner" else self._member_pause(state)
+
+    @staticmethod
+    def _member_pause(state: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        return {"reason": None, "engaged_at": state.get("engaged_at")} if state else None
+
+    async def h_pause(self, request: web.Request) -> web.Response:
+        """Hold all new work (Hermes's /pause) or let it continue. Running turns are not cut off."""
+        device = self._require(request)
+        body = await self._body(request)
+        on = bool(body.get("paused"))
+        reason = _clip(str(body.get("reason") or ""), 200) or f"Paused from {device['name']}"
+        state = await self._call(self._need_hermes().set_paused, on, reason)
+        self.audit("system.pause", device, f"paused new work: {reason}" if on else "resumed new work")
+        await self.broadcast({"type": "system.paused", "paused": state})
+        return _json({"paused": state})
+
+    def _busy_job(self) -> Optional[Dict[str, Any]]:
+        return next((j for j in self.store.list_jobs(running=True) if j["detail"].get("boot") == self.boot_id), None)
+
+    async def h_restart(self, request: web.Request) -> web.Response:
+        device = self._require(request)
+        h = self._need_hermes()
+        job = await self._begin_job(request, device, "restart", {"message": "Restarting…"})
+        if isinstance(job, web.Response):
+            return job
+        self.audit("system.restart", device, "restarted the gateway")
+        self._spawn(self._restart_soon(job["id"], h))
+        return _json({"job": job}, status=202)
+
+    async def h_update(self, request: web.Request) -> web.Response:
+        device = self._require(request)
+        h = self._need_hermes()
+        body = await self._body(request)
+        target = str(body.get("target") or "")
+        if target not in ("hermes", "winglet"):
+            return _error(400, "target must be hermes or winglet")
+        if target == "hermes":
+            detail = {"from": self.hermes_version() or "", "message": "Starting the update…"}
+        else:
+            detail = {"from": VERSION, "message": "Downloading the new version…"}
+        job = await self._begin_job(request, device, f"{target}_update", detail, body=body)
+        if isinstance(job, web.Response):
+            return job
+        self.audit("system.update", device, f"started a {'Hermes' if target == 'hermes' else 'Winglet'} update")
+        self._spawn(self._run_hermes_update(job["id"], h) if target == "hermes" else self._run_winglet_update(job["id"], h))
+        return _json({"job": job}, status=202)
+
+    async def _begin_job(self, request: web.Request, device: Dict[str, Any], kind: str, detail: Dict[str, Any],
+                         body: Optional[Dict[str, Any]] = None):
+        """Start a job, or return the one a retried request already started. One at a time."""
+        body = body if body is not None else await self._body(request)
+        key = str(body.get("idempotency_key") or "")[:64] or None
+        if key:
+            existing = self.store.job_by_key(key)
+            if existing is not None:
+                return _json({"job": existing}, status=202)
+        busy = self._busy_job()
+        if busy is not None:
+            return _json({"error": "Something else is already in progress. Wait for it to finish.", "job": busy}, status=409)
+        job, _ = self.store.create_job(kind, device_id=device["id"], idem_key=key, detail={**detail, "boot": self.boot_id})
+        await self._job_event(job)
+        return job
+
+    async def _job_event(self, job: Optional[Dict[str, Any]]) -> None:
+        if job is not None:
+            await self.broadcast({"type": "system.job", "job": job})
+
+    async def _finish_job(self, job_id: str, state: str, message: str, **detail: Any) -> None:
+        await self._job_event(self.store.update_job(job_id, state=state, message=message, finished_at=time.time(), **detail))
+
+    async def _restart_soon(self, job_id: str, h: Any) -> None:
+        await asyncio.sleep(RESTART_DELAY_SECONDS)  # let the response and the job event reach the phone
+        try:
+            pid = await asyncio.to_thread(h.spawn_restart)
+        except Exception as exc:
+            logger.warning("[winglet] restart failed", exc_info=True)
+            await self._finish_job(job_id, "failed", f"The restart couldn't start: {_clip(str(exc), 300)}")
+            return
+        await self._job_event(self.store.update_job(job_id, pid=pid, message="Restarting. Back in a moment…"))
+
+    async def _run_hermes_update(self, job_id: str, h: Any) -> None:
+        try:
+            started = await h.start_hermes_update()
+        except Exception as exc:
+            logger.warning("[winglet] hermes update failed to start", exc_info=True)
+            await self._finish_job(job_id, "failed", f"The update couldn't start: {_clip(str(exc), 300)}")
+            return
+        if not started.get("ok"):
+            await self._finish_job(job_id, "failed", str(started.get("message") or "This install can't update itself."),
+                                   command=str(started.get("update_command") or ""))
+            return
+        await self._job_event(self.store.update_job(job_id, action_id=started.get("action_id") or "",
+                                                    message="Updating Hermes. This can take a few minutes…"))
+        # Hermes restarts the gateway when it's done, which ends this process; the next one finishes
+        # the job in reconcile_jobs. If it doesn't restart, the update's own status says how it went.
+        deadline = time.monotonic() + UPDATE_TIMEOUT_SECONDS
+        while time.monotonic() < deadline:
+            await asyncio.sleep(3)
+            try:
+                status = await h.hermes_update_status()
+            except Exception:
+                continue
+            if status.get("running") or status.get("exit_code") is None:
+                self.store.update_job(job_id, lines=list(status.get("lines") or [])[-12:])
+                continue
+            ok = status.get("exit_code") == 0
+            await self._finish_job(job_id, "succeeded" if ok else "failed",
+                                   "Hermes is up to date." if ok else "The update didn't finish. Its log is below.",
+                                   lines=list(status.get("lines") or [])[-20:])
+            return
+        await self._finish_job(job_id, "unknown", "The update is taking too long to report back. Check the server.")
+
+    async def _run_winglet_update(self, job_id: str, h: Any) -> None:
+        try:
+            code, lines = await h.update_winglet()
+        except Exception as exc:
+            logger.warning("[winglet] plugin update failed", exc_info=True)
+            await self._finish_job(job_id, "failed", f"The update couldn't start: {_clip(str(exc), 300)}")
+            return
+        if code != 0:
+            await self._finish_job(job_id, "failed", "The update didn't finish. Its output is below.", lines=lines[-20:])
+            return
+        if any("already up to date" in line.lower() for line in lines):
+            await self._finish_job(job_id, "succeeded", "Winglet is already up to date.", lines=lines[-6:])
+            return
+        await self._job_event(self.store.update_job(job_id, lines=lines[-12:], message="Updated. Restarting to load it…"))
+        await self._restart_soon(job_id, h)
+
+    async def reconcile_jobs(self) -> None:
+        """Finish the jobs an earlier process started: a restart or update that ended it is done now."""
+        h = self.hermes
+        for job in self.store.list_jobs(running=True, limit=50):
+            if job["detail"].get("boot") == self.boot_id:
+                continue
+            kind, detail = job["kind"], job["detail"]
+            if kind == "restart":
+                await self._finish_job(job["id"], "succeeded", "Back online.")
+            elif kind == "winglet_update":
+                await self._finish_job(job["id"], "succeeded", f"Updated to Winglet {VERSION}.", to=VERSION)
+            elif kind == "hermes_update":
+                now = self.hermes_version() or ""
+                state, message, lines = "unknown", "The server restarted, but the update didn't report how it went.", []
+                if h is not None:
+                    try:
+                        status = await h.hermes_update_status()
+                    except Exception:
+                        status = {}
+                    lines = list(status.get("lines") or [])[-20:]
+                    receipt = status.get("receipt") or {}
+                    ours = detail.get("action_id") and status.get("action_id") == detail.get("action_id")
+                    recent = _iso_ts(receipt.get("started_at")) >= job["created_at"] - 5
+                    if ours or (recent and receipt.get("outcome") == "success"):
+                        state, message = "succeeded", "Hermes is up to date."
+                    elif recent and receipt.get("outcome"):
+                        state, message = "failed", "The update didn't finish. Its log is below."
+                if state == "unknown" and now and now != detail.get("from"):
+                    state, message = "succeeded", "Hermes is up to date."
+                await self._finish_job(job["id"], state, message, to=now, lines=lines)
+            else:
+                await self._finish_job(job["id"], "unknown", "Interrupted.")
+
+    def expire_jobs(self, now: Optional[float] = None) -> None:
+        """A job that never reported back (the server didn't come up again on its own) stops spinning."""
+        cutoff = (now or time.time()) - UPDATE_TIMEOUT_SECONDS - 60
+        for job in self.store.list_jobs(running=True, limit=50):
+            if job["updated_at"] < cutoff:
+                self.store.update_job(job["id"], state="unknown", message="This never reported back. Check the server.",
+                                      finished_at=time.time())
+
+    async def h_jobs(self, request: web.Request) -> web.Response:
+        self._require(request)
+        return _json({"jobs": self.store.list_jobs(limit=10)})
+
+    async def h_job(self, request: web.Request) -> web.Response:
+        self._require(request)
+        job = self.store.get_job(request.match_info["job_id"])
+        return _json({"job": job}) if job else _error(404, "no such job")
+
+    async def h_system_updates(self, request: web.Request) -> web.Response:
+        """Is a newer Hermes or Winglet available? Checked at most every ten minutes unless forced."""
+        self._require(request)
+        h = self._need_hermes()
+        force = request.query.get("force") in ("1", "true")
+        cached = self._update_check
+        if cached and not force and time.monotonic() - cached["at"] < UPDATE_CHECK_SECONDS:
+            return _json(cached["data"])
+        try:
+            hermes = await h.check_hermes_update(force=force)
+        except Exception as exc:
+            logger.info("[winglet] hermes update check failed: %s", exc)
+            hermes = {"error": "Couldn't check for a Hermes update."}
+        try:
+            winglet = await asyncio.to_thread(h.check_winglet_update)
+        except Exception as exc:
+            logger.info("[winglet] winglet update check failed: %s", exc)
+            winglet = {"update_available": None, "reason": "Couldn't check for a Winglet update."}
+        data = {"hermes": hermes, "winglet": {**winglet, "version": VERSION}, "checked_at": time.time()}
+        self._update_check = {"at": time.monotonic(), "data": data}
+        return _json(data)
+
+    async def h_logs(self, request: web.Request) -> web.Response:
+        self._require(request)
+        q = request.query
+        try:
+            lines = int(q.get("lines") or 300)
+        except ValueError:
+            return _error(400, "lines must be a number")
+        data = await self._call(self._need_hermes().read_log, q.get("file") or "agent", lines=lines,
+                                level=(q.get("level") or "").upper(), query=(q.get("q") or "")[:200])
+        return _json(data)
+
+    async def h_schedule(self, request: web.Request) -> web.Response:
+        self._require(request)
+        return _json({"routines": await self._call(self._need_hermes().list_schedule)})
+
+    async def h_schedule_parse(self, request: web.Request) -> web.Response:
+        """Preview a schedule as it's typed: "every weekday at 9am" → when it next runs."""
+        self._require(request)
+        text = str((await self._body(request)).get("schedule") or "").strip()
+        if not text or len(text) > 200:
+            return _error(400, "Say when it should run, like \"every day at 8am\".")
+        return _json(await self._call(self._need_hermes().parse_schedule, text))
+
+    @staticmethod
+    def _routine_fields(body: Dict[str, Any], *, partial: bool) -> Dict[str, str]:
+        out = {}
+        for key, limit in (("name", 120), ("prompt", MAX_ROUTINE_PROMPT), ("schedule", 200)):
+            if key in body or not partial:
+                value = str(body.get(key) or "").strip()
+                if len(value) > limit:
+                    raise web.HTTPBadRequest(text=json.dumps({"error": f"The {key} is too long."}), content_type="application/json")
+                if key != "name" and not value:
+                    raise web.HTTPBadRequest(text=json.dumps({"error": f"The {key} is required."}), content_type="application/json")
+                out[key] = value
+        return out
+
+    async def h_routine_create(self, request: web.Request) -> web.Response:
+        device = self._require(request)
+        fields = self._routine_fields(await self._body(request), partial=False)
+        routine = await self._call(self._need_hermes().create_routine, fields["name"], fields["prompt"], fields["schedule"])
+        self.audit("routine.create", device, f"{routine.get('name') or 'routine'} · {routine.get('schedule_display') or ''}")
+        return _json({"routine": routine})
+
+    async def h_routine_edit(self, request: web.Request) -> web.Response:
+        device = self._require(request)
+        fields = self._routine_fields(await self._body(request), partial=True)
+        if not fields:
+            return _error(400, "nothing to change")
+        routine = await self._call(self._need_hermes().change_routine, request.match_info["routine_id"], "update", fields)
+        if routine is None:
+            return _error(404, "no such routine")
+        self.audit("routine.edit", device, f"{routine.get('name') or 'routine'}: changed {', '.join(sorted(fields))}")
+        return _json({"routine": routine})
+
+    async def h_routine_delete(self, request: web.Request) -> web.Response:
+        device = self._require(request)
+        result = await self._call(self._need_hermes().change_routine, request.match_info["routine_id"], "delete")
+        if not (result or {}).get("deleted"):
+            return _error(404, "no such routine")
+        self.audit("routine.delete", device, request.match_info["routine_id"])
+        return _json({"ok": True})
+
+    async def h_routine_action(self, request: web.Request) -> web.Response:
+        device = self._require(request)
+        action = request.match_info["action"]
+        if action not in ("pause", "resume", "run"):
+            return _error(404, "unknown action")
+        routine = await self._call(self._need_hermes().change_routine, request.match_info["routine_id"], action)
+        if routine is None:
+            return _error(404, "no such routine")
+        verb = {"pause": "paused", "resume": "resumed", "run": "ran now"}[action]
+        self.audit(f"routine.{action}", device, f"{routine.get('name') or 'routine'} {verb}")
+        return _json({"routine": routine})
 
     # -- push ------------------------------------------------------------------------------
 

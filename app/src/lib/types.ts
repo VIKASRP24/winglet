@@ -142,3 +142,57 @@ export type AgentInfo = {
   configured: { model: string; provider: string; reasoning_effort: string; label: string };
   chat: { model: string; provider: string; source: 'chat' | 'last_turn' } | null;
 };
+
+/** New work is on hold (Hermes's /pause). Members get no reason. */
+export type PauseState = { reason: string | null; engaged_at: string | null } | null;
+
+/** A restart or update, which may outlive the server process that started it. */
+export type Job = {
+  id: string;
+  kind: 'restart' | 'hermes_update' | 'winglet_update';
+  state: 'running' | 'succeeded' | 'failed' | 'unknown';
+  device_id: string;
+  detail: { message?: string; lines?: string[]; command?: string; from?: string; to?: string; finished_at?: number };
+  created_at: number;
+  updated_at: number;
+};
+
+export type SystemInfo = {
+  version: string;
+  hermes_version: string;
+  uptime_seconds: number;
+  host: {
+    system?: string; arch?: string; cpu_count?: number; cpu_percent?: number; uptime_seconds?: number; load_avg?: number[];
+    memory?: { total: number; used: number; percent: number }; disk?: { total: number; used: number; percent: number };
+  };
+  paused: PauseState;
+  can_pause: boolean;
+  connection: { mode: string; url: string | null };
+  devices: number;
+  jobs: Job[];
+};
+
+export type UpdatesInfo = {
+  hermes: { install_method?: string; current_version?: string; behind?: number | null; update_available?: boolean;
+    can_apply?: boolean; update_command?: string; message?: string | null; error?: string };
+  winglet: { update_available: boolean | null; current?: string | null; latest?: string | null; reason?: string;
+    needs_fixing?: string | null; version: string };
+  checked_at: number;
+};
+
+/** A scheduled routine: Hermes runs the prompt on its schedule and posts the result to Updates. */
+export type Routine = {
+  id: string;
+  name: string | null;
+  prompt: string;
+  schedule_display: string | null;
+  state: 'scheduled' | 'paused' | 'running' | 'completed' | 'disabled' | string;
+  enabled: boolean;
+  next_run_at: string | null;
+  last_run_at: string | null;
+  last_status: string | null;
+  last_error: string | null;
+  deliver: string | null;
+  kind: string | null;
+  paused_reason: string | null;
+};

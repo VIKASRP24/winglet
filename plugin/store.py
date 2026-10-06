@@ -71,6 +71,12 @@ CREATE TABLE IF NOT EXISTS audit (
 );
 CREATE INDEX IF NOT EXISTS audit_ts ON audit (ts);
 CREATE TABLE IF NOT EXISTS nonces (nonce TEXT PRIMARY KEY, ts REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS jobs (
+    id TEXT PRIMARY KEY, kind TEXT NOT NULL, state TEXT NOT NULL, idem_key TEXT UNIQUE,
+    device_id TEXT NOT NULL DEFAULT '', detail TEXT NOT NULL DEFAULT '{}', created_at REAL NOT NULL,
+    updated_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS jobs_created ON jobs (created_at);
 """
 
 # Columns added after v0.3. Existing phones become owners, unverified until they scan a fresh code.
@@ -84,6 +90,8 @@ _MIGRATIONS = [
 ROLES = ("owner", "member")
 AUDIT_KEEP_SECONDS = 180 * 86400
 AUDIT_KEEP_ROWS = 5000
+JOB_STATES = ("running", "succeeded", "failed", "unknown")
+JOBS_KEEP = 50
 
 
 def _hash(secret: str) -> str:
@@ -575,3 +583,54 @@ class Store:
             except sqlite3.IntegrityError:
                 return False
         return True
+
+    # -- long-running actions (restart, updates) ----------------------------------------
+
+    @staticmethod
+    def _job(row: sqlite3.Row) -> Dict[str, Any]:
+        job = dict(row)
+        job["detail"] = json.loads(job["detail"] or "{}")
+        job.pop("idem_key", None)
+        return job
+
+    def create_job(self, kind: str, *, device_id: str = "", idem_key: Optional[str] = None,
+                   detail: Optional[Dict[str, Any]] = None) -> tuple:
+        """(job, created). A repeated idempotency key returns the first job instead of starting another."""
+        now = _now()
+        with self._lock:
+            if idem_key:
+                row = self._one("SELECT * FROM jobs WHERE idem_key = ?", (idem_key,))
+                if row is not None:
+                    return self._job(row), False
+            job_id = new_id()
+            self._exec("INSERT INTO jobs (id, kind, state, idem_key, device_id, detail, created_at, updated_at) "
+                       "VALUES (?, ?, 'running', ?, ?, ?, ?, ?)",
+                       (job_id, kind, idem_key or None, device_id, json.dumps(detail or {}), now, now))
+            self._exec("DELETE FROM jobs WHERE id NOT IN (SELECT id FROM jobs ORDER BY created_at DESC LIMIT ?)",
+                       (JOBS_KEEP,))
+            return self._job(self._one("SELECT * FROM jobs WHERE id = ?", (job_id,))), True
+
+    def job_by_key(self, idem_key: str) -> Optional[Dict[str, Any]]:
+        row = self._one("SELECT * FROM jobs WHERE idem_key = ?", (idem_key,))
+        return self._job(row) if row else None
+
+    def get_job(self, job_id: str) -> Optional[Dict[str, Any]]:
+        row = self._one("SELECT * FROM jobs WHERE id = ?", (job_id,))
+        return self._job(row) if row else None
+
+    def update_job(self, job_id: str, *, state: Optional[str] = None, **detail: Any) -> Optional[Dict[str, Any]]:
+        with self._lock:
+            job = self.get_job(job_id)
+            if job is None:
+                return None
+            if state is not None and state not in JOB_STATES:
+                raise ValueError(f"unknown job state {state!r}")
+            merged = {**job["detail"], **detail}
+            self._exec("UPDATE jobs SET state = ?, detail = ?, updated_at = ? WHERE id = ?",
+                       (state or job["state"], json.dumps(merged), _now(), job_id))
+            return self.get_job(job_id)
+
+    def list_jobs(self, *, running: bool = False, limit: int = 10) -> List[Dict[str, Any]]:
+        where = "WHERE state = 'running' " if running else ""
+        rows = self._all(f"SELECT * FROM jobs {where}ORDER BY created_at DESC LIMIT ?", (max(1, min(limit, JOBS_KEEP)),))
+        return [self._job(r) for r in rows]

@@ -10,7 +10,7 @@ from __future__ import annotations
 import contextlib
 import functools
 import logging
-from typing import Optional
+from typing import List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -360,3 +360,243 @@ async def resolve_slash_confirm(session_key: str, confirm_id: str, choice: str) 
     except Exception as exc:
         raise HermesUnavailable("slash confirm unavailable") from exc
     return str(await slash_confirm.resolve(session_key, confirm_id, choice) or "")
+
+
+# -- control center: health, pause, restart, updates, logs, schedule ------------------------
+
+
+def system_stats() -> dict:
+    """Host health for owners: CPU, memory, disk and uptime, without hostnames or paths."""
+    import os
+    import platform
+    import time as _time
+    info: dict = {"system": platform.system(), "arch": platform.machine(), "cpu_count": os.cpu_count()}
+    try:
+        import psutil
+        vm = psutil.virtual_memory()
+        info["memory"] = {"total": vm.total, "used": vm.used, "percent": vm.percent}
+        du = psutil.disk_usage(str(_home()))
+        info["disk"] = {"total": du.total, "used": du.used, "percent": du.percent}
+        info["cpu_percent"] = psutil.cpu_percent(interval=0.1)
+        info["uptime_seconds"] = int(_time.time() - psutil.boot_time())
+    except Exception:
+        try:
+            info["load_avg"] = list(os.getloadavg())
+        except (OSError, AttributeError):
+            pass
+    return info
+
+
+def paused() -> Optional[dict]:
+    """Whether new work is on hold (Hermes's /pause): {reason, engaged_at}, or None."""
+    try:
+        from agent import estop
+    except Exception as exc:
+        raise HermesUnavailable("pause unavailable") from exc
+    return estop.get_state()
+
+
+def set_paused(on: bool, reason: str = "") -> Optional[dict]:
+    from agent import estop
+    if on:
+        estop.engage(reason or "paused from Winglet")
+    else:
+        estop.disengage()
+    return estop.get_state()
+
+
+def spawn_restart() -> int:
+    """Restart this profile's gateway the way `hermes gateway restart` does, in a detached process
+    (it stops this one). Returns the child's pid."""
+    try:
+        from hermes_cli.web_server_gateway import _gateway_subcommand, _spawn_hermes_action
+    except Exception as exc:
+        raise HermesUnavailable("restart unavailable") from exc
+    return _spawn_hermes_action(_gateway_subcommand(None, "restart"), "gateway-restart").pid
+
+
+async def start_hermes_update() -> dict:
+    """Start `hermes update` the way the dashboard's button does, with the same checks for installs that
+    can't update in place. {ok, action_id} or {ok: False, message, update_command}."""
+    try:
+        from hermes_cli.web_routers.actions import update_hermes
+    except Exception as exc:
+        raise HermesUnavailable("update unavailable") from exc
+    with _profile_scope():
+        return dict(await update_hermes())
+
+
+async def hermes_update_status() -> dict:
+    """{running, exit_code, lines, action_id, receipt}: Hermes's own record of the last update, which
+    survives the restart the update ends with."""
+    try:
+        from hermes_cli.web_routers.actions import get_action_status
+    except Exception as exc:
+        raise HermesUnavailable("update status unavailable") from exc
+    with _profile_scope():
+        return dict(await get_action_status("hermes-update", lines=40))
+
+
+async def check_hermes_update(force: bool = False) -> dict:
+    """{install_method, current_version, behind, update_available, can_apply, update_command, message}."""
+    try:
+        from hermes_cli.web_routers.actions import check_hermes_update as _check
+    except Exception as exc:
+        raise HermesUnavailable("update check unavailable") from exc
+    with _profile_scope():
+        return dict(await _check(force=force))
+
+
+def _plugin_dir():
+    from pathlib import Path
+    return Path(__file__).resolve().parent
+
+
+@_scoped
+def check_winglet_update() -> dict:
+    """Whether a newer Winglet is published where it was installed from: {update_available, current,
+    latest, reason}. update_available is None when it can't tell (a copied folder, no network)."""
+    try:
+        from hermes_cli.plugins_updates import run_checks
+    except Exception as exc:
+        raise HermesUnavailable("plugin update check unavailable") from exc
+    here = _plugin_dir()
+    for result in run_checks(here.parent, include_pip=False):
+        if result.name in (here.name, "winglet"):
+            data = result.to_json()
+            return {k: data.get(k) for k in ("update_available", "current", "latest", "reason", "needs_fixing")}
+    return {"update_available": None, "current": None, "latest": None, "reason": "not installed from git"}
+
+
+async def update_winglet(timeout: float = 300) -> tuple:
+    """`hermes plugins update` for this plugin, without prompts (new capabilities stay ungranted until
+    someone reviews them on the server). Returns (exit code, output tail)."""
+    import asyncio as _asyncio
+    import os
+    try:
+        from hermes_cli._launchers import runtime_command
+        from hermes_cli.web_server import PROJECT_ROOT
+    except Exception as exc:
+        raise HermesUnavailable("plugin update unavailable") from exc
+    code = ("from hermes_cli.plugins_cmd_update import cmd_update; "
+            f"cmd_update({_plugin_dir().name!r}, interactive=False)")
+    env = {**os.environ, "HERMES_HOME": str(_home()), "COLUMNS": "200"}
+    proc = await _asyncio.create_subprocess_exec(*runtime_command(PROJECT_ROOT, code=code), env=env,
+                                                 stdin=_asyncio.subprocess.DEVNULL, stdout=_asyncio.subprocess.PIPE,
+                                                 stderr=_asyncio.subprocess.STDOUT)
+    try:
+        out, _ = await _asyncio.wait_for(proc.communicate(), timeout)
+    except _asyncio.TimeoutError:
+        proc.kill()
+        return -1, ["The update took too long and was stopped."]
+    return proc.returncode, out.decode("utf-8", errors="replace").splitlines()[-30:]
+
+
+_LOG_FILES = {"agent": "agent.log", "gateway": "gateway.log", "errors": "errors.log"}
+_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
+
+
+def read_log(name: str, *, lines: int = 300, level: str = "", query: str = "") -> dict:
+    """The end of one of Hermes's logs, redacted the way Hermes redacts tool output, filtered by
+    minimum level and a search string."""
+    filename = _LOG_FILES.get(name)
+    if filename is None:
+        raise HermesRefused("unknown log")
+    path = _home() / "logs" / filename
+    if not path.exists():
+        return {"lines": [], "size": 0}
+    size = path.stat().st_size
+    with open(path, "rb") as f:
+        f.seek(max(0, size - 512 * 1024))
+        text = f.read().decode("utf-8", errors="replace")
+    rows = text.splitlines()[1:] if size > 512 * 1024 else text.splitlines()
+    floor = _LEVELS.index(level) if level in _LEVELS else 0
+    q = query.lower()
+
+    def keep(row: str) -> bool:
+        if floor:
+            found = next((lv for lv in _LEVELS if f" {lv} " in row[:80]), None)
+            if found is None or _LEVELS.index(found) < floor:
+                return False
+        return not q or q in row.lower()
+
+    picked = [r for r in rows if keep(r)][-max(1, min(lines, 1000)):]
+    try:
+        from agent.redact import redact_sensitive_text
+        picked = redact_sensitive_text("\n".join(picked), force=True, redact_url_credentials=True).split("\n")
+    except Exception:
+        picked = ["(Hermes's redaction is unavailable on this version, so logs aren't shown.)"]
+    return {"lines": picked, "size": size}
+
+
+def _cron():
+    try:
+        from cron import jobs
+    except Exception as exc:
+        raise HermesUnavailable("schedule unavailable") from exc
+    return jobs
+
+
+_JOB_FIELDS = ("id", "name", "prompt", "schedule_display", "state", "enabled", "next_run_at", "last_run_at",
+               "last_status", "last_error", "deliver", "created_at", "paused_reason")
+
+
+def _job_view(job: dict) -> dict:
+    out = {k: job.get(k) for k in _JOB_FIELDS}
+    schedule = job.get("schedule") or {}
+    out["kind"] = schedule.get("kind") if isinstance(schedule, dict) else None
+    try:
+        out["state"] = _cron().effective_job_state(job)
+    except Exception:
+        pass
+    return out
+
+
+@_scoped
+def list_schedule() -> List[dict]:
+    return [_job_view(j) for j in _cron().list_jobs(include_disabled=True)]
+
+
+@_scoped
+def parse_schedule(text: str) -> dict:
+    jobs = _cron()
+    try:
+        schedule = jobs.parse_schedule(text)
+    except ValueError as exc:
+        raise HermesRefused(str(exc)) from exc
+    nxt = jobs.compute_next_run(schedule)
+    return {"display": schedule.get("display") or text, "kind": schedule.get("kind"), "next_run_at": nxt}
+
+
+# Routine results arrive in the Winglet Updates chat.
+ROUTINE_DELIVERY = "winglet:home"
+
+
+@_scoped
+def create_routine(name: str, prompt: str, schedule: str) -> dict:
+    try:
+        return _job_view(_cron().create_job(prompt=prompt, schedule=schedule, name=name or None, deliver=ROUTINE_DELIVERY))
+    except ValueError as exc:
+        raise HermesRefused(str(exc)) from exc
+
+
+@_scoped
+def change_routine(job_id: str, action: str, updates: Optional[dict] = None) -> Optional[dict]:
+    jobs = _cron()
+    try:
+        if action == "update":
+            allowed = {k: v for k, v in (updates or {}).items() if k in ("name", "prompt", "schedule")}
+            job = jobs.update_job(job_id, allowed)
+        elif action == "pause":
+            job = jobs.pause_job(job_id, "paused from Winglet")
+        elif action == "resume":
+            job = jobs.resume_job(job_id)
+        elif action == "run":
+            job = jobs.trigger_job(job_id)
+        elif action == "delete":
+            return {"deleted": bool(jobs.remove_job(job_id))}
+        else:
+            raise HermesRefused("unknown action")
+    except ValueError as exc:
+        raise HermesRefused(str(exc)) from exc
+    return _job_view(job) if job else None
