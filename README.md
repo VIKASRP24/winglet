@@ -52,7 +52,8 @@ the open-source agent by Nous Research, running on **your own machine or server*
 | 📷 | **QR pairing** | Scan a code from your server and you're connected. No typing keys | ✅ v0.1 |
 | 🖥️ | **Live screen** | Watch a bot use its computer and take over when it needs you (logins, 2FA, captchas) | v0.2 |
 | 📞 | **Call your bot** | Real-time voice conversation | v0.2 |
-| 🎯 | **Goals & routines** | See what each bot is working toward and what's scheduled next | v0.3 |
+| 🎛️ | **Control center** | Server health, pause, restart, updates, logs and scheduled routines, from your phone | ✅ |
+| 🎯 | **Goals** | See what each bot is working toward | v0.3 |
 
 ## How it works
 
@@ -214,7 +215,7 @@ an HTTPS reverse proxy/tunnel. See the [remote access guide](docs/REMOTE_ACCESS.
 Only paired devices can talk to it: pairing codes are single-use and expire after 10 minutes, and each
 phone gets its own revocable token (`hermes winglet devices` / `unpair`). The pairing QR carries the
 server key's fingerprint, so the phone checks it's really talking to your server. Owner actions
-(managing devices, and later changing settings) are signed by a key that never leaves the phone, so a
+(managing devices, settings, restarts and updates) are signed by a key that never leaves the phone, so a
 token copied from a log can chat but can't change anything. Every such action is in Agent → Devices →
 Activity. Risky commands still need your approval. Prefer Tailscale or another private network over
 opening a port to the internet.
@@ -224,6 +225,15 @@ Yes, as a member: on your phone, open Agent → Devices → Add a device and cho
 `hermes winglet pair --member`). Members chat in their own chats and can't see yours, approve commands, or
 use owner commands like `/model`. They talk to the same agent with the same memory and tools, so only add
 people you'd trust with it.
+
+**What can I control from my phone?**
+Owners get Agent → Server: the machine's processor, memory and disk, **Pause new work** (Hermes's `/pause`:
+new chats, routines and background tasks wait, anything already running finishes), **Restart**, and updates
+for Hermes and Winglet with progress that carries on across the restart. **Logs** shows Hermes's agent,
+gateway and error logs with keys and tokens hidden, and **Schedule** takes routines in plain words
+("weekdays at 9am", "every 2h", "in 30m") and posts their results to the Updates chat. In-app updates need
+Hermes installed from git and Winglet installed with `hermes plugins install`; otherwise the app shows the
+command to run on the server.
 
 **Why a web app on iPhone instead of a real app?**
 Apple doesn't allow installing apps outside the App Store without a paid developer account,
