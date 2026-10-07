@@ -825,13 +825,16 @@ def member_toolsets(allowed: List[str], mcp: bool) -> List[str]:
     return keep or list(NO_TOOLS)
 
 
-def limit_turn_toolsets(runner, limit_for) -> bool:
-    """Cap the toolsets of every turn the gateway runs at ``limit_for(source)``: None leaves a turn as
-    Hermes resolved it, a set is the most it may end with. It applies after Hermes has added anything of
-    its own, so nothing reaches a limited turn implicitly. False when this Hermes has no such step, and
-    limits can't be enforced."""
+def limit_turn_toolsets(runner, platform: str) -> bool:
+    """Cap the toolsets of every turn from ``platform`` at what that turn's own adapter allows. Each call
+    asks the adapter Hermes routes the source to (each profile has its own, and a reconnect replaces it)
+    through ``adapter.toolset_limit(source)``: None leaves the turn as Hermes resolved it, a set is the
+    most it may end with. The cap applies after Hermes has added anything of its own, so nothing reaches
+    a limited turn implicitly, and a turn whose limit can't be worked out gets no tools. Other platforms
+    are untouched. False when this Hermes lacks either step, and limits can't be enforced."""
     resolve = getattr(runner, "_resolve_enabled_toolsets_for_source", None)
-    if resolve is None:
+    route = getattr(runner, "_delivery_adapter_for", None)
+    if resolve is None or route is None:
         return False
     if getattr(resolve, "winglet_limited", False):
         return True
@@ -839,8 +842,11 @@ def limit_turn_toolsets(runner, limit_for) -> bool:
     @functools.wraps(resolve)
     def limited(user_config, source, platform_key):
         enabled = resolve(user_config, source, platform_key)
+        kind = getattr(source, "platform", None)
+        if getattr(kind, "value", kind) != platform:
+            return enabled
         try:
-            allowed = limit_for(source)
+            allowed = route(source).toolset_limit(source)
         except Exception:
             logger.warning("[winglet] couldn't work out a turn's tool limit; giving it none", exc_info=True)
             allowed = set()

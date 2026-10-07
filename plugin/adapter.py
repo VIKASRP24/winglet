@@ -227,8 +227,8 @@ class WingletAdapter(BasePlatformAdapter):
             hub.chat_goal = self._chat_goal if hermes_api.goals_available() else None
             hub.command_resolver = hermes_api.resolve_command
             hub.reload_mcp = self._reload_mcp
-            # Members' tool limits hold only if every turn's final toolsets can be capped.
-            hub.limits_members = hermes_api.limit_turn_toolsets(self.gateway_runner, self._toolset_limit) \
+            # Members' tool limits hold only if every turn's final toolsets can be capped (see toolset_limit).
+            hub.limits_members = hermes_api.limit_turn_toolsets(self.gateway_runner, PLATFORM) \
                 if getattr(self, "gateway_runner", None) is not None else False
             from gateway.platforms.shared_ingress import bind_listener
             # No access log: device tokens ride in WebSocket/media query strings and must not reach log files.
@@ -401,7 +401,7 @@ class WingletAdapter(BasePlatformAdapter):
 
     def toolsets_for_source(self, source) -> Optional[List[str]]:
         """A member's tools, when an owner has limited them, as the list Hermes starts from. Hermes adds
-        to it (default-on plugin toolsets, x_search), so _toolset_limit caps the result too."""
+        to it (default-on plugin toolsets, x_search), so toolset_limit caps the result too."""
         user_id = str(getattr(source, "user_id", "") or "")
         if self._hub is None or not user_id.startswith(USER_PREFIX):
             return None
@@ -411,9 +411,10 @@ class WingletAdapter(BasePlatformAdapter):
             logger.warning("[%s] couldn't work out a member's tools; giving none this turn", self.name, exc_info=True)
             return list(hermes_api.NO_TOOLS)
 
-    def _toolset_limit(self, source) -> Optional[set]:
+    def toolset_limit(self, source) -> Optional[set]:
         """The most a turn from this app may use, after Hermes has resolved it: None for owners and for
-        members whose tools aren't limited. Anything that goes wrong means no tools."""
+        members whose tools aren't limited. Anything that goes wrong means no tools. The gateway asks the
+        adapter each source is routed to, so each profile's devices are checked against its own store."""
         platform = getattr(source, "platform", None)
         user_id = str(getattr(source, "user_id", "") or "")
         if getattr(platform, "value", platform) != PLATFORM or not user_id.startswith(USER_PREFIX):
