@@ -58,6 +58,7 @@ MEMBER_TOOLSETS = ("web", "vision", "image_gen", "tts", "todo", "clarify")
 _ABILITY_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _CALLBACK_BASE = re.compile(r"^https?://[^\s/?#@]+(/[^\s?#]*)?$")
 SIGN_IN_PAGE = ("<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width'>"
+                "<meta name=color-scheme content='light dark'>"
                 "<title>Winglet</title><body style='font:17px system-ui;margin:40px 24px;text-align:center'>"
                 "<h2>{title}</h2><p>{body}</p>")
 PUSH_DEBOUNCE_SECONDS = 2.5
@@ -1994,7 +1995,8 @@ class Hub:
                 return
         if after is not None:
             await asyncio.to_thread(after)
-        await self._finish_job(job_id, "succeeded", done)
+        # The installer's output (its security scan) only matters when something went wrong.
+        await self._finish_job(job_id, "succeeded", done, lines=[])
 
     def member_tools(self) -> Dict[str, Any]:
         """Whether members' tools are limited, and to what. Off until an owner turns it on."""

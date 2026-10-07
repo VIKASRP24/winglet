@@ -811,13 +811,13 @@ def member_toolsets(allowed: List[str], mcp: bool) -> List[str]:
     """The toolset override for a member whose tools are limited: what they're allowed, if the owner
     has it on too. MCP servers only when allowed and on for the owner."""
     from hermes_cli.config import load_config
-    from hermes_cli.tools_config import _get_platform_tools
+    from hermes_cli.tools_config import _get_platform_tools, enabled_mcp_server_names
     config = load_config()
     mine = _enabled_toolsets(config)
     keep = sorted(set(allowed) & mine & {row[0] for row in _toolset_rows(config)})
     if mcp:
         # The owner's MCP servers by name, so the member's list can't widen them.
-        servers = sorted(set(_get_platform_tools(config, PLATFORM)) - mine)
+        servers = sorted(set(_get_platform_tools(config, PLATFORM)) & enabled_mcp_server_names(config))
         keep += servers if servers else ["no_mcp"]
     else:
         keep.append("no_mcp")

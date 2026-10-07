@@ -203,6 +203,7 @@ async def test_installing_an_official_skill_is_a_job(client, hub):
     await settle(hub)
     done = hub.store.get_job(job["id"])
     assert done["state"] == "succeeded" and done["detail"]["action"] == "skills-install-stocks"
+    assert done["detail"]["lines"] == []
     assert hub.hermes.finished == 1
     assert ("skill.install", "installed official/finance/stocks") in audit(hub)
 
