@@ -292,28 +292,56 @@ async def test_limits_need_a_hermes_that_can_enforce_them(client, hub):
     assert len(sent) == 1
 
 
+class Adapter:
+    """A profile's Winglet adapter: its own devices and limits."""
+    def __init__(self, limits):
+        self.limits = limits
+
+    def toolset_limit(self, source):
+        if source.user == "broken":
+            raise RuntimeError("config unreadable")
+        return self.limits[source.user]
+
+
 class Runner:
-    """Hermes's resolver widening an override, as it does with default-on plugin toolsets and x_search."""
+    """Hermes's resolver widening an override (default-on plugin toolsets, x_search), and its routing of
+    each source to its own profile's adapter."""
+    def __init__(self):
+        self.adapters = {"default": Adapter({"owner": None, "member": {"web"}, "nobody": set(), "broken": None}),
+                         "work": Adapter({"owner": None, "member": {"todo"}})}
+
+    def _delivery_adapter_for(self, source):
+        return self.adapters.get(source.profile)
+
     def _resolve_enabled_toolsets_for_source(self, user_config, source, platform_key):
         return sorted({*user_config["override"], "shell_plugin", "x_search"} - {"no_mcp"})
 
 
-def test_turns_are_capped_after_hermes_resolves_them():
-    runner = Runner()
-    limits = {"member": {"web"}, "nobody": set(), "owner": None}
+def turn(user, profile="default", platform="winglet"):
+    from types import SimpleNamespace
+    return SimpleNamespace(user=user, profile=profile, platform=SimpleNamespace(value=platform))
 
-    def limit_for(source):
-        if source == "broken":
-            raise RuntimeError("config unreadable")
-        return limits[source]
-    assert hermes_api.limit_turn_toolsets(runner, limit_for)
+
+def test_turns_are_capped_by_their_own_profiles_adapter():
+    runner = Runner()
+    assert hermes_api.limit_turn_toolsets(runner, "winglet")
     resolve = runner._resolve_enabled_toolsets_for_source
-    assert resolve({"override": ["web", "no_mcp"]}, "member", "winglet") == ["web"]
-    assert resolve({"override": ["no_mcp"]}, "nobody", "winglet") == []
-    assert resolve({"override": ["no_mcp"]}, "broken", "winglet") == []
-    assert resolve({"override": ["web"]}, "owner", "winglet") == ["shell_plugin", "web", "x_search"]
-    assert hermes_api.limit_turn_toolsets(runner, limit_for) and runner._resolve_enabled_toolsets_for_source is resolve
-    assert hermes_api.limit_turn_toolsets(object(), limit_for) is False
+    everything = ["shell_plugin", "todo", "web", "x_search"]
+    assert resolve({"override": ["web", "no_mcp"]}, turn("member"), "winglet") == ["web"]
+    assert resolve({"override": ["no_mcp"]}, turn("nobody"), "winglet") == []
+    assert resolve({"override": ["web"]}, turn("broken"), "winglet") == []
+    assert resolve({"override": ["web", "todo"]}, turn("owner"), "winglet") == everything
+    # A second profile is answered by its own adapter, owners included.
+    assert resolve({"override": ["web", "todo"]}, turn("owner", "work"), "winglet") == everything
+    assert resolve({"override": ["web", "todo"]}, turn("member", "work"), "winglet") == ["todo"]
+    # A profile with no adapter right now gets nothing; other platforms aren't touched.
+    assert resolve({"override": ["web"]}, turn("owner", "gone"), "winglet") == []
+    assert resolve({"override": ["web"]}, turn("anyone", "gone", "telegram"), "telegram") == ["shell_plugin", "web", "x_search"]
+    # A reconnect replaces the adapter; the next turn asks the new one.
+    runner.adapters["work"] = Adapter({"owner": None, "member": set()})
+    assert resolve({"override": ["todo"]}, turn("member", "work"), "winglet") == []
+    assert hermes_api.limit_turn_toolsets(runner, "winglet") and runner._resolve_enabled_toolsets_for_source is resolve
+    assert hermes_api.limit_turn_toolsets(object(), "winglet") is False
 
 
 # -- MCP servers ----------------------------------------------------------------------------------
