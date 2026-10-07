@@ -240,3 +240,22 @@ async def test_frame_access_unavailable_falls_back(adapter, notifier, monkeypatc
     monkeypatch.setattr(bridge.sys, "_getframe", unavailable)
     assert not (await notifier(adapter)._approval_notify_sync({"request_id": "a", "command": "ls"})).success
     assert adapter._hub.store.pending_count() == 0
+
+
+async def test_a_members_tools_fail_closed(adapter):
+    store = adapter._hub.store
+    owner, _ = store.add_device("Pixel", "android", role="owner")
+    member, _ = store.add_device("Alex", "android", role="member")
+    store.set_kv("member_tools", '{"limited": true, "toolsets": ["web"]}')
+
+    class Broken:
+        NO_TOOLS = ["no_mcp"]
+
+        def member_toolsets(self, allowed, mcp):
+            raise RuntimeError("config unreadable")
+
+    adapter._hub.hermes = Broken()
+    source = lambda user_id: SimpleNamespace(user_id=user_id)  # noqa: E731
+    assert adapter.toolsets_for_source(source("winglet:" + owner["id"])) is None
+    assert adapter.toolsets_for_source(source("webhook:route")) is None
+    assert adapter.toolsets_for_source(source("winglet:" + member["id"])) == ["no_mcp"]
