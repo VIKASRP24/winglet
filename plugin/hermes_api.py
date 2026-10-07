@@ -637,3 +637,360 @@ def chat_goal(runner, session_key: str) -> Optional[dict]:
             "subgoals": list(state.subgoals), "last_verdict": state.last_verdict, "last_reason": state.last_reason,
             "paused_reason": state.paused_reason, "waiting_reason": state.waiting_reason if waiting else None,
             "created_at": state.created_at, "last_turn_at": state.last_turn_at}
+
+
+# -- abilities: skills, toolsets, MCP servers ------------------------------------------------
+#
+# The same functions behind the Skills, Tools and MCP pages of Hermes's dashboard. Toolsets are
+# Winglet's own (``platform_toolsets.winglet``), so turning one off here doesn't touch the terminal.
+
+PLATFORM = "winglet"
+# What a member whose tools are limited to nothing gets: an override must name something, and this
+# names no toolset and turns MCP servers off.
+NO_TOOLS = ["no_mcp"]
+APPROVAL_MODES = ("manual", "smart", "off")
+MAX_SKILL_BYTES = 200_000
+
+
+def _router(name: str):
+    import importlib
+    try:
+        return importlib.import_module(f"hermes_cli.web_routers.{name}")
+    except Exception as exc:
+        raise HermesUnavailable(f"{name} unavailable") from exc
+
+
+def _models():
+    try:
+        import hermes_cli.web_models as models
+    except Exception as exc:
+        raise HermesUnavailable("dashboard models unavailable") from exc
+    return models
+
+
+async def _route(fn, *args):
+    """Await one of the dashboard's route functions as this profile. Its HTTP errors carry a message
+    meant for a person; they become refusals."""
+    try:
+        with _profile_scope():
+            return await fn(*args)
+    except (HermesUnavailable, HermesRefused):
+        raise
+    except Exception as exc:
+        if isinstance(getattr(exc, "status_code", None), int):
+            raise HermesRefused(_detail(exc)) from exc
+        raise
+
+
+def _skills_changed() -> None:
+    """New skill commands for the command palette, and a fresh skills index for new sessions."""
+    try:
+        from agent.skill_commands import reload_skills
+        reload_skills()
+    except Exception:
+        logger.debug("[winglet] skill reload unavailable", exc_info=True)
+    try:
+        from agent.prompt_builder import clear_skills_system_prompt_cache
+        clear_skills_system_prompt_cache(clear_snapshot=True)
+    except Exception:
+        logger.debug("[winglet] skills prompt cache unavailable", exc_info=True)
+
+
+async def list_skills() -> List[dict]:
+    """Installed skills: {name, description, category, enabled, provenance (bundled|hub|agent), usage}."""
+    rows = await _route(_router("skills").get_skills)
+    keys = ("name", "description", "category", "enabled", "provenance", "usage")
+    return [{k: row.get(k) for k in keys} for row in rows]
+
+
+async def set_skill_enabled(name: str, enabled: bool) -> None:
+    if name not in {s["name"] for s in await list_skills()}:
+        raise HermesRefused(f"There's no skill called {name}.")
+    await _route(_router("skills").toggle_skill, _models().SkillToggle(name=name, enabled=enabled))
+    _skills_changed()
+
+
+async def skill_content(name: str) -> dict:
+    data = await _route(_router("skills").get_skill_content, name)
+    content = str(data.get("content") or "")
+    return {"name": name, "content": content[:MAX_SKILL_BYTES], "truncated": len(content) > MAX_SKILL_BYTES}
+
+
+async def skill_catalog() -> List[dict]:
+    """Hermes's official optional skills, which ship with Hermes and install without the network."""
+    data = await _route(_router("skills").list_official_skills)
+    keys = ("name", "description", "identifier", "category", "tags", "installed")
+    return [{k: row.get(k) for k in keys} for row in data.get("skills") or []]
+
+
+async def start_skill_install(identifier: str) -> str:
+    """Start `hermes skills install` for an official skill. Returns the action to follow."""
+    if identifier not in {s["identifier"] for s in await skill_catalog()}:
+        raise HermesRefused("Only Hermes's official skills can be installed from the app.")
+    started = await _route(_router("skills").install_skill_hub, _models().SkillInstallRequest(identifier=identifier))
+    return str(started["name"])
+
+
+async def start_skill_uninstall(name: str) -> str:
+    skill = next((s for s in await list_skills() if s["name"] == name), None)
+    if skill is None or skill["provenance"] != "hub":
+        raise HermesRefused("Only skills installed from a hub can be removed. Turn this one off instead.")
+    started = await _route(_router("skills").uninstall_skill_hub, _models().SkillUninstallRequest(name=name))
+    return str(started["name"])
+
+
+async def action_status(action: str) -> dict:
+    """{running, exit_code, lines} for a background `hermes` action this process started."""
+    return dict(await _route(_router("actions").get_action_status, action, 40))
+
+
+def finish_skill_action() -> None:
+    _skills_changed()
+
+
+def _toolset_rows(config: dict) -> list:
+    from hermes_cli.tools_config import (
+        _CONFIG_ONLY_TOOLSETS, _get_effective_configurable_toolsets, _toolset_allowed_for_platform)
+    return [(name, label, desc) for name, label, desc in _get_effective_configurable_toolsets()
+            if name not in _CONFIG_ONLY_TOOLSETS and _toolset_allowed_for_platform(name, PLATFORM)]
+
+
+def _enabled_toolsets(config: dict) -> set:
+    from hermes_cli.tools_config import _get_platform_tools
+    enabled = set(_get_platform_tools(config, PLATFORM, include_default_mcp_servers=False))
+    # Until a list is saved, Hermes reports a plugin platform's whole default bundle as one entry. Saved,
+    # it would bring back every toolset the owner turns off.
+    enabled.discard(f"hermes-{PLATFORM}")
+    return enabled
+
+
+@_scoped
+def toolsets() -> List[dict]:
+    """The toolsets the agent has when it works for Winglet: {name, label, description, enabled, configured}.
+    configured is False when a toolset still needs a key or a provider set up on the server."""
+    try:
+        from hermes_cli.config import load_config
+        from hermes_cli.tools_config import _toolset_has_keys, get_nous_subscription_features, gui_toolset_label
+    except Exception as exc:
+        raise HermesUnavailable("toolsets unavailable") from exc
+    config = load_config()
+    enabled = _enabled_toolsets(config)
+    features = get_nous_subscription_features(config)
+    out = []
+    for name, label, desc in _toolset_rows(config):
+        try:
+            configured = bool(_toolset_has_keys(name, config, features=features))
+        except Exception:
+            configured = True
+        out.append({"name": name, "label": gui_toolset_label(label), "description": desc,
+                    "enabled": name in enabled, "configured": configured})
+    return out
+
+
+def set_toolset(name: str, enabled: bool) -> None:
+    try:
+        from hermes_cli.config import load_config
+        from hermes_cli.tools_config import _save_platform_tools
+        from hermes_cli.web_routers._common import config_write_scope
+    except Exception as exc:
+        raise HermesUnavailable("toolsets unavailable") from exc
+    with config_write_scope(None):
+        config = load_config()
+        if name not in {row[0] for row in _toolset_rows(config)}:
+            raise HermesRefused(f"There's no toolset called {name}.")
+        current = _enabled_toolsets(config)
+        if enabled:
+            current.add(name)
+        else:
+            current.discard(name)
+        _save_platform_tools(config, PLATFORM, current)
+
+
+@_scoped
+def member_toolsets(allowed: List[str], mcp: bool) -> List[str]:
+    """The toolset override for a member whose tools are limited: what they're allowed, if the owner
+    has it on too. MCP servers only when allowed and on for the owner."""
+    from hermes_cli.config import load_config
+    from hermes_cli.tools_config import _get_platform_tools
+    config = load_config()
+    mine = _enabled_toolsets(config)
+    keep = sorted(set(allowed) & mine & {row[0] for row in _toolset_rows(config)})
+    if mcp:
+        # The owner's MCP servers by name, so the member's list can't widen them.
+        servers = sorted(set(_get_platform_tools(config, PLATFORM)) - mine)
+        keep += servers if servers else ["no_mcp"]
+    else:
+        keep.append("no_mcp")
+    return keep or list(NO_TOOLS)
+
+
+@_scoped
+def approval_mode() -> str:
+    from hermes_cli.config import load_config
+    mode = (load_config().get("approvals") or {}).get("mode", "manual")
+    if mode is False:
+        return "off"
+    mode = str(mode).strip().lower()
+    return mode if mode in APPROVAL_MODES else "manual"
+
+
+def set_approval_mode(mode: str) -> None:
+    if mode not in APPROVAL_MODES:
+        raise HermesRefused("mode must be manual, smart or off")
+    try:
+        from hermes_cli.config import load_config, save_config
+        from hermes_cli.web_routers._common import config_write_scope
+    except Exception as exc:
+        raise HermesUnavailable("approval settings unavailable") from exc
+    with config_write_scope(None):
+        config = load_config()
+        section = config.get("approvals")
+        if not isinstance(section, dict):
+            section = config["approvals"] = {}
+        section["mode"] = mode
+        save_config(config)
+
+
+async def mcp_servers() -> List[dict]:
+    """Configured MCP servers, without their arguments or environment (they can carry keys)."""
+    data = await _route(_router("mcp").list_mcp_servers)
+    keys = ("name", "transport", "url", "command", "auth", "enabled", "source", "plugin")
+    return [{k: s.get(k) for k in keys} for s in data.get("servers") or []]
+
+
+async def set_mcp_enabled(name: str, enabled: bool) -> None:
+    await _route(_router("mcp").set_mcp_server_enabled, name, _models().MCPEnabledToggle(enabled=enabled))
+
+
+async def test_mcp(name: str) -> dict:
+    """Connect, list the tools, disconnect: {ok, error, tools: [{name, description}]}."""
+    data = await _route(_router("mcp").test_mcp_server, name)
+    tools = [{"name": t.get("name"), "description": str(t.get("description") or "")[:300]} for t in data.get("tools") or []]
+    return {"ok": bool(data.get("ok")), "error": data.get("error"), "tools": tools}
+
+
+async def remove_mcp(name: str) -> None:
+    await _route(_router("mcp").remove_mcp_server, name)
+
+
+async def mcp_catalog() -> dict:
+    """Hermes's approved MCP servers. Each entry shows what it runs or connects to, so the owner can
+    check before adding it."""
+    data = await _route(_router("mcp").list_mcp_catalog)
+    keys = ("name", "description", "transport", "auth_type", "required_env", "command", "args", "url",
+            "install_url", "needs_install", "post_install", "installed", "enabled")
+    return {"entries": [{k: e.get(k) for k in keys} for e in data.get("entries") or []],
+            "diagnostics": list(data.get("diagnostics") or [])}
+
+
+async def install_mcp(name: str, env: dict) -> Optional[str]:
+    """Add a catalog server, with the keys it asks for. Returns the action to follow when it has to
+    download and build first, else None."""
+    started = await _route(_router("mcp").install_mcp_catalog_entry,
+                           _models().MCPCatalogInstall(name=name, env=env, enable=True))
+    return str(started["action"]) if started.get("background") else None
+
+
+async def reload_mcp(runner, event) -> str:
+    """Hermes's /reload-mcp: reconnect every server and tell running chats their tools changed."""
+    reload = getattr(runner, "_execute_mcp_reload", None)
+    if reload is None:
+        raise HermesUnavailable("MCP reload unavailable")
+    return str(await reload(event))
+
+
+# MCP sign-in: the server's OAuth page opens on the phone and comes back to Winglet, which hands the
+# result to the same flow Hermes's dashboard uses.
+_SIGN_IN_TTL = 15 * 60
+_MAX_SIGN_INS = 4
+_sign_ins: dict = {}
+
+
+def _sign_in_view(flow) -> dict:
+    view = flow.snapshot()
+    return {"id": view["flow_id"], "server": view["server_name"], "status": view["status"],
+            "authorization_url": view["authorization_url"], "error": view["error"],
+            "tools": [t.get("name") for t in flow.tools] if view["status"] == "approved" else []}
+
+
+def _forget_old_sign_ins() -> None:
+    import time as _time
+    cutoff = _time.time() - _SIGN_IN_TTL
+    for flow_id, flow in list(_sign_ins.items()):
+        if flow.created_at < cutoff:
+            flow.mark_error("Timed out", cancelled=True)
+            _sign_ins.pop(flow_id, None)
+
+
+async def start_mcp_sign_in(name: str, callback_url: str) -> dict:
+    import asyncio as _asyncio
+    import secrets
+    import threading
+    try:
+        from hermes_cli.mcp_config import _get_mcp_servers
+        from hermes_cli.web_server_mcp import _run_dashboard_mcp_oauth
+        from hermes_constants import get_hermes_home
+        from tools.mcp_dashboard_oauth import DashboardOAuthFlow, exception_message
+        from tui_gateway.mcp_rpc_helpers import server_configs_with_sources
+    except Exception as exc:
+        raise HermesUnavailable("MCP sign-in unavailable") from exc
+
+    @_scoped
+    def read():
+        servers, plugins = server_configs_with_sources(_get_mcp_servers())
+        return servers, plugins, str(get_hermes_home().expanduser().resolve(strict=False))
+
+    servers, plugins, home = await _asyncio.to_thread(read)
+    if name not in servers:
+        raise HermesRefused(f"There's no MCP server called {name}.")
+    if plugins.get(name):
+        raise HermesRefused(f"{name} comes with the {plugins[name]} plugin and signs in there.")
+    cfg = dict(servers[name])
+    if not cfg.get("url"):
+        raise HermesRefused("This server runs on the server itself and uses keys, not a sign-in.")
+    if cfg.get("headers") and cfg.get("auth") != "oauth":
+        raise HermesRefused("This server uses an API key, not a sign-in.")
+    cfg["auth"] = "oauth"
+    _forget_old_sign_ins()
+    for flow in list(_sign_ins.values()):
+        if flow.server_name == name and not flow.worker_done:
+            flow.mark_error("Started again", cancelled=True)
+    if sum(not f.worker_done for f in _sign_ins.values()) >= _MAX_SIGN_INS:
+        raise HermesRefused("Too many sign-ins are in progress. Try again in a few minutes.")
+    flow = DashboardOAuthFlow(flow_id=secrets.token_urlsafe(24), server_name=name, profile=None, hermes_home=home,
+                              redirect_uri=(cfg.get("oauth") or {}).get("redirect_uri") or callback_url,
+                              reconnect_live=True)
+    _sign_ins[flow.flow_id] = flow
+    threading.Thread(target=_run_dashboard_mcp_oauth, args=(flow, cfg), daemon=True, name=f"winglet-mcp-{name}").start()
+    try:
+        await flow.wait_for_authorization_url(timeout=30)
+    except Exception as exc:
+        flow.mark_error(exception_message(exc))
+    return _sign_in_view(flow)
+
+
+def mcp_sign_in(flow_id: str) -> Optional[dict]:
+    flow = _sign_ins.get(flow_id)
+    return _sign_in_view(flow) if flow is not None else None
+
+
+def cancel_mcp_sign_in(flow_id: str) -> None:
+    flow = _sign_ins.get(flow_id)
+    if flow is not None:
+        flow.mark_error("Cancelled", cancelled=True)
+
+
+def finish_mcp_sign_in(server: str, *, code: Optional[str], state: Optional[str], error: Optional[str],
+                       iss: Optional[str]) -> str:
+    """Hand the browser's return to the waiting sign-in: "ok", "denied", "expired" or "rejected"."""
+    import secrets
+    flow = next((f for f in _sign_ins.values()
+                 if f.server_name == server and f.status == "authorization_required" and f.expected_state
+                 and state and secrets.compare_digest(f.expected_state, state)), None)
+    if flow is None:
+        return "expired"
+    try:
+        flow.deliver_callback(code=code, state=state, error=error, iss=iss)
+    except ValueError:
+        return "rejected"
+    return "denied" if error else "ok"
