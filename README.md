@@ -65,6 +65,9 @@ the open-source agent by Nous Research, running on **your own machine or server*
 - **Persona, memory and usage.** Edit who it is, see and fix what it remembers, and track tokens and cost.
 - **Goals.** Give a chat an outcome and Hermes keeps working on it, turn after turn, until its judge says
   it's done. Add requirements, pause it, and follow its progress in the chat and on Home.
+- **Skills, tools and MCP servers.** Turn skills on and off, read them, and install Hermes's official ones.
+  Pick the tools it can use and how risky commands get approved. Connect other apps from Hermes's list of
+  approved MCP servers and sign in to them from the phone.
 
 ### Your server
 - **Control center.** Processor, memory and disk at a glance. Pause new work, restart, and update Hermes and
@@ -245,7 +248,7 @@ hermes -p researcher winglet pair
 - [x] Goals, message search, and each chat's files and photos
 
 **Next**
-- [ ] Skills, toolsets and MCP servers from the phone
+- [x] Skills, toolsets and MCP servers from the phone, and limits on members' tools
 - [ ] Connection settings in one place
 - [ ] Share into Winglet from other apps
 - [ ] Live screen: watch the agent's computer and take over when it needs you
@@ -276,8 +279,8 @@ opening a port to the internet.
 **Can someone else use my agent?**
 Yes, as a member: on your phone, open Agent → Devices → Add a device and choose Member (or run
 `hermes winglet pair --member`). Members chat in their own chats and can't see yours, approve commands, or
-use owner commands like `/model`. They talk to the same agent with the same memory and tools, so only add
-people you'd trust with it.
+use owner commands like `/model`. They talk to the same agent with the same memory and, unless you limit
+them in Agent → Tools, the same tools, so only add people you'd trust with it.
 
 **What can I control from my phone?**
 Owners get Agent → Server: the machine's processor, memory and disk, **Pause new work** (Hermes's `/pause`:
@@ -286,7 +289,9 @@ for Hermes and Winglet with progress that carries on across the restart. **Logs*
 gateway and error logs with keys and tokens hidden, and **Schedule** takes routines in plain words
 ("weekdays at 9am", "every 2h", "in 30m") and posts their results to the Updates chat. In-app updates need
 Hermes installed from git and Winglet installed with `hermes plugins install`; otherwise the app shows the
-command to run on the server.
+command to run on the server. Under Agent → Abilities you manage **Skills**, **Tools** (including approvals and
+what members can use) and **MCP servers**. Changes to tools apply from the next message; MCP changes apply
+when you tap Reconnect.
 
 **Why a web app on iPhone instead of a real app?**
 Apple doesn't allow installing apps outside the App Store without a paid developer account,

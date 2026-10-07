@@ -374,9 +374,10 @@ The same policy function decides every request, whichever way it arrives:
 | Memory, persona, logs, audit log, devices list, job results, provider list, usage | Owners only. |
 | Health and versions | Everyone (needed for connection diagnostics), without hostnames or paths for members. |
 
-**What a member role is not.** Members talk to the same agent, with the same tools and the same
-memory. Anything the agent can do, a member can ask it to do; the dangerous parts still stop at an
-owner's approval, and the agent's memory may surface things an owner told it. The role is for people
+**What a member role is not.** Members talk to the same agent, with the same memory and, unless an
+owner limits them (Agent → Tools → Members), the same tools. Anything the agent can do, a member can
+ask it to do; the dangerous parts still stop at an owner's approval, and the agent's memory may
+surface things an owner told it. The role is for people
 you trust to talk to your agent, not a sandbox. The app says this when you make someone a member.
 
 **Acceptance (two devices, in pytest and the e2e harness):** a member is refused on each control
