@@ -148,13 +148,16 @@ export type AgentInfo = {
 /** New work is on hold (Hermes's /pause). Members get no reason. */
 export type PauseState = { reason: string | null; engaged_at: string | null } | null;
 
-/** A restart or update, which may outlive the server process that started it. */
+/** A restart, update or install, which may outlive the server process that started it. */
 export type Job = {
   id: string;
-  kind: 'restart' | 'hermes_update' | 'winglet_update';
+  kind: 'restart' | 'hermes_update' | 'winglet_update' | 'skill_install' | 'skill_uninstall' | 'mcp_install';
   state: 'running' | 'succeeded' | 'failed' | 'unknown';
   device_id: string;
-  detail: { message?: string; lines?: string[]; command?: string; from?: string; to?: string; finished_at?: number };
+  detail: {
+    message?: string; lines?: string[]; command?: string; from?: string; to?: string; finished_at?: number;
+    skill?: string; server?: string;
+  };
   created_at: number;
   updated_at: number;
 };
@@ -224,3 +227,67 @@ export type SearchResult = {
 
 /** A file or photo shared in a chat, with the message it came in. */
 export type ChatFile = Attachment & { message_id: string; role: 'user' | 'bot'; created_at: number };
+
+/** An installed skill. provenance: shipped with Hermes, installed from a hub, or written by the agent or you. */
+export type Skill = {
+  name: string;
+  description: string;
+  category: string | null;
+  enabled: boolean;
+  provenance: 'bundled' | 'hub' | 'agent';
+  usage: number;
+};
+
+/** One of Hermes's official optional skills. */
+export type CatalogSkill = { name: string; description: string; identifier: string; category: string; tags: string[]; installed: boolean };
+
+/** A group of tools the agent can use when it works through Winglet. */
+export type Toolset = { name: string; label: string; description: string; enabled: boolean; configured: boolean };
+
+export type ApprovalMode = 'manual' | 'smart' | 'off';
+
+/** What members' turns may use. Not limited means the same as an owner. */
+export type MemberTools = { limited: boolean; toolsets: string[]; mcp: boolean };
+
+export type ToolsInfo = { toolsets: Toolset[]; approvals: ApprovalMode; members: MemberTools };
+
+export type McpServer = {
+  name: string;
+  transport: 'http' | 'stdio' | 'unknown';
+  url: string | null;
+  command: string | null;
+  auth: string | null;
+  enabled: boolean;
+  source: 'config' | 'plugin';
+  plugin: string | null;
+};
+
+export type McpInfo = { servers: McpServer[]; needs_reload: boolean; can_reload: boolean };
+
+/** A server in Hermes's approved MCP catalog, with what it runs or connects to. */
+export type McpCatalogEntry = {
+  name: string;
+  description: string;
+  transport: string;
+  auth_type: string;
+  required_env: { name: string; prompt: string; required: boolean }[];
+  command: string | null;
+  args: string[];
+  url: string | null;
+  install_url: string | null;
+  needs_install: boolean;
+  post_install: string;
+  installed: boolean;
+  enabled: boolean;
+};
+
+export type McpSignIn = {
+  id: string;
+  server: string;
+  status: 'starting' | 'authorization_required' | 'approved' | 'error';
+  authorization_url: string | null;
+  error: string | null;
+  tools: string[];
+};
+
+export type McpTest = { ok: boolean; error: string | null; tools: { name: string; description: string }[] };
