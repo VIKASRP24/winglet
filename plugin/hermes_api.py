@@ -645,8 +645,9 @@ def chat_goal(runner, session_key: str) -> Optional[dict]:
 # Winglet's own (``platform_toolsets.winglet``), so turning one off here doesn't touch the terminal.
 
 PLATFORM = "winglet"
-# What a member whose tools are limited to nothing gets: an override must name something, and this
-# names no toolset and turns MCP servers off.
+# The override for a member limited to nothing: an override must name something, and this names no
+# toolset and keeps MCP servers out. It isn't a deny-all on its own (Hermes still adds default-on plugin
+# toolsets, and x_search when xAI keys exist); limit_turn_toolsets enforces the limit on the result.
 NO_TOOLS = ["no_mcp"]
 APPROVAL_MODES = ("manual", "smart", "off")
 MAX_SKILL_BYTES = 200_000
@@ -822,6 +823,32 @@ def member_toolsets(allowed: List[str], mcp: bool) -> List[str]:
     else:
         keep.append("no_mcp")
     return keep or list(NO_TOOLS)
+
+
+def limit_turn_toolsets(runner, limit_for) -> bool:
+    """Cap the toolsets of every turn the gateway runs at ``limit_for(source)``: None leaves a turn as
+    Hermes resolved it, a set is the most it may end with. It applies after Hermes has added anything of
+    its own, so nothing reaches a limited turn implicitly. False when this Hermes has no such step, and
+    limits can't be enforced."""
+    resolve = getattr(runner, "_resolve_enabled_toolsets_for_source", None)
+    if resolve is None:
+        return False
+    if getattr(resolve, "winglet_limited", False):
+        return True
+
+    @functools.wraps(resolve)
+    def limited(user_config, source, platform_key):
+        enabled = resolve(user_config, source, platform_key)
+        try:
+            allowed = limit_for(source)
+        except Exception:
+            logger.warning("[winglet] couldn't work out a turn's tool limit; giving it none", exc_info=True)
+            allowed = set()
+        return enabled if allowed is None else [name for name in enabled if name in allowed]
+
+    limited.winglet_limited = True
+    runner._resolve_enabled_toolsets_for_source = limited
+    return True
 
 
 @_scoped

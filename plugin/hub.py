@@ -231,6 +231,8 @@ class Hub:
         # Reconnects MCP servers (Hermes's /reload-mcp), installed by the adapter. Server changes wait for it.
         self.reload_mcp: Optional[Callable[[], Awaitable[str]]] = None
         self.mcp_changed = False
+        # Set by the adapter when it can cap every turn's final toolsets, which members' tool limits need.
+        self.limits_members = False
         # Hermes-side callbacks, installed by the adapter.
         self.on_user_message: Optional[InboundFn] = None
         self.on_approval: Optional[ResolveFn] = None
@@ -781,6 +783,10 @@ class Hub:
         chat = self.store.get_chat(chat_id)
         if not self.can_see(device, chat):
             return None  # deleted (or never created, or someone else's): don't bring it back
+        if device["role"] != "owner" and not self.limits_members and self.member_tools()["limited"]:
+            # Limits were set, but this Hermes can't apply them any more (an update removed the step).
+            raise MessageRejected("An owner limited what members can use, and this server can't apply that "
+                                  "right now, so your message wasn't sent. Ask an owner to update Hermes.")
         refused = self._refused_command(device, text)
         meta: Dict[str, Any] = {"device": device["name"], "client_id": client_id}
         if hidden and text.startswith("/") and not attachments:
@@ -2026,7 +2032,7 @@ class Hub:
         self._require(request)
         h = self._need_hermes()
         return _json({"toolsets": await self._call(h.toolsets), "approvals": await self._call(h.approval_mode),
-                      "members": self.member_tools()})
+                      "members": {**self.member_tools(), "can_limit": self.limits_members}})
 
     async def h_toolset_toggle(self, request: web.Request) -> web.Response:
         device = self._require(request)
@@ -2051,6 +2057,8 @@ class Hub:
         toolsets = body.get("toolsets")
         if not isinstance(toolsets, list) or not all(isinstance(t, str) and _ABILITY_NAME.match(t) for t in toolsets):
             return _error(400, "toolsets must be a list of toolset names")
+        if body.get("limited") and not self.limits_members:
+            return _error(400, "This version of Hermes can't limit what members use. Update Hermes to turn this on.")
         known = {t["name"] for t in await self._call(self._need_hermes().toolsets)}
         limits = {"limited": bool(body.get("limited")), "mcp": bool(body.get("mcp")),
                   "toolsets": sorted(set(toolsets) & known)}
