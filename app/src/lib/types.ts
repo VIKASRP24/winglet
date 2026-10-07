@@ -249,7 +249,8 @@ export type ApprovalMode = 'manual' | 'smart' | 'off';
 /** What members' turns may use. Not limited means the same as an owner. */
 export type MemberTools = { limited: boolean; toolsets: string[]; mcp: boolean };
 
-export type ToolsInfo = { toolsets: Toolset[]; approvals: ApprovalMode; members: MemberTools };
+/** can_limit: this Hermes lets Winglet cap every turn's tools, which limits need. */
+export type ToolsInfo = { toolsets: Toolset[]; approvals: ApprovalMode; members: MemberTools & { can_limit?: boolean } };
 
 export type McpServer = {
   name: string;

@@ -84,16 +84,22 @@ export default function ToolsScreen() {
 
           <SectionHeader title="Members" />
           <View style={s.card}>
-            <Segmented label="Members' tools" value={info.members.limited ? 'limited' : 'same'}
-              onChange={(v) => setMembers({ ...info.members, limited: v === 'limited' })}
-              options={[{ value: 'same', label: 'Same as you' }, { value: 'limited', label: 'Limited' }]} />
-            <Text style={s.aboutText}>
-              {info.members.limited
-                ? 'Members only get the tools you pick here, and only while they are on for you too.'
-                : 'People you add as members can use every tool you can. Risky commands still wait for an owner.'}
+            {info.members.can_limit === false && !info.members.limited ? null : (
+              <Segmented label="Members' tools" value={info.members.limited ? 'limited' : 'same'}
+                onChange={(v) => setMembers({ ...info.members, limited: v === 'limited' })}
+                options={[{ value: 'same', label: 'Same as you' }, { value: 'limited', label: 'Limited' }]} />
+            )}
+            <Text style={[s.aboutText, info.members.limited && info.members.can_limit === false && { color: t.colors.danger }]}>
+              {info.members.can_limit === false
+                ? info.members.limited
+                  ? "This Hermes can't apply the limit any more, so members' messages are held. Update Hermes, or choose Same as you."
+                  : 'People you add as members can use every tool you can. Update Hermes to limit what they use.'
+                : info.members.limited
+                  ? 'Members only get the tools you pick here, and only while they are on for you too.'
+                  : 'People you add as members can use every tool you can. Risky commands still wait for an owner.'}
             </Text>
           </View>
-          {info.members.limited ? (
+          {info.members.limited && info.members.can_limit !== false ? (
             <ListGroup style={{ marginTop: 12 }}>
               {mine.map((ts) => {
                 const on = info.members.toolsets.includes(ts.name);
