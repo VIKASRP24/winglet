@@ -7,8 +7,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BotAvatar } from '../../components/BotAvatar';
 import { BotSwitcher } from '../../components/BotSwitcher';
 import {
-  Activity, BarChart, Bell, Brain, CalendarClock, Cpu, Fingerprint, HeartPulse, Info, Key, MessageCircle, Palette, Plus, ScrollText, ShieldCheck,
-  Smartphone, Sparkles, UserRoundPen,
+  Activity, BarChart, Bell, Brain, CalendarClock, Cpu, Fingerprint, HeartPulse, Info, Key, MessageCircle, Palette, Plug, Plus, ScrollText,
+  ShieldCheck, Smartphone, Sparkles, SquareTerminal, UserRoundPen,
 } from '../../components/icons';
 import { shortModel } from '../../components/PickerCard';
 import { api } from '../../lib/api';
@@ -72,6 +72,20 @@ export default function AgentTab() {
           <>
             <SectionHeader title="Your agent" />
             <BrainRows server={server} rt={rt} />
+          </>
+        ) : null}
+
+        {rt?.info?.features?.abilities && isOwner(rt) ? (
+          <>
+            <SectionHeader title="Abilities" />
+            <ListGroup>
+              <ListRow icon={<Sparkles size={18} color={t.colors.onAccentSoft} />} title="Skills" subtitle="What it knows how to do"
+                onPress={() => router.push('/skills')} />
+              <ListRow icon={<SquareTerminal size={18} color={t.colors.onAccentSoft} />} title="Tools" subtitle="What it can use, approvals and members"
+                onPress={() => router.push('/tools')} />
+              <ListRow icon={<Plug size={18} color={t.colors.onAccentSoft} />} title="MCP servers" subtitle="Connect other apps and services"
+                onPress={() => router.push('/mcp')} />
+            </ListGroup>
           </>
         ) : null}
 
