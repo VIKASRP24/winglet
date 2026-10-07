@@ -183,7 +183,8 @@ export function ListRow({ icon, iconColor, title, subtitle, value, right, onPres
         {subtitle ? <Text style={s.rowSubtitle}>{subtitle}</Text> : null}
       </View>
       {value ? <Text style={s.rowValue} numberOfLines={1}>{value}</Text> : null}
-      {right}
+      {/* A switch or button on a row you can also tap: using it mustn't tap the row (on the web its click bubbles). */}
+      {right && onPress ? <Pressable accessible={false} onPress={() => undefined}>{right}</Pressable> : right}
       {chevron ? <ChevronRight size={18} color={t.colors.textTertiary} /> : null}
     </>
   );

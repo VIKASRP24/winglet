@@ -21,7 +21,7 @@ import logging
 import re
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Coroutine, Dict, Optional
+from typing import TYPE_CHECKING, Any, Coroutine, Dict, List, Optional
 
 from gateway.config import Platform, PlatformConfig
 from gateway.platforms._shared import extra_or_secret, get_scoped_secret, seed_extra_from_env
@@ -226,6 +226,10 @@ class WingletAdapter(BasePlatformAdapter):
             # The app only offers goals when this Hermes has them (features.goals).
             hub.chat_goal = self._chat_goal if hermes_api.goals_available() else None
             hub.command_resolver = hermes_api.resolve_command
+            hub.reload_mcp = self._reload_mcp
+            # Members' tool limits hold only if every turn's final toolsets can be capped (see toolset_limit).
+            hub.limits_members = hermes_api.limit_turn_toolsets(self.gateway_runner, PLATFORM) \
+                if getattr(self, "gateway_runner", None) is not None else False
             from gateway.platforms.shared_ingress import bind_listener
             # No access log: device tokens ride in WebSocket/media query strings and must not reach log files.
             self._runner = await bind_listener(self, hub.build_app(), self._host, self._port, "/api/ws",
@@ -394,6 +398,44 @@ class WingletAdapter(BasePlatformAdapter):
                 {"value": "cancel", "label": "Cancel"}]},
             resolve, ttl=300)
         return SendResult(success=True, message_id=posted["id"])
+
+    def toolsets_for_source(self, source) -> Optional[List[str]]:
+        """A member's tools, when an owner has limited them, as the list Hermes starts from. Hermes adds
+        to it (default-on plugin toolsets, x_search), so toolset_limit caps the result too."""
+        user_id = str(getattr(source, "user_id", "") or "")
+        if self._hub is None or not user_id.startswith(USER_PREFIX):
+            return None
+        try:
+            return self._hub.member_toolsets(user_id[len(USER_PREFIX):])
+        except Exception:
+            logger.warning("[%s] couldn't work out a member's tools; giving none this turn", self.name, exc_info=True)
+            return list(hermes_api.NO_TOOLS)
+
+    def toolset_limit(self, source) -> Optional[set]:
+        """The most a turn from this app may use, after Hermes has resolved it: None for owners and for
+        members whose tools aren't limited. Anything that goes wrong means no tools. The gateway asks the
+        adapter each source is routed to, so each profile's devices are checked against its own store."""
+        platform = getattr(source, "platform", None)
+        user_id = str(getattr(source, "user_id", "") or "")
+        if getattr(platform, "value", platform) != PLATFORM or not user_id.startswith(USER_PREFIX):
+            return None
+        hub = self._hub
+        if hub is None:
+            return set()
+        try:
+            allowed = hub.member_toolsets(user_id[len(USER_PREFIX):])
+        except Exception:
+            logger.warning("[%s] couldn't work out a member's tools; giving none this turn", self.name, exc_info=True)
+            return set()
+        return None if allowed is None else set(allowed) - set(hermes_api.NO_TOOLS)
+
+    async def _reload_mcp(self) -> str:
+        """Hermes's /reload-mcp, as if sent from the main chat, which also gets the note that tools changed."""
+        source = self.build_source(chat_id=GENERAL_CHAT_ID, chat_name="General", chat_type="dm",
+                                   user_id=USER_PREFIX + "app", user_name="Winglet", role_authorized=True)
+        event = MessageEvent(text="/reload-mcp", message_type=MessageType.COMMAND, source=source,
+                             timestamp=datetime.now(tz=timezone.utc))
+        return await hermes_api.reload_mcp(getattr(self, "gateway_runner", None), event)
 
     def _session_key(self, chat_id: str) -> Optional[str]:
         """The key Hermes files this chat's session under, or None outside a gateway."""

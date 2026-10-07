@@ -240,3 +240,36 @@ async def test_frame_access_unavailable_falls_back(adapter, notifier, monkeypatc
     monkeypatch.setattr(bridge.sys, "_getframe", unavailable)
     assert not (await notifier(adapter)._approval_notify_sync({"request_id": "a", "command": "ls"})).success
     assert adapter._hub.store.pending_count() == 0
+
+
+async def test_a_members_tools_fail_closed(adapter):
+    store = adapter._hub.store
+    owner, _ = store.add_device("Pixel", "android", role="owner")
+    member, _ = store.add_device("Alex", "android", role="member")
+    store.set_kv("member_tools", '{"limited": true, "toolsets": ["web"]}')
+
+    class Broken:
+        NO_TOOLS = ["no_mcp"]
+
+        def member_toolsets(self, allowed, mcp):
+            raise RuntimeError("config unreadable")
+
+    adapter._hub.hermes = Broken()
+    source = lambda user_id, platform="winglet": SimpleNamespace(user_id=user_id, platform=SimpleNamespace(value=platform))  # noqa: E731
+    assert adapter.toolsets_for_source(source("winglet:" + owner["id"])) is None
+    assert adapter.toolsets_for_source(source("webhook:route")) is None
+    assert adapter.toolsets_for_source(source("winglet:" + member["id"])) == ["no_mcp"]
+
+    # The cap on Hermes's final result: nothing for a member when the limit can't be worked out.
+    assert adapter.toolset_limit(source("winglet:" + owner["id"])) is None
+    assert adapter.toolset_limit(source("winglet:" + member["id"], "telegram")) is None
+    assert adapter.toolset_limit(source("winglet:" + member["id"])) == set()
+
+    class Working(Broken):
+        def member_toolsets(self, allowed, mcp):
+            return sorted(allowed) + ["no_mcp"]
+    adapter._hub.hermes = Working()
+    assert adapter.toolset_limit(source("winglet:" + member["id"])) == {"web"}
+    hub, adapter._hub = adapter._hub, None
+    assert adapter.toolset_limit(source("winglet:" + member["id"])) == set()
+    adapter._hub = hub

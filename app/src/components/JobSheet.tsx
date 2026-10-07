@@ -12,12 +12,15 @@ import { Button } from './ui';
 
 const TITLES: Record<Job['kind'], string> = {
   restart: 'Restarting', hermes_update: 'Updating Hermes', winglet_update: 'Updating Winglet',
+  skill_install: 'Installing a skill', skill_uninstall: 'Removing a skill', mcp_install: 'Adding an MCP server',
 };
+// Installs don't take the server down, so they have no steps to show.
+const RESTARTS: Job['kind'][] = ['restart', 'hermes_update', 'winglet_update'];
 const SLOW_MS = 3 * 60 * 1000;
 
 /**
- * A restart or update, start to finish. The server goes away partway through, so the sheet keeps
- * asking until a new process answers for the same job.
+ * A restart, update or install, start to finish. A restart takes the server away partway through, so
+ * the sheet keeps asking until a new process answers for the same job.
  */
 export function JobSheet({ server, job: initial, onClose, onDone }: {
   server: Server; job: Job | null; onClose: () => void; onDone?: (job: Job) => void;
@@ -55,7 +58,8 @@ export function JobSheet({ server, job: initial, onClose, onDone }: {
 
   if (!job) return null;
   const d = job.detail;
-  const steps = job.kind === 'hermes_update'
+  const restarts = RESTARTS.includes(job.kind);
+  const steps = !restarts ? [] : job.kind === 'hermes_update'
     ? ['Download and install', 'Restart', 'Back online']
     : job.kind === 'winglet_update' ? ['Download', 'Restart', 'Back online'] : ['Stop', 'Start again', 'Back online'];
   // Where we are: the server answering again after losing it means the last step.
@@ -76,7 +80,7 @@ export function JobSheet({ server, job: initial, onClose, onDone }: {
           {job.state === 'succeeded' && d.from && d.to && d.from !== d.to ? <Text style={s.sub}>{d.from} → {d.to}</Text> : null}
         </View>
 
-        <View style={s.steps}>
+        {steps.length ? <View style={s.steps}>
           {steps.map((label, i) => {
             const done = i < step || job.state === 'succeeded';
             const active = running && i === step;
@@ -90,7 +94,7 @@ export function JobSheet({ server, job: initial, onClose, onDone }: {
               </View>
             );
           })}
-        </View>
+        </View> : null}
 
         {d.command ? (
           <View style={{ gap: 6 }}>
@@ -98,7 +102,7 @@ export function JobSheet({ server, job: initial, onClose, onDone }: {
             <Text selectable style={s.command}>{d.command}</Text>
           </View>
         ) : null}
-        {slow && running ? (
+        {slow && running && restarts ? (
           <Animated.Text entering={FadeIn} style={[s.sub, { color: t.colors.warning }]}>
             This is taking longer than usual. If the server doesn't come back on its own, start it with `hermes gateway start`.
           </Animated.Text>

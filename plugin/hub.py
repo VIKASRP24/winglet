@@ -50,6 +50,17 @@ RESTART_DELAY_SECONDS = 0.8
 UPDATE_TIMEOUT_SECONDS = 30 * 60
 UPDATE_CHECK_SECONDS = 10 * 60
 MAX_ROUTINE_PROMPT = 8000
+# Installing a skill or an MCP server that has to download and build first.
+ACTION_TIMEOUT_SECONDS = 15 * 60
+ACTION_POLL_SECONDS = 1.5
+# What a member may use when an owner limits their tools, until the owner picks.
+MEMBER_TOOLSETS = ("web", "vision", "image_gen", "tts", "todo", "clarify")
+_ABILITY_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+_CALLBACK_BASE = re.compile(r"^https?://[^\s/?#@]+(/[^\s?#]*)?$")
+SIGN_IN_PAGE = ("<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width'>"
+                "<meta name=color-scheme content='light dark'>"
+                "<title>Winglet</title><body style='font:17px system-ui;margin:40px 24px;text-align:center'>"
+                "<h2>{title}</h2><p>{body}</p>")
 PUSH_DEBOUNCE_SECONDS = 2.5
 MAX_TEXT = 16_000
 PUSH_SUBJECT = "https://github.com/VIKASRP24/winglet"
@@ -106,6 +117,13 @@ ROUTE_POLICY = {
     "h_pause": "owner_signed", "h_restart": "owner_signed", "h_update": "owner_signed",
     "h_routine_create": "owner_signed", "h_routine_edit": "owner_signed", "h_routine_delete": "owner_signed",
     "h_routine_action": "owner_signed",
+    "h_skills": "owner", "h_skill_catalog": "owner", "h_skill_content": "owner", "h_toolsets": "owner",
+    "h_mcp": "owner", "h_mcp_catalog": "owner", "h_mcp_sign_in_status": "owner", "h_mcp_callback": "public",
+    "h_skill_toggle": "owner_signed", "h_skill_install": "owner_signed", "h_skill_uninstall": "owner_signed",
+    "h_toolset_toggle": "owner_signed", "h_approvals": "owner_signed", "h_member_tools": "owner_signed",
+    "h_mcp_install": "owner_signed", "h_mcp_toggle": "owner_signed", "h_mcp_remove": "owner_signed",
+    "h_mcp_test": "owner_signed", "h_mcp_reload": "owner_signed", "h_mcp_sign_in": "owner_signed",
+    "h_mcp_sign_in_cancel": "owner_signed",
     "h_rotate_token": "signed",
     "h_device_update": "owner_signed", "h_device_delete": "owner_signed", "h_pairing_code": "owner_signed",
 }
@@ -210,6 +228,11 @@ class Hub:
         self.started_at = time.time()
         self._tasks: Set[asyncio.Task] = set()
         self._update_check: Dict[str, Any] = {}
+        # Reconnects MCP servers (Hermes's /reload-mcp), installed by the adapter. Server changes wait for it.
+        self.reload_mcp: Optional[Callable[[], Awaitable[str]]] = None
+        self.mcp_changed = False
+        # Set by the adapter when it can cap every turn's final toolsets, which members' tool limits need.
+        self.limits_members = False
         # Hermes-side callbacks, installed by the adapter.
         self.on_user_message: Optional[InboundFn] = None
         self.on_approval: Optional[ResolveFn] = None
@@ -286,6 +309,27 @@ class Hub:
         r.add_patch("/api/schedule/{routine_id}", self.h_routine_edit)
         r.add_delete("/api/schedule/{routine_id}", self.h_routine_delete)
         r.add_post("/api/schedule/{routine_id}/{action}", self.h_routine_action)
+        r.add_get("/api/skills", self.h_skills)
+        r.add_get("/api/skills/catalog", self.h_skill_catalog)
+        r.add_post("/api/skills/install", self.h_skill_install)
+        r.add_get("/api/skills/{name}/content", self.h_skill_content)
+        r.add_put("/api/skills/{name}", self.h_skill_toggle)
+        r.add_delete("/api/skills/{name}", self.h_skill_uninstall)
+        r.add_get("/api/toolsets", self.h_toolsets)
+        r.add_put("/api/toolsets/{name}", self.h_toolset_toggle)
+        r.add_put("/api/approvals", self.h_approvals)
+        r.add_put("/api/members/tools", self.h_member_tools)
+        r.add_get("/api/mcp", self.h_mcp)
+        r.add_post("/api/mcp", self.h_mcp_install)
+        r.add_get("/api/mcp/catalog", self.h_mcp_catalog)
+        r.add_post("/api/mcp/reload", self.h_mcp_reload)
+        r.add_get("/api/mcp/sign-in/{flow_id}", self.h_mcp_sign_in_status)
+        r.add_delete("/api/mcp/sign-in/{flow_id}", self.h_mcp_sign_in_cancel)
+        r.add_get("/api/mcp/oauth/{name}", self.h_mcp_callback)
+        r.add_put("/api/mcp/{name}", self.h_mcp_toggle)
+        r.add_delete("/api/mcp/{name}", self.h_mcp_remove)
+        r.add_post("/api/mcp/{name}/test", self.h_mcp_test)
+        r.add_post("/api/mcp/{name}/sign-in", self.h_mcp_sign_in)
         r.add_get("/{tail:.*}", self.h_static)
         app.on_startup.append(self._start_janitor)
         app.on_shutdown.append(self._close_sockets)
@@ -495,7 +539,7 @@ class Hub:
                 "replies": True, "export": True, "mute": True, "status_updates": True, "roles": True,
                 "signed_actions": True, "ws_auth": True, "pickers": True, "agent": self.hermes is not None,
                 "control": self.hermes is not None, "goals": self.chat_goal is not None, "search": True, "files": True,
-                "commands": self.commands_provider is not None}
+                "abilities": self.hermes is not None, "commands": self.commands_provider is not None}
 
     def about(self) -> Dict[str, Any]:
         return {"version": VERSION, "protocol": PROTOCOL, "min_app_protocol": MIN_APP_PROTOCOL,
@@ -739,6 +783,10 @@ class Hub:
         chat = self.store.get_chat(chat_id)
         if not self.can_see(device, chat):
             return None  # deleted (or never created, or someone else's): don't bring it back
+        if device["role"] != "owner" and not self.limits_members and self.member_tools()["limited"]:
+            # Limits were set, but this Hermes can't apply them any more (an update removed the step).
+            raise MessageRejected("An owner limited what members can use, and this server can't apply that "
+                                  "right now, so your message wasn't sent. Ask an owner to update Hermes.")
         refused = self._refused_command(device, text)
         meta: Dict[str, Any] = {"device": device["name"], "client_id": client_id}
         if hidden and text.startswith("/") and not attachments:
@@ -1440,6 +1488,8 @@ class Hub:
         """Run a Hermes function off the event loop; its refusals become 400s with Hermes's message."""
         h = self._need_hermes()
         try:
+            if asyncio.iscoroutinefunction(fn):
+                return await fn(*args, **kwargs)
             return await asyncio.to_thread(fn, *args, **kwargs)
         except h.HermesRefused as exc:
             raise web.HTTPBadRequest(text=json.dumps({"error": str(exc)}), content_type="application/json")
@@ -1485,12 +1535,9 @@ class Hub:
         """Save a provider's API key. It arrives sealed to the server key and is never sent back."""
         device = self._require(request)
         h = self._need_hermes()
-        if device["platform"] == "web" and self.connection.get("mode") == "quick" \
-                and os.environ.get("WINGLET_ALLOW_WEB_SECRETS", "").lower() not in ("1", "true", "yes", "on"):
-            # Over the automatic tunnel the web app's own code passes through Cloudflare, so it can't
-            # promise a typed key stays private. The Android app can; so can a direct connection.
-            return _error(403, "For your security, add API keys from the Android app or over a direct connection. "
-                               "To allow it from the web app anyway, set WINGLET_ALLOW_WEB_SECRETS=true on the server.")
+        refused = self._secrets_refused(device)
+        if refused is not None:
+            return refused
         body = await self._body(request)
         try:
             data = self.keys.unseal_json(str(body.get("sealed") or ""), "provider-key", device["id"])
@@ -1858,6 +1905,300 @@ class Hub:
         verb = {"pause": "paused", "resume": "resumed", "run": "ran now"}[action]
         self.audit(f"routine.{action}", device, f"{routine.get('name') or 'routine'} {verb}")
         return _json({"routine": routine})
+
+    # -- abilities: skills, toolsets, MCP servers -------------------------------------------
+
+    def _ability_name(self, request: web.Request) -> str:
+        name = request.match_info["name"]
+        if not _ABILITY_NAME.match(name):
+            raise web.HTTPNotFound(text=json.dumps({"error": "not found"}), content_type="application/json")
+        return name
+
+    async def h_skills(self, request: web.Request) -> web.Response:
+        self._require(request)
+        return _json({"skills": await self._call(self._need_hermes().list_skills)})
+
+    async def h_skill_catalog(self, request: web.Request) -> web.Response:
+        self._require(request)
+        return _json({"skills": await self._call(self._need_hermes().skill_catalog)})
+
+    async def h_skill_content(self, request: web.Request) -> web.Response:
+        self._require(request)
+        return _json(await self._call(self._need_hermes().skill_content, self._ability_name(request)))
+
+    async def h_skill_toggle(self, request: web.Request) -> web.Response:
+        device = self._require(request)
+        name = self._ability_name(request)
+        enabled = bool((await self._body(request)).get("enabled"))
+        await self._call(self._need_hermes().set_skill_enabled, name, enabled)
+        self.audit("skill.toggle", device, f"{name} turned {'on' if enabled else 'off'}")
+        return _json({"ok": True, "name": name, "enabled": enabled})
+
+    async def h_skill_install(self, request: web.Request) -> web.Response:
+        """Install one of Hermes's official skills, as a job: it runs `hermes skills install`."""
+        device = self._require(request)
+        h = self._need_hermes()
+        body = await self._body(request)
+        identifier = str(body.get("identifier") or "")
+        skill = next((s for s in await self._call(h.skill_catalog) if s["identifier"] == identifier), None)
+        if skill is None:
+            return _error(400, "Only Hermes's official skills can be installed from the app.")
+        name = skill["name"]
+        job = await self._begin_job(request, device, "skill_install", {"skill": name, "message": f"Installing {name}…"},
+                                    body=body)
+        if isinstance(job, web.Response):
+            return job
+        self.audit("skill.install", device, f"installed {identifier}")
+        self._spawn(self._follow_action(job["id"], lambda: h.start_skill_install(identifier), h.finish_skill_action,
+                                        f"{name} is installed.", f"{name} didn't install. Its output is below."))
+        return _json({"job": job}, status=202)
+
+    async def h_skill_uninstall(self, request: web.Request) -> web.Response:
+        device = self._require(request)
+        h = self._need_hermes()
+        name = self._ability_name(request)
+        skill = next((s for s in await self._call(h.list_skills) if s["name"] == name), None)
+        if skill is None:
+            return _error(404, "There's no skill by that name.")
+        if skill["provenance"] != "hub":
+            return _error(400, "This skill comes with Hermes. Turn it off instead.")
+        job = await self._begin_job(request, device, "skill_uninstall", {"skill": name, "message": f"Removing {name}…"})
+        if isinstance(job, web.Response):
+            return job
+        self.audit("skill.uninstall", device, f"removed {name}")
+        self._spawn(self._follow_action(job["id"], lambda: h.start_skill_uninstall(name), h.finish_skill_action,
+                                        f"{name} is removed.", f"{name} wasn't removed. Its output is below."))
+        return _json({"job": job}, status=202)
+
+    async def _follow_action(self, job_id: str, start: Callable[[], Awaitable[Optional[str]]],
+                             after: Optional[Callable[[], None]], done: str, failed: str) -> None:
+        """Run a Hermes background action (an install) as a job, until it exits."""
+        h = self._need_hermes()
+        try:
+            action = await start()
+        except Exception as exc:
+            logger.warning("[winglet] action failed to start", exc_info=True)
+            await self._finish_job(job_id, "failed", _clip(str(exc), 300) or failed)
+            return
+        if action:
+            self.store.update_job(job_id, action=action)
+            deadline = time.monotonic() + ACTION_TIMEOUT_SECONDS
+            status: Dict[str, Any] = {}
+            while time.monotonic() < deadline:
+                await asyncio.sleep(ACTION_POLL_SECONDS)
+                try:
+                    status = await h.action_status(action)
+                except Exception:
+                    continue
+                if not status.get("running") and status.get("exit_code") is not None:
+                    break
+                self.store.update_job(job_id, lines=list(status.get("lines") or [])[-12:])
+            else:
+                await self._finish_job(job_id, "unknown", "This is taking too long to report back. Check the server.")
+                return
+            if status.get("exit_code") != 0:
+                await self._finish_job(job_id, "failed", failed, lines=list(status.get("lines") or [])[-20:])
+                return
+        if after is not None:
+            await asyncio.to_thread(after)
+        # The installer's output (its security scan) only matters when something went wrong.
+        await self._finish_job(job_id, "succeeded", done, lines=[])
+
+    def member_tools(self) -> Dict[str, Any]:
+        """Whether members' tools are limited, and to what. Off until an owner turns it on."""
+        try:
+            saved = json.loads(self.store.get_kv("member_tools") or "{}")
+        except ValueError:
+            saved = {}
+        toolsets = saved.get("toolsets")
+        return {"limited": bool(saved.get("limited")), "mcp": bool(saved.get("mcp")),
+                "toolsets": [str(t) for t in toolsets] if isinstance(toolsets, list) else list(MEMBER_TOOLSETS)}
+
+    def member_toolsets(self, device_id: str) -> Optional[List[str]]:
+        """The tools a turn from this device may use: None for an owner, or for a member while their tools
+        aren't limited. A device that isn't paired any more gets none."""
+        device = self.current_device(device_id)
+        if device is not None and device["role"] == "owner":
+            return None
+        limits = self.member_tools()
+        if device is not None and not limits["limited"]:
+            return None
+        h = self._need_hermes()
+        if device is None:
+            return list(h.NO_TOOLS)
+        return h.member_toolsets(limits["toolsets"], limits["mcp"])
+
+    async def h_toolsets(self, request: web.Request) -> web.Response:
+        self._require(request)
+        h = self._need_hermes()
+        return _json({"toolsets": await self._call(h.toolsets), "approvals": await self._call(h.approval_mode),
+                      "members": {**self.member_tools(), "can_limit": self.limits_members}})
+
+    async def h_toolset_toggle(self, request: web.Request) -> web.Response:
+        device = self._require(request)
+        name = self._ability_name(request)
+        enabled = bool((await self._body(request)).get("enabled"))
+        await self._call(self._need_hermes().set_toolset, name, enabled)
+        self.audit("toolset.toggle", device, f"{name} turned {'on' if enabled else 'off'}")
+        return _json({"ok": True, "name": name, "enabled": enabled})
+
+    async def h_approvals(self, request: web.Request) -> web.Response:
+        """How risky commands are approved: ask an owner (manual), let a model decide the low-risk ones
+        (smart), or never ask (off)."""
+        device = self._require(request)
+        mode = str((await self._body(request)).get("mode") or "")
+        await self._call(self._need_hermes().set_approval_mode, mode)
+        self.audit("approvals.mode", device, f"approvals set to {mode}")
+        return _json({"ok": True, "approvals": mode})
+
+    async def h_member_tools(self, request: web.Request) -> web.Response:
+        device = self._require(request)
+        body = await self._body(request)
+        toolsets = body.get("toolsets")
+        if not isinstance(toolsets, list) or not all(isinstance(t, str) and _ABILITY_NAME.match(t) for t in toolsets):
+            return _error(400, "toolsets must be a list of toolset names")
+        if body.get("limited") and not self.limits_members:
+            return _error(400, "This version of Hermes can't limit what members use. Update Hermes to turn this on.")
+        known = {t["name"] for t in await self._call(self._need_hermes().toolsets)}
+        limits = {"limited": bool(body.get("limited")), "mcp": bool(body.get("mcp")),
+                  "toolsets": sorted(set(toolsets) & known)}
+        self.store.set_kv("member_tools", json.dumps(limits))
+        summary = ("limited members to " + (", ".join(limits["toolsets"]) or "no tools")
+                   + (" and MCP servers" if limits["mcp"] else "")) if limits["limited"] else "gave members the same tools"
+        self.audit("members.tools", device, summary)
+        return _json({"members": limits})
+
+    async def h_mcp(self, request: web.Request) -> web.Response:
+        self._require(request)
+        servers = await self._call(self._need_hermes().mcp_servers)
+        return _json({"servers": servers, "needs_reload": self.mcp_changed, "can_reload": self.reload_mcp is not None})
+
+    async def h_mcp_catalog(self, request: web.Request) -> web.Response:
+        self._require(request)
+        return _json(await self._call(self._need_hermes().mcp_catalog))
+
+    def _secrets_refused(self, device: Dict[str, Any]) -> Optional[web.Response]:
+        if device["platform"] == "web" and self.connection.get("mode") == "quick" \
+                and os.environ.get("WINGLET_ALLOW_WEB_SECRETS", "").lower() not in ("1", "true", "yes", "on"):
+            # Over the automatic tunnel the web app's own code passes through Cloudflare, so it can't
+            # promise a typed key stays private. The Android app can; so can a direct connection.
+            return _error(403, "For your security, add API keys from the Android app or over a direct connection. "
+                               "To allow it from the web app anyway, set WINGLET_ALLOW_WEB_SECRETS=true on the server.")
+        return None
+
+    async def h_mcp_install(self, request: web.Request) -> web.Response:
+        """Add a server from Hermes's catalog. Any keys it needs arrive sealed to the server key."""
+        device = self._require(request)
+        h = self._need_hermes()
+        body = await self._body(request)
+        name = str(body.get("name") or "")
+        entry = next((e for e in (await self._call(h.mcp_catalog))["entries"] if e["name"] == name), None)
+        if entry is None:
+            return _error(404, "That server isn't in Hermes's catalog.")
+        env: Dict[str, str] = {}
+        if body.get("sealed"):
+            refused = self._secrets_refused(device)
+            if refused is not None:
+                return refused
+            try:
+                data = self.keys.unseal_json(str(body["sealed"]), "mcp-env", device["id"])
+            except (keys.SealError, ValueError):
+                return _error(400, "The keys couldn't be opened. Make sure the app is up to date and try again.")
+            values = data.get("env") if isinstance(data.get("env"), dict) else {}
+            env = {str(k): str(v).strip() for k, v in values.items() if str(v).strip()}
+        if any(len(v) > 4096 for v in env.values()):
+            return _error(400, "One of those values is too long.")
+        missing = [e["name"] for e in entry.get("required_env") or [] if e.get("required") and not env.get(e["name"])]
+        if missing:
+            return _error(400, f"{name} needs {', '.join(missing)}.")
+        summary = f"added {name}" + (f" with {', '.join(sorted(env))}" if env else "")
+        if entry.get("needs_install"):
+            job = await self._begin_job(request, device, "mcp_install", {"server": name, "message": f"Adding {name}…"},
+                                        body=body)
+            if isinstance(job, web.Response):
+                return job
+            self.audit("mcp.add", device, summary)
+            self._spawn(self._follow_action(job["id"], lambda: h.install_mcp(name, env), self._mark_mcp_changed,
+                                            f"{name} is added.", f"{name} wasn't added. Its output is below."))
+            return _json({"job": job}, status=202)
+        await self._call(h.install_mcp, name, env)
+        self.mcp_changed = True
+        self.audit("mcp.add", device, summary)
+        return _json({"ok": True, "needs_reload": True})
+
+    def _mark_mcp_changed(self) -> None:
+        self.mcp_changed = True
+
+    async def h_mcp_toggle(self, request: web.Request) -> web.Response:
+        device = self._require(request)
+        name = self._ability_name(request)
+        enabled = bool((await self._body(request)).get("enabled"))
+        await self._call(self._need_hermes().set_mcp_enabled, name, enabled)
+        self.mcp_changed = True
+        self.audit("mcp.toggle", device, f"{name} turned {'on' if enabled else 'off'}")
+        return _json({"ok": True, "name": name, "enabled": enabled, "needs_reload": True})
+
+    async def h_mcp_remove(self, request: web.Request) -> web.Response:
+        device = self._require(request)
+        name = self._ability_name(request)
+        await self._call(self._need_hermes().remove_mcp, name)
+        self.mcp_changed = True
+        self.audit("mcp.remove", device, f"removed {name}")
+        return _json({"ok": True, "needs_reload": True})
+
+    async def h_mcp_test(self, request: web.Request) -> web.Response:
+        """Connect to a server and list its tools. It runs the server's command, so it's signed."""
+        self._require(request)
+        return _json(await self._call(self._need_hermes().test_mcp, self._ability_name(request)))
+
+    async def h_mcp_reload(self, request: web.Request) -> web.Response:
+        device = self._require(request)
+        if self.reload_mcp is None:
+            return _error(404, "This server can't do that yet.")
+        message = await self._call(self.reload_mcp)
+        self.mcp_changed = False
+        self.audit("mcp.reload", device, "reconnected MCP servers")
+        return _json({"ok": True, "message": message})
+
+    async def h_mcp_sign_in(self, request: web.Request) -> web.Response:
+        """Start signing in to a server: the app opens the returned page, which comes back here."""
+        device = self._require(request)
+        name = self._ability_name(request)
+        body = await self._body(request)
+        base = str(body.get("callback_base") or self.connection.get("url") or "").rstrip("/")
+        if not _CALLBACK_BASE.match(base):
+            return _error(400, "callback_base must be the address the app uses for this server")
+        flow = await self._call(self._need_hermes().start_mcp_sign_in, name,
+                                f"{base}/api/mcp/oauth/{quote(name, safe='')}")
+        self.audit("mcp.sign_in", device, f"started signing in to {name}")
+        return _json({"sign_in": flow})
+
+    async def h_mcp_sign_in_status(self, request: web.Request) -> web.Response:
+        self._require(request)
+        flow = await self._call(self._need_hermes().mcp_sign_in, request.match_info["flow_id"])
+        return _json({"sign_in": flow}) if flow else _error(404, "That sign-in has ended. Start again.")
+
+    async def h_mcp_sign_in_cancel(self, request: web.Request) -> web.Response:
+        self._require(request)
+        await self._call(self._need_hermes().cancel_mcp_sign_in, request.match_info["flow_id"])
+        return _json({"ok": True})
+
+    async def h_mcp_callback(self, request: web.Request) -> web.Response:
+        """Where a server's sign-in page sends the browser back. Only a sign-in this server started, with
+        the exact state it was given, accepts it."""
+        h = self.hermes
+        q = request.query
+        outcome = "expired" if h is None else await asyncio.to_thread(
+            h.finish_mcp_sign_in, request.match_info["name"], code=q.get("code"), state=q.get("state"),
+            error=q.get("error"), iss=q.get("iss"))
+        title, text, status = {
+            "ok": ("Signed in", "You can close this page and go back to Winglet.", 200),
+            "denied": ("Sign-in cancelled", "Go back to Winglet to try again.", 400),
+            "rejected": ("This link was already used", "Go back to Winglet to try again.", 409),
+        }.get(outcome, ("This sign-in has expired", "Go back to Winglet and start again.", 404))
+        return web.Response(text=SIGN_IN_PAGE.format(title=title, body=text), status=status,
+                            content_type="text/html", headers={"Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'",
+                                                               "Referrer-Policy": "no-referrer"})
 
     # -- push ------------------------------------------------------------------------------
 
