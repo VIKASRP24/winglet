@@ -31,6 +31,36 @@ jobs:
       - name: Bundled web app is complete
         run: python scripts/check_web_bundle.py
 
+  hermes:
+    # The same tests against a real Hermes, so anything that goes through Hermes's own code (members'
+    # tool limits run through its toolset resolver) is checked there too.
+    name: Plugin tests with Hermes
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: NousResearch/hermes-agent
+          # The Hermes these tests were last checked against. Move it forward on purpose.
+          ref: 47676981f55de91231fdeef2f0eec47e7c209e78
+          path: hermes-agent
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      # Hermes only supports editable installs.
+      - run: pip install -e ./hermes-agent pytest pytest-aiohttp http_ece pyyaml packaging
+      - name: Install the plugin's declared dependencies
+        run: |
+          python - <<'PY'
+          import pathlib, subprocess, sys, yaml
+          manifest = yaml.safe_load(pathlib.Path('plugin/plugin.yaml').read_text())
+          subprocess.check_call([sys.executable, '-m', 'pip', 'install', *manifest['python_dependencies']])
+          PY
+      - name: Hermes is really there
+        run: python -c "import gateway.run_turn, hermes_cli.tools_config"
+      - run: pytest -q
+
   app:
     name: App typecheck + web build
     runs-on: ubuntu-latest

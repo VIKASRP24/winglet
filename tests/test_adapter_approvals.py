@@ -255,7 +255,21 @@ async def test_a_members_tools_fail_closed(adapter):
             raise RuntimeError("config unreadable")
 
     adapter._hub.hermes = Broken()
-    source = lambda user_id: SimpleNamespace(user_id=user_id)  # noqa: E731
+    source = lambda user_id, platform="winglet": SimpleNamespace(user_id=user_id, platform=SimpleNamespace(value=platform))  # noqa: E731
     assert adapter.toolsets_for_source(source("winglet:" + owner["id"])) is None
     assert adapter.toolsets_for_source(source("webhook:route")) is None
     assert adapter.toolsets_for_source(source("winglet:" + member["id"])) == ["no_mcp"]
+
+    # The cap on Hermes's final result: nothing for a member when the limit can't be worked out.
+    assert adapter._toolset_limit(source("winglet:" + owner["id"])) is None
+    assert adapter._toolset_limit(source("winglet:" + member["id"], "telegram")) is None
+    assert adapter._toolset_limit(source("winglet:" + member["id"])) == set()
+
+    class Working(Broken):
+        def member_toolsets(self, allowed, mcp):
+            return sorted(allowed) + ["no_mcp"]
+    adapter._hub.hermes = Working()
+    assert adapter._toolset_limit(source("winglet:" + member["id"])) == {"web"}
+    hub, adapter._hub = adapter._hub, None
+    assert adapter._toolset_limit(source("winglet:" + member["id"])) == set()
+    adapter._hub = hub

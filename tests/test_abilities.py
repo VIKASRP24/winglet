@@ -154,6 +154,7 @@ def hub(store, tmp_path, monkeypatch):
     monkeypatch.setattr(hub_module, "ACTION_POLL_SECONDS", 0)
     h = Hub(store, web_root=tmp_path / "web", bot_info=lambda: {"name": "hermes", "title": "Hermes"})
     h.hermes = FakeHermes()
+    h.limits_members = True
     return h
 
 
@@ -233,7 +234,8 @@ async def test_toolsets_and_approvals(client, hub):
     data = await (await client.get("/api/toolsets", headers=owner.auth)).json()
     assert [t["name"] for t in data["toolsets"]] == ["web", "terminal", "file", "todo"]
     assert data["approvals"] == "manual"
-    assert data["members"] == {"limited": False, "mcp": False, "toolsets": list(hub_module.MEMBER_TOOLSETS)}
+    assert data["members"] == {"limited": False, "mcp": False, "toolsets": list(hub_module.MEMBER_TOOLSETS),
+                               "can_limit": True}
 
     assert (await send_signed(client, owner, "PUT", "/api/toolsets/terminal", {"enabled": False})).status == 200
     assert hub.hermes.toolset_rows[1]["enabled"] is False
@@ -263,6 +265,55 @@ async def test_members_get_the_same_tools_until_an_owner_limits_them(client, hub
     assert bad.status == 400
     assert (await send_signed(client, member, "PUT", "/api/members/tools",
                               {"limited": False, "toolsets": []})).status == 403
+
+
+async def test_limits_need_a_hermes_that_can_enforce_them(client, hub):
+    owner = await pair_phone(client, hub)
+    member = await pair_phone(client, hub, "Alex", role="member")
+    hub.limits_members = False
+    assert (await (await client.get("/api/toolsets", headers=owner.auth)).json())["members"]["can_limit"] is False
+    resp = await send_signed(client, owner, "PUT", "/api/members/tools", {"limited": True, "toolsets": ["web"]})
+    assert resp.status == 400 and "Update Hermes" in (await resp.json())["error"]
+    assert (await send_signed(client, owner, "PUT", "/api/members/tools", {"limited": False, "toolsets": []})).status == 200
+
+    # Limits set while Hermes could enforce them, then lost (an update): members' messages are held.
+    hub.store.set_kv("member_tools", '{"limited": true, "toolsets": ["web"]}')
+    sent = []
+
+    async def on_message(*args, **kwargs):
+        sent.append(args)
+    hub.on_user_message = on_message
+    chat = hub.store.ensure_chat("m-" + member.id, "Alex", owner_device=member.id)
+    hub.store.ensure_chat("general", "General")
+    held = await client.post(f"/api/chats/{chat['id']}/messages", json={"text": "hi"}, headers=member.auth)
+    assert held.status == 400 and "wasn't sent" in (await held.json())["error"]
+    assert (await client.post("/api/chats/general/messages", json={"text": "hi"}, headers=owner.auth)).status == 200
+    await settle(hub)
+    assert len(sent) == 1
+
+
+class Runner:
+    """Hermes's resolver widening an override, as it does with default-on plugin toolsets and x_search."""
+    def _resolve_enabled_toolsets_for_source(self, user_config, source, platform_key):
+        return sorted({*user_config["override"], "shell_plugin", "x_search"} - {"no_mcp"})
+
+
+def test_turns_are_capped_after_hermes_resolves_them():
+    runner = Runner()
+    limits = {"member": {"web"}, "nobody": set(), "owner": None}
+
+    def limit_for(source):
+        if source == "broken":
+            raise RuntimeError("config unreadable")
+        return limits[source]
+    assert hermes_api.limit_turn_toolsets(runner, limit_for)
+    resolve = runner._resolve_enabled_toolsets_for_source
+    assert resolve({"override": ["web", "no_mcp"]}, "member", "winglet") == ["web"]
+    assert resolve({"override": ["no_mcp"]}, "nobody", "winglet") == []
+    assert resolve({"override": ["no_mcp"]}, "broken", "winglet") == []
+    assert resolve({"override": ["web"]}, "owner", "winglet") == ["shell_plugin", "web", "x_search"]
+    assert hermes_api.limit_turn_toolsets(runner, limit_for) and runner._resolve_enabled_toolsets_for_source is resolve
+    assert hermes_api.limit_turn_toolsets(object(), limit_for) is False
 
 
 # -- MCP servers ----------------------------------------------------------------------------------
