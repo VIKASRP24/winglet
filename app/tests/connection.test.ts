@@ -83,3 +83,14 @@ test('a new address is cleaned up, or refused with a reason', () => {
   assert.ok(checkAddress('ftp://example.com', 'x').error);
   assert.match(checkAddress('https://a.trycloudflare.com/', 'https://a.trycloudflare.com').error, /already/);
 });
+
+test('a tunnel status from before the phone lost the server is only the last known one', () => {
+  const now = 1_000_000_000;
+  const up = { state: 'ready', since: now / 1000 - 7200, error: null, retry_at: null };
+  const stale = tunnelSummary(up, now, now - 5 * 60_000);
+  assert.equal(stale.tone, 'unknown');
+  assert.equal(stale.text, 'Unknown right now. Last known: up, 5 min ago');
+  // It no longer counts up, however long the phone stays offline.
+  assert.doesNotMatch(tunnelSummary(up, now + 3600_000, now - 5 * 60_000).text, /Up for/);
+  assert.match(tunnelSummary({ state: 'retrying', since: 0, error: 'x', retry_at: now / 1000 + 5 }, now, now - 1000).text, /Last known: down, just now/);
+});

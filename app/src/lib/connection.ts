@@ -111,8 +111,17 @@ export function modeSummary(mode: ConnectionStatus['mode']): { title: string; de
       detail: 'Phones reach the server at an address you set up: your home network, a VPN like Tailscale, or your own domain.' };
 }
 
-/** The tunnel's state as one line, with a tone for its dot. Times are server seconds. */
-export function tunnelSummary(tunnel: NonNullable<ConnectionStatus['tunnel']>, now = Date.now()): { text: string; tone: 'ok' | 'info' | 'warn' } {
+/**
+ * The tunnel's state as one line, with a tone for its dot. Times are server seconds. Pass `checkedAt` (phone
+ * milliseconds) when the status is from before the phone lost the server: then it's only the last known state.
+ */
+export function tunnelSummary(tunnel: NonNullable<ConnectionStatus['tunnel']>, now = Date.now(),
+  checkedAt: number | null = null): { text: string; tone: 'ok' | 'info' | 'warn' | 'unknown' } {
+  if (checkedAt !== null) {
+    const last = { ready: 'up', starting: 'starting', retrying: 'down' }[tunnel.state];
+    const ago = span(now - checkedAt);
+    return { tone: 'unknown', text: `Unknown right now. Last known: ${last}, ${ago === 'under a minute' ? 'just now' : `${ago} ago`}` };
+  }
   if (tunnel.state === 'ready') return { tone: 'ok', text: `Up for ${span(now - tunnel.since * 1000)}` };
   if (tunnel.state === 'starting') return { tone: 'info', text: 'Starting' };
   const wait = tunnel.retry_at ? Math.ceil(tunnel.retry_at - now / 1000) : 0;

@@ -26,6 +26,7 @@ export default function ConnectionScreen() {
   const rt = useApp((st) => st.runtime[serverId]);
   const network = useApp((st) => st.network);
   const [status, setStatus] = useState<ConnectionStatus | null>(null);
+  const [checkedAt, setCheckedAt] = useState(0);
   const [moving, setMoving] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -35,7 +36,8 @@ export default function ConnectionScreen() {
 
   const load = useCallback(() => {
     if (!server || !supported) return;
-    api<ConnectionStatus>(server, '/api/connection/status').then(setStatus).catch(() => undefined);
+    api<ConnectionStatus>(server, '/api/connection/status')
+      .then((next) => { setStatus(next); setCheckedAt(Date.now()); }).catch(() => undefined);
   }, [server, supported]);
   useEffect(() => {
     if (!online) return;
@@ -60,6 +62,8 @@ export default function ConnectionScreen() {
     haptic.success();
     useApp.getState().toast({ serverId: server.id, title: 'Copied', body: text });
   };
+  // Polling stops while the server is unreachable: what's shown is then only the last known state.
+  const stale = !!status && !online;
   const offered = status?.url && status.url !== server.url && native ? status.url : null;
 
   const rows: [string, string][] = [
@@ -88,15 +92,16 @@ export default function ConnectionScreen() {
       {status ? (
         <Animated.View entering={FadeIn}>
           <SectionHeader title={`How phones reach ${server.bot.title}`} />
+          {stale ? <Text style={[s.note, { marginTop: 0 }]}>Last known, from before this phone lost {server.bot.title}. It updates when the connection is back.</Text> : null}
           <ListGroup>
             <ListRow icon={status.mode === 'quick' ? <Cloud size={18} color={t.colors.onAccentSoft} /> : <Route size={18} color={t.colors.onAccentSoft} />}
               title={modeSummary(status.mode).title} subtitle={modeSummary(status.mode).detail} />
-            {status.tunnel ? <TunnelRow tunnel={status.tunnel} now={now} /> : null}
+            {status.tunnel ? <TunnelRow tunnel={status.tunnel} now={now} checkedAt={stale ? checkedAt : null} /> : null}
             <ListRow icon={<Globe size={18} color={t.colors.onAccentSoft} />} title="Address it gives out"
               subtitle={status.url ?? (status.mode === 'quick' ? 'None right now. It gets a new one when the tunnel is back.' : 'Not set. Phones use the address they paired with.')}
               right={status.url ? <CopyButton label="Copy the server's address" onPress={() => copy(status.url!)} /> : undefined} />
           </ListGroup>
-          {status.mode === 'quick' && status.address_since ? (
+          {status.mode === 'quick' && status.address_since && !stale ? (
             <Text style={s.note}>This address has worked for {span(now - status.address_since * 1000)}
               {status.address_changes ? `. It has changed ${status.address_changes === 1 ? 'once' : `${status.address_changes} times`}` : ''}.</Text>
           ) : null}
@@ -198,14 +203,14 @@ function recoveryLine(server: Server, status: ConnectionStatus | null, now: numb
   return `On: this phone finds the server's new address by itself${last ? `. ${last.replace('Last one', 'Last update')}` : ''}.`;
 }
 
-function TunnelRow({ tunnel, now }: { tunnel: NonNullable<ConnectionStatus['tunnel']>; now: number }) {
+function TunnelRow({ tunnel, now, checkedAt }: { tunnel: NonNullable<ConnectionStatus['tunnel']>; now: number; checkedAt: number | null }) {
   const t = useTheme();
   const s = useStyles();
-  const line = tunnelSummary(tunnel, now);
-  const color = line.tone === 'ok' ? t.colors.success : line.tone === 'warn' ? t.colors.warning : t.colors.accent;
+  const line = tunnelSummary(tunnel, now, checkedAt);
+  const color = { ok: t.colors.success, warn: t.colors.warning, info: t.colors.accent, unknown: t.colors.textTertiary }[line.tone];
   return (
     <ListRow icon={<Activity size={18} color={t.colors.onAccentSoft} />} title="Tunnel"
-      subtitle={tunnel.error ? `${line.text}. ${tunnel.error}` : line.text}
+      subtitle={tunnel.error && checkedAt === null ? `${line.text}. ${tunnel.error}` : line.text}
       right={<View accessibilityLabel={line.text} style={[s.dot, { backgroundColor: color }]} />} />
   );
 }
