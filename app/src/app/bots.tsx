@@ -29,7 +29,7 @@ export default function BotsScreen() {
             <View key={srv.id}>
               <ListRow icon={<BotAvatar name={srv.bot.name} size={32} mood={moodOf(runtime[srv.id])} />} iconColor="transparent"
                 title={srv.bot.title} subtitle={`${view.kind === 'online' ? 'Online' : view.title} · ${addressKind(srv.url)}`}
-                onPress={() => router.push(`/diagnostics/${srv.id}`)} right={
+                onPress={() => router.push(`/connection/${srv.id}`)} right={
                   <Button size="sm" variant={confirm === srv.id ? 'danger' : 'ghost'} title={confirm === srv.id ? 'Remove' : ''}
                     accessibilityLabel={confirm === srv.id ? `Confirm removing ${srv.bot.title}` : `Remove ${srv.bot.title}`}
                     icon={<Trash2 size={16} color={t.colors.danger} />}
