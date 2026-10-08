@@ -1,6 +1,6 @@
 import { Platform } from 'react-native';
 import { fetch } from 'expo/fetch';
-import { checkServerKey, newSigningKey, seal, signedHeaders, type ServerKeyInfo } from './crypto';
+import { checkServerKey, newSigningKey, randomBytes, seal, signedHeaders, type ServerKeyInfo } from './crypto';
 import { getItem, setItem } from './storage';
 import type { Bot, Server } from './types';
 
@@ -117,6 +117,28 @@ export async function verifyDevice(server: Server, code: string, fp: string): Pr
   });
   await setItem(signKeyName(server.id), signing.secret);
   return { ...server, fingerprint: key.fingerprint };
+}
+
+/**
+ * Point this phone at another address of the same server. The token goes there only after the address
+ * answers as this server and opens a nonce sealed to the key pinned at pairing, which a copy can't.
+ */
+export async function moveServer(server: Server, url: string): Promise<Server> {
+  if (!server.fingerprint) {
+    throw new ApiError("Verify this phone first: scan a new pairing code from your server or another owner's phone.", 0);
+  }
+  const info = await fetchInfo(url);
+  if (info.server_id !== server.id) throw new ApiError(`That address is a different Winglet server, not ${server.bot.title}.`, 0);
+  const key = await serverKey(url, server.fingerprint);
+  if (!key) throw new ApiError('Update Winglet on the server first.', 0);
+  const nonce = Array.from(randomBytes(16), (b) => b.toString(16).padStart(2, '0')).join('');
+  const proof = await request<{ nonce: string }>(`${url}/api/server-key/prove`,
+    { method: 'POST', body: JSON.stringify({ sealed: seal(key, 'prove', '', { nonce }) }) }).catch(() => null);
+  if (proof?.nonce !== nonce) throw new ApiError(`That address couldn't prove it's ${server.bot.title}. Don't use it.`, 0);
+  const moved = { ...server, url };
+  const me = await api<{ server_id: string; device: { id: string } }>(moved, '/api/me');
+  if (me.server_id !== server.id || me.device.id !== server.deviceId) throw new ApiError("That address didn't recognise this phone.", 0);
+  return moved;
 }
 
 /** An owner action: signed with this phone's key, so a leaked token alone can't do it. */
