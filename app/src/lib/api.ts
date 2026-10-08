@@ -1,6 +1,6 @@
 import { Platform } from 'react-native';
 import { fetch } from 'expo/fetch';
-import { checkServerKey, newSigningKey, randomBytes, seal, signedHeaders, type ServerKeyInfo } from './crypto';
+import { addressConfirmed, checkServerKey, newSigningKey, seal, signedHeaders, type ServerKeyInfo } from './crypto';
 import { getItem, setItem } from './storage';
 import type { Bot, Server } from './types';
 
@@ -120,8 +120,9 @@ export async function verifyDevice(server: Server, code: string, fp: string): Pr
 }
 
 /**
- * Point this phone at another address of the same server. The token goes there only after the address
- * answers as this server and opens a nonce sealed to the key pinned at pairing, which a copy can't.
+ * Point this phone at another address of the same server. The token goes there only after the server's
+ * pinned identity key has signed that this exact address is its own. Proving the server is reachable
+ * through an address isn't enough: a relay can forward any question to the real server.
  */
 export async function moveServer(server: Server, url: string): Promise<Server> {
   if (!server.fingerprint) {
@@ -131,10 +132,11 @@ export async function moveServer(server: Server, url: string): Promise<Server> {
   if (info.server_id !== server.id) throw new ApiError(`That address is a different Winglet server, not ${server.bot.title}.`, 0);
   const key = await serverKey(url, server.fingerprint);
   if (!key) throw new ApiError('Update Winglet on the server first.', 0);
-  const nonce = Array.from(randomBytes(16), (b) => b.toString(16).padStart(2, '0')).join('');
-  const proof = await request<{ nonce: string }>(`${url}/api/server-key/prove`,
-    { method: 'POST', body: JSON.stringify({ sealed: seal(key, 'prove', '', { nonce }) }) }).catch(() => null);
-  if (proof?.nonce !== nonce) throw new ApiError(`That address couldn't prove it's ${server.bot.title}. Don't use it.`, 0);
+  const answer = await request<{ statement?: string; sig?: string }>(`${url}/api/address-check?url=${encodeURIComponent(url)}`).catch(() => null);
+  if (!answer || !addressConfirmed(key, answer, server.id, url)) {
+    throw new ApiError(`${server.bot.title} doesn't list that address as its own. Set it on the server first ` +
+      '(hermes winglet setup --public-url …, then restart), or use the automatic HTTPS address.', 0);
+  }
   const moved = { ...server, url };
   const me = await api<{ server_id: string; device: { id: string } }>(moved, '/api/me');
   if (me.server_id !== server.id || me.device.id !== server.deviceId) throw new ApiError("That address didn't recognise this phone.", 0);

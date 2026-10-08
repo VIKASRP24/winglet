@@ -114,7 +114,7 @@ export default function ConnectionScreen() {
         <ListRow icon={<Smartphone size={18} color={t.colors.onAccentSoft} />} title="Address" subtitle={server.url}
           right={<CopyButton label="Copy this phone's address" onPress={() => copy(server.url)} />} />
         {native ? <ListRow icon={<Pencil size={18} color={t.colors.onAccentSoft} />} title="Change address"
-          subtitle="Moved the server to Tailscale or a new domain? Point this phone there." onPress={() => setMoving('')} /> : null}
+          subtitle="Moved the server to Tailscale or a new domain? Point this phone at its new address." onPress={() => setMoving('')} /> : null}
         <ListRow icon={<ShieldCheck size={18} color={t.colors.onAccentSoft} />} title="Address recovery" subtitle={recoveryLine(server, status, now)} />
       </ListGroup>
 
@@ -282,7 +282,9 @@ function MoveSheet({ server, initial, onClose }: { server: Server; initial: stri
     <Sheet visible={initial !== null} onClose={onClose} title="Change address">
       <View style={{ gap: 14, paddingHorizontal: 4 }}>
         <Text style={s.body}>
-          Winglet checks that the new address is really {server.bot.title}, using the key it saved when you paired, before it sends anything private there.
+          Use an address {server.bot.title} lists as its own: its automatic HTTPS address, or the one set on the server with
+          hermes winglet setup --public-url. Winglet checks the server signed it, with the key saved when you paired, before
+          sending anything private there.
         </Text>
         <Field value={text} onChangeText={setText} placeholder="https://hermes.example.ts.net" autoCapitalize="none" autoCorrect={false}
           keyboardType="url" accessibilityLabel="New address" onSubmitEditing={submit} returnKeyType="go" />
