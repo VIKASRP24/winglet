@@ -110,3 +110,54 @@ async def test_supervisor_clears_address_and_restarts_after_exit(tmp_path, monke
         await manager.run()
     assert len(attempts) == 2
     assert addresses == ["https://first.trycloudflare.com", None, None]
+
+
+async def test_status_says_why_the_tunnel_is_down_and_when_it_retries(tmp_path, monkeypatch):
+    async def changed(url):
+        pass
+    manager = tunnel.QuickTunnel(tmp_path, "http://127.0.0.1:8787", "s", changed)
+    assert manager.status["state"] == "starting"
+    seen = []
+    def install(*args, **kwargs):
+        if seen:
+            raise asyncio.CancelledError
+        return Path("verified-binary")
+    async def session(binary):
+        raise RuntimeError("cloudflared exited before returning an HTTPS address.")
+    original_sleep = asyncio.sleep
+    async def sleep(delay):
+        seen.append(dict(manager.status))
+        await original_sleep(0)
+    monkeypatch.setattr(tunnel, "install", install)
+    monkeypatch.setattr(manager, "_session", session)
+    monkeypatch.setattr(tunnel.asyncio, "sleep", sleep)
+    with pytest.raises(asyncio.CancelledError):
+        await manager.run()
+    failed = seen[0]
+    assert failed["state"] == "retrying" and "HTTPS address" in failed["error"]
+    assert failed["retry_at"] >= failed["since"]
+    # The next attempt starts afresh: the old error doesn't linger while it tries again.
+    assert manager.status["state"] == "starting" and manager.status["error"] is None
+
+
+async def test_status_is_ready_once_the_address_answers(tmp_path, monkeypatch):
+    seen = []
+    async def changed(url):
+        pass
+    manager = tunnel.QuickTunnel(tmp_path, "http://127.0.0.1:8787", "s", changed)
+    lines = [b"https://abc-def.trycloudflare.com\n", b""]
+
+    class Process:
+        returncode = None
+        stdout = SimpleNamespace(readline=lambda: asyncio.sleep(0, lines.pop(0) if lines else b""))
+        async def wait(self):
+            seen.append(manager.status["state"])  # cloudflared is serving
+            return 0
+    async def create(*args, **kwargs):
+        return Process()
+    async def verify(url, server_id):
+        return True
+    monkeypatch.setattr(tunnel.asyncio, "create_subprocess_exec", create)
+    monkeypatch.setattr(tunnel, "verify_url", verify)
+    await manager._session(tmp_path / "cloudflared")
+    assert seen == ["ready"]
