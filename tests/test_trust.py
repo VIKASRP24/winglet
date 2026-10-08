@@ -469,3 +469,16 @@ def test_secrets_never_reach_the_audit_log(store):
     assert store.get_kv("sealing_key") not in dump and store.get_kv("identity_key") not in dump
     assert hashlib.sha256(dump.encode()).hexdigest()  # the log is plain data
     assert k.fingerprint not in dump
+
+
+async def test_only_this_server_can_answer_a_sealed_proof(client):
+    info = await (await client.get("/api/server-key")).json()
+    nonce = secrets.token_hex(16)
+    answer = await client.post("/api/server-key/prove", json={"sealed": seal(info, "prove", {"nonce": nonce})})
+    assert answer.status == 200 and (await answer.json()) == {"nonce": nonce}
+    # Sealed for another use, to another key, or not a nonce: nothing comes back.
+    for sealed in (seal(info, "pair", {"nonce": nonce}), seal(info, "prove", {"nonce": "<script>"}),
+                   seal({**info, "sealing": base64.urlsafe_b64encode(X25519PrivateKey.generate().public_key()
+                        .public_bytes(RAW, RAW_PUB)).rstrip(b"=").decode()}, "prove", {"nonce": nonce}), "junk"):
+        assert (await client.post("/api/server-key/prove", json={"sealed": sealed})).status == 400
+    assert (await client.post("/api/server-key/prove", json=["x"])).status == 400

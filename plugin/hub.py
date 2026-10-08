@@ -100,7 +100,7 @@ class Forbidden(PermissionError):
 #   owner_signed  an owner's verified device, with a signed request: every control action
 ROUTE_POLICY = {
     "h_info": "public", "h_pair": "public", "h_ws": "public", "h_static": "public", "h_media": "public",
-    "h_vapid": "public", "h_inbox_respond": "public", "h_server_key": "public",
+    "h_vapid": "public", "h_inbox_respond": "public", "h_server_key": "public", "h_server_key_prove": "public",
     "h_me": "device", "h_connection": "device", "h_connection_status": "device", "h_unpair": "device", "h_chats": "device",
     "h_chat_create": "device", "h_chat_rename": "device", "h_chat_delete": "device", "h_messages": "device",
     "h_message_send": "device", "h_upload": "device", "h_export": "device", "h_commands": "device",
@@ -284,6 +284,7 @@ class Hub:
         r.add_post("/api/push/test", self.h_push_test)
         r.add_get("/api/media/{media_id}/{name}", self.h_media)
         r.add_get("/api/server-key", self.h_server_key)
+        r.add_post("/api/server-key/prove", self.h_server_key_prove)
         r.add_get("/api/devices", self.h_devices)
         r.add_patch("/api/devices/{device_id}", self.h_device_update)
         r.add_delete("/api/devices/{device_id}", self.h_device_delete)
@@ -618,6 +619,19 @@ class Hub:
 
     async def h_server_key(self, request: web.Request) -> web.Response:
         return _json(self.keys.public_info())
+
+    async def h_server_key_prove(self, request: web.Request) -> web.Response:
+        """Open a nonce sealed to the server key and hand it back. Anyone can copy the public key; only
+        this server can answer, so a phone checks a new address with this before sending its token."""
+        try:
+            body = await request.json()
+            data = self.keys.unseal_json(str(body.get("sealed") or ""), "prove")
+            nonce = str(data.get("nonce") or "")
+        except (keys.SealError, ValueError, AttributeError):
+            return _error(400, "This proof request couldn't be opened.")
+        if not re.fullmatch(r"[0-9a-f]{32,64}", nonce):
+            return _error(400, "invalid nonce")
+        return _json({"nonce": nonce})
 
     def _recovery_credentials(self, device: dict) -> Optional[dict]:
         if self.connection["mode"] != "quick" or not self.ntfy_server.startswith("https://"):
