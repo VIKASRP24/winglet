@@ -471,14 +471,23 @@ def test_secrets_never_reach_the_audit_log(store):
     assert k.fingerprint not in dump
 
 
-async def test_only_this_server_can_answer_a_sealed_proof(client):
+async def test_a_server_signs_whether_an_address_is_its_own(client, hub):
     info = await (await client.get("/api/server-key")).json()
-    nonce = secrets.token_hex(16)
-    answer = await client.post("/api/server-key/prove", json={"sealed": seal(info, "prove", {"nonce": nonce})})
-    assert answer.status == 200 and (await answer.json()) == {"nonce": nonce}
-    # Sealed for another use, to another key, or not a nonce: nothing comes back.
-    for sealed in (seal(info, "pair", {"nonce": nonce}), seal(info, "prove", {"nonce": "<script>"}),
-                   seal({**info, "sealing": base64.urlsafe_b64encode(X25519PrivateKey.generate().public_key()
-                        .public_bytes(RAW, RAW_PUB)).rstrip(b"=").decode()}, "prove", {"nonce": nonce}), "junk"):
-        assert (await client.post("/api/server-key/prove", json={"sealed": sealed})).status == 400
-    assert (await client.post("/api/server-key/prove", json=["x"])).status == 400
+    identity = Ed25519PublicKey.from_public_bytes(base64.urlsafe_b64decode(info["identity"] + "=="))
+
+    async def check(url):
+        data = await (await client.get("/api/address-check", params={"url": url})).json()
+        identity.verify(base64.urlsafe_b64decode(data["sig"] + "=="), b"winglet-address-v1" + data["statement"].encode())
+        statement = json.loads(data["statement"])
+        assert statement["server_id"] == hub.server_id() and statement["url"] == url
+        assert abs(statement["issued_at"] - time.time()) < 60
+        return statement["listed"]
+
+    assert await check("https://hermes.example.ts.net") is False  # nothing set yet
+    hub.public_url = "https://hermes.example.ts.net"
+    assert await check("https://hermes.example.ts.net") is True and await check("https://hermes.example.ts.net/") is True
+    # A relay asking on a phone's behalf gets a signed no for its own address, which it can't turn into a yes.
+    assert await check("https://relay.example") is False
+    hub.connection = {"mode": "quick", "url": "https://abc-def.trycloudflare.com"}
+    assert await check("https://abc-def.trycloudflare.com") is True and await check("https://hermes.example.ts.net") is False
+    assert (await client.get("/api/address-check")).status == 400

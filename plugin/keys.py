@@ -17,7 +17,7 @@ import base64
 import hashlib
 import json
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import hashes, serialization
@@ -28,6 +28,7 @@ from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
 SEAL_VERSION = b"winglet-seal-v1"
 SEALING_CONTEXT = b"winglet-sealing-key-v1"
+ADDRESSES_CONTEXT = b"winglet-address-v1"
 SIGNATURE_VERSION = "winglet-sig-v1"
 # A sealing key that was just rotated still opens secrets for a day, for phones that sealed with it.
 PREVIOUS_KEY_SECONDS = 24 * 3600
@@ -96,6 +97,13 @@ class ServerKeys:
         sealing = self._sealing().public_key().public_bytes(_RAW, _RAW_PUB)
         return {"v": 1, "identity": b64e(self.identity_public), "fingerprint": self.fingerprint,
                 "sealing": b64e(sealing), "sealing_sig": b64e(self._identity.sign(SEALING_CONTEXT + sealing))}
+
+    def sign_address(self, server_id: str, url: str, listed: bool) -> Dict[str, str]:
+        """Whether this server answers at ``url``, signed with its identity key. A phone moves to a new
+        address only on a signed yes for exactly that address: a relay can ask, but only gets a no for itself."""
+        statement = json.dumps({"v": 1, "server_id": server_id, "url": url, "listed": listed,
+                                "issued_at": int(time.time())}, separators=(",", ":"))
+        return {"statement": statement, "sig": b64e(self._identity.sign(ADDRESSES_CONTEXT + statement.encode()))}
 
     def rotate_sealing(self) -> None:
         old = self.store.get_kv("sealing_key")
