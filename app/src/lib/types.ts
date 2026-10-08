@@ -292,3 +292,21 @@ export type McpSignIn = {
 };
 
 export type McpTest = { ok: boolean; error: string | null; tools: { name: string; description: string }[] };
+
+/** The latest delivery to one of this device's subscriptions, since the server started. */
+export type Delivery = { at: number; ok: boolean };
+
+/** How a server is reached, and whether this device's notifications and address recovery work. */
+export type ConnectionStatus = {
+  mode: 'quick' | 'direct';
+  /** The address the server gives phones: the tunnel's, or the one set for a direct connection. */
+  url: string | null;
+  address_since: number | null;
+  address_changes: number | null;
+  tunnel: { state: 'starting' | 'ready' | 'retrying'; since: number; error: string | null; retry_at: number | null } | null;
+  recovery: { enrolled: boolean; last: Delivery | null } | null;
+  push: { ntfy: number; webpush: number; last: Delivery | null; ntfy_server: string };
+  /** Owners only. */
+  listen?: string;
+  web_keys?: boolean;
+};

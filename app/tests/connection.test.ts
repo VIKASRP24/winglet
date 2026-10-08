@@ -8,7 +8,7 @@ const exports: any = {};
 vm.runInNewContext(ts.transpileModule(readFileSync(new URL('../src/lib/connection.ts', import.meta.url), 'utf8'), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
 }).outputText, { exports, URL, require: () => ({}) });
-const { connectionView, diagnosticReport, addressKind } = exports;
+const { connectionView, diagnosticReport, addressKind, span, tunnelSummary, deliverySummary, checkAddress, modeSummary } = exports;
 
 const rt = (over: any = {}) => ({ status: 'online', conn: { recovering: false, history: [] }, outbox: [], ...over });
 
@@ -47,4 +47,39 @@ test('the diagnostic report has states and versions but no secrets, addresses or
   assert.match(report, /queued messages: 1/);
   assert.match(report, /10s ago\s+offline/);
   for (const secret of ['secret-host-name', 'my private message', 'token', 'general']) assert.equal(report.includes(secret), false, secret);
+});
+
+test('times read as plain spans', () => {
+  assert.equal(span(20_000), 'under a minute');
+  assert.equal(span(5 * 60_000), '5 min');
+  assert.equal(span(3 * 3600_000), '3 h');
+  assert.equal(span(72 * 3600_000), '3 days');
+});
+
+test('the tunnel says whether it is up, starting, or when it tries again', () => {
+  const now = 1_000_000_000;
+  assert.deepEqual({ ...tunnelSummary({ state: 'ready', since: now / 1000 - 7200, error: null, retry_at: null }, now) }, { tone: 'ok', text: 'Up for 2 h' });
+  assert.equal(tunnelSummary({ state: 'starting', since: 0, error: null, retry_at: null }, now).tone, 'info');
+  assert.equal(tunnelSummary({ state: 'retrying', since: 0, error: 'x', retry_at: now / 1000 + 12 }, now).text, 'Down. Trying again in 12s');
+  assert.equal(tunnelSummary({ state: 'retrying', since: 0, error: 'x', retry_at: now / 1000 - 1 }, now).text, 'Down. Trying again now');
+  assert.match(modeSummary('quick').detail, /Cloudflare can see/);
+});
+
+test('deliveries say whether the last one went through', () => {
+  const now = 1_000_000_000;
+  assert.equal(deliverySummary(null, now), null);
+  assert.equal(deliverySummary({ at: now / 1000 - 10, ok: true }, now), 'Last one went through just now');
+  assert.equal(deliverySummary({ at: now / 1000 - 600, ok: false }, now), "Last one didn't go through (10 min ago)");
+});
+
+test('a new address is cleaned up, or refused with a reason', () => {
+  assert.equal(checkAddress(' hermes.tail1234.ts.net/ ', 'https://a.trycloudflare.com').url, 'https://hermes.tail1234.ts.net');
+  assert.equal(checkAddress('192.168.1.5:8787', 'https://a.trycloudflare.com').url, 'http://192.168.1.5:8787');
+  assert.equal(checkAddress('box.local', 'https://a.trycloudflare.com').url, 'http://box.local');
+  assert.equal(checkAddress('https://example.com/winglet/', 'https://a.trycloudflare.com').url, 'https://example.com/winglet');
+  assert.ok(checkAddress('', 'x').error);
+  assert.ok(checkAddress('https://user:pw@example.com', 'x').error);
+  assert.ok(checkAddress('https://example.com/?a=1', 'x').error);
+  assert.ok(checkAddress('ftp://example.com', 'x').error);
+  assert.match(checkAddress('https://a.trycloudflare.com/', 'https://a.trycloudflare.com').error, /already/);
 });
