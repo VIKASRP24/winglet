@@ -31,7 +31,7 @@ import shutil
 import time
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Set
-from urllib.parse import quote, unquote
+from urllib.parse import quote, unquote, urlsplit
 
 from aiohttp import WSMsgType, web
 
@@ -101,7 +101,7 @@ class Forbidden(PermissionError):
 ROUTE_POLICY = {
     "h_info": "public", "h_pair": "public", "h_ws": "public", "h_static": "public", "h_media": "public",
     "h_vapid": "public", "h_inbox_respond": "public", "h_server_key": "public",
-    "h_me": "device", "h_connection": "device", "h_unpair": "device", "h_chats": "device",
+    "h_me": "device", "h_connection": "device", "h_connection_status": "device", "h_unpair": "device", "h_chats": "device",
     "h_chat_create": "device", "h_chat_rename": "device", "h_chat_delete": "device", "h_messages": "device",
     "h_message_send": "device", "h_upload": "device", "h_export": "device", "h_commands": "device",
     "h_push_prefs": "device", "h_push_prefs_put": "device", "h_inbox": "device", "h_webpush_subscribe": "device",
@@ -198,6 +198,13 @@ class Hub:
         self._pair_failures: Dict[str, List[float]] = {}
         self._alive_cache: Dict[str, tuple] = {}
         self.connection = {"mode": "direct", "url": None}
+        # Set by the adapter for the Connection screen: the automatic tunnel (its .status), the address
+        # phones were told to use on a direct connection, and where the hub listens.
+        self.tunnel: Any = None
+        self.public_url: Optional[str] = None
+        self.listen = ""
+        # The latest delivery to each push or address-recovery subscription, since this start: {at, ok}.
+        self._delivered: Dict[str, Dict[str, Any]] = {}
         # cloudflared overrides Host with this private marker on origin requests. Never expose
         # it in /api/info: client-IP headers from ordinary/direct callers are untrusted.
         self.tunnel_host = "winglet-" + secrets.token_hex(24) + ".invalid"
@@ -251,6 +258,7 @@ class Hub:
         r.add_get("/api/ws", self.h_ws)
         r.add_get("/api/me", self.h_me)
         r.add_get("/api/connection", self.h_connection)
+        r.add_get("/api/connection/status", self.h_connection_status)
         r.add_delete("/api/me", self.h_unpair)
         r.add_get("/api/chats", self.h_chats)
         r.add_post("/api/chats", self.h_chat_create)
@@ -539,7 +547,8 @@ class Hub:
                 "replies": True, "export": True, "mute": True, "status_updates": True, "roles": True,
                 "signed_actions": True, "ws_auth": True, "pickers": True, "agent": self.hermes is not None,
                 "control": self.hermes is not None, "goals": self.chat_goal is not None, "search": True, "files": True,
-                "abilities": self.hermes is not None, "commands": self.commands_provider is not None}
+                "abilities": self.hermes is not None, "commands": self.commands_provider is not None,
+                "connection_status": True}
 
     def about(self) -> Dict[str, Any]:
         return {"version": VERSION, "protocol": PROTOCOL, "min_app_protocol": MIN_APP_PROTOCOL,
@@ -627,12 +636,48 @@ class Hub:
         device = self._require(request)
         return _json({"recovery": self._recovery_credentials(device) if device["platform"] == "android" else None})
 
+    async def h_connection_status(self, request: web.Request) -> web.Response:
+        """How this server is reached, and whether this device's notifications and address recovery work."""
+        device = self._require(request)
+        owner = device.get("role") == "owner"
+        quick = self.connection.get("mode") == "quick"
+        mine = [sub for sub in self.store.list_push_subs() if sub["device_id"] == device["id"]]
+
+        def latest(kinds):
+            seen = [self._delivered[sub["id"]] for sub in mine if sub["kind"] in kinds and sub["id"] in self._delivered]
+            return max(seen, key=lambda d: d["at"]) if seen else None
+
+        tunnel = None
+        if quick:
+            status = dict(getattr(self.tunnel, "status", None) or {"state": "starting", "since": self.started_at})
+            if not owner:
+                status["error"] = None  # Errors can name paths on the server.
+            tunnel = status
+        address_at = self.store.get_kv("connection_url_at") if quick else None
+        result = {
+            "mode": "quick" if quick else "direct",
+            "url": self.connection.get("url") if quick else self.public_url,
+            "address_since": float(address_at) if address_at and self.connection.get("url") else None,
+            "address_changes": int(self.store.get_kv("connection_revision") or 0) if quick else None,
+            "tunnel": tunnel,
+            "recovery": {"enrolled": any(sub["kind"] == "recovery" for sub in mine), "last": latest(("recovery",))}
+            if quick and device["platform"] == "android" else None,
+            "push": {"ntfy": sum(sub["kind"] == "ntfy" for sub in mine),
+                     "webpush": sum(sub["kind"] == "webpush" for sub in mine),
+                     "last": latest(("ntfy", "webpush")), "ntfy_server": urlsplit(self.ntfy_server).hostname or ""},
+        }
+        if owner:
+            result["listen"] = self.listen
+            result["web_keys"] = self._secrets_refused({"platform": "web"}) is None
+        return _json(result)
+
     async def set_connection(self, url: Optional[str]) -> None:
         self.connection = {"mode": "quick", "url": url}
         if url:
             if self.store.get_kv("connection_url") != url:
                 self.store.set_kv("connection_revision", str(int(self.store.get_kv("connection_revision") or 0) + 1))
                 self.store.set_kv("connection_url", url)
+                self.store.set_kv("connection_url_at", str(time.time()))
                 self._recovery_due.clear()
                 self._recovery_wake.set()
             if self._recovery_task is None:
@@ -671,11 +716,13 @@ class Hub:
                 # Refresh every six hours so phones returning after ntfy's cache expires can recover.
                 if self.connection.get("url") == url:
                     self._recovery_due[sub["id"]] = time.monotonic() + (6 * 3600 if response.status_code < 300 else 300)
+                self._delivered[sub["id"]] = {"at": time.time(), "ok": response.status_code < 300}
                 if response.status_code >= 300:
                     logger.warning("[winglet] address recovery publish rejected: HTTP %s", response.status_code)
             except Exception:
                 if self.connection.get("url") == url:
                     self._recovery_due[sub["id"]] = time.monotonic() + 300
+                self._delivered[sub["id"]] = {"at": time.time(), "ok": False}
                 logger.warning("[winglet] address recovery publish failed; will retry")
 
     async def h_me(self, request: web.Request) -> web.Response:
@@ -2234,11 +2281,11 @@ class Hub:
         return f"/chat/{quote(self.server_id(), safe='')}/{quote(chat_id, safe='')}"
 
     async def push_now(self, note: Dict[str, Any], *, tag: str, urgency: str = "normal",
-                       item: Optional[Dict[str, Any]] = None) -> Dict[str, int]:
-        """Send ``note`` to every subscription. Returns counts of deliveries the push services
-        accepted, rejected, and dropped as expired (accepted is not proof the phone showed it)."""
+                       item: Optional[Dict[str, Any]] = None, device_id: Optional[str] = None) -> Dict[str, int]:
+        """Send ``note`` to every subscription (or only ``device_id``'s). Returns counts of deliveries the push
+        services accepted, rejected, and dropped as expired (accepted is not proof the phone showed it)."""
         result = {"accepted": 0, "failed": 0, "expired": 0}
-        subs = self.store.list_push_subs()
+        subs = [sub for sub in self.store.list_push_subs() if device_id is None or sub["device_id"] == device_id]
         if not subs:
             return result
         client = await self._client()
@@ -2264,7 +2311,9 @@ class Hub:
             except Exception as exc:
                 logger.warning("[winglet] push delivery failed: %s", exc)
                 result["failed"] += 1
+                self._delivered[sub["id"]] = {"at": time.time(), "ok": False}
                 continue
+            self._delivered[sub["id"]] = {"at": time.time(), "ok": status < 300}
             if status in (404, 410) and sub["kind"] == "webpush":
                 self.store.remove_push_sub(endpoint=sub["endpoint"])
                 result["expired"] += 1
@@ -2351,9 +2400,10 @@ class Hub:
         return resp.status_code
 
     async def h_push_test(self, request: web.Request) -> web.Response:
-        self._require(request)
+        device = self._require(request)
+        # Only to the device asking: testing one phone shouldn't ring every other one.
         result = await self.push_now({"title": self.bot()["title"], "body": "Notifications are working 🎉",
-                                      "url": "/", "kind": "test"}, tag="test")
+                                      "url": "/", "kind": "test"}, tag="test", device_id=device["id"])
         return _json({"ok": result["accepted"] > 0, **result})
 
     # -- static web app -----------------------------------------------------------------------

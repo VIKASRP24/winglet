@@ -191,6 +191,7 @@ class WingletAdapter(BasePlatformAdapter):
         except (TypeError, ValueError):
             self._port = DEFAULT_PORT
         self._ntfy_server = str(extra_or_secret(extra, "ntfy_server", "WINGLET_NTFY_SERVER", "https://ntfy.sh"))
+        self._public_url = str(extra_or_secret(extra, "public_url", "WINGLET_PUBLIC_URL", "") or "").rstrip("/")
         self._hub: Optional[Hub] = None
         self._runner = None
         self._tunnel = None
@@ -216,6 +217,8 @@ class WingletAdapter(BasePlatformAdapter):
             hub = Hub(store, web_root=Path(__file__).parent / "web", bot_info=profile_info,
                       ntfy_server=self._ntfy_server)
             hub.connection = {"mode": self._connection, "url": None}
+            hub.public_url = self._public_url or None
+            hub.listen = f"{self._host}:{self._port}"
             hub.on_user_message = self._on_user_message
             hub.on_approval = self._on_approval
             hub.on_answer = self._on_answer
@@ -240,6 +243,7 @@ class WingletAdapter(BasePlatformAdapter):
                 self._tunnel = QuickTunnel(data_dir(), origin_url(self._host, self._port), hub.server_id(),
                                            hub.set_connection, host_header=hub.tunnel_host)
                 self._tunnel.start()
+                hub.tunnel = self._tunnel
         except OSError as exc:
             logger.error("[%s] could not listen on %s:%s: %s", self.name, self._host, self._port, exc)
             self._set_fatal_error("winglet_bind_failed", f"Port {self._port} is unavailable: {exc}. "
