@@ -53,7 +53,8 @@ the open-source agent by Nous Research, running on **your own machine or server*
   server is back.
 - **One screen for the connection.** See how phones reach the server, whether the tunnel is up, and
   whether this phone's notifications are getting through. Moved the server to Tailscale or a new domain?
-  Point the Android app at the new address; it checks the address really is your server first.
+  Point the Android app at the new address; it only moves once your server has signed that address as
+  its own.
 
 ### It asks, you answer
 - **Approvals.** Approve a risky command once, for the session, always, or deny it, from the app or the
@@ -197,8 +198,8 @@ hermes winglet pair
 
 Use the exact HTTPS URL printed by `tailscale serve`; keep Tailscale connected on the phone.
 Changing `--public-url` does not create HTTPS or update an already paired app connection. To move a
-paired Android phone instead of pairing again, open the bot's **Connection** screen and choose
-**Change address**.
+paired Android phone instead of pairing again, set the new address with `--public-url`, restart, then
+open the bot's **Connection** screen and choose **Change address**.
 An HTTPS domain with a reverse proxy or a
 [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/)
 works too. See the [remote access guide](docs/REMOTE_ACCESS.md) for setup and troubleshooting.
