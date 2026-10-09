@@ -74,6 +74,25 @@
             "usesCleartextTraffic": true
           }
         }
+      ],
+      [
+        "expo-share-intent",
+        {
+          "androidIntentFilters": [
+            "text/*",
+            "image/*",
+            "video/*",
+            "audio/*",
+            "application/*"
+          ],
+          "androidMultiIntentFilters": [
+            "image/*",
+            "video/*",
+            "audio/*",
+            "application/*"
+          ],
+          "disableIOS": true
+        }
       ]
     ]
   }
