@@ -48,6 +48,8 @@ the open-source agent by Nous Research, running on **your own machine or server*
   with Markdown, tables and highlighted code.
 - **Photos, files and voice notes**, both ways, with a full-screen viewer. Reply to a message, copy, retry
   or stop a reply, and export a chat.
+- **Share from any app** on Android: a page, some text, photos or files go to the chat you pick, ready to
+  send with a note.
 - **Search every chat** and jump straight to the message. Each chat keeps its **files and photos** in one place.
 - **Works on a bad connection.** Chats open from the phone's cache, and what you send waits until the
   server is back.
@@ -256,7 +258,7 @@ hermes -p researcher winglet pair
 **Next**
 - [x] Skills, toolsets and MCP servers from the phone, and limits on members' tools
 - [x] Connection settings in one place
-- [ ] Share into Winglet from other apps
+- [x] Share into Winglet from other apps
 - [ ] Live screen: watch the agent's computer and take over when it needs you
 - [ ] Real-time voice
 - [ ] Widgets, backups and a sessions browser

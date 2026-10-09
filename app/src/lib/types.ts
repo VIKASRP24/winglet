@@ -33,6 +33,8 @@ export type Chat = {
   created_at: number;
   updated_at: number;
   preview: string;
+  /** A member's own chat; owners' shared chats have none. */
+  owner_device?: string | null;
 };
 
 export type AttachmentKind = 'image' | 'audio' | 'video' | 'file' | 'voice';

@@ -19,7 +19,7 @@ export type PickedFile = {
 };
 
 const MAX_EDGE = 2048;
-const MAX_FILES = 10;
+export const MAX_FILES = 10;
 
 /** Photos and videos from the gallery, several at once. */
 export async function pickMedia(): Promise<PickedFile[]> {
