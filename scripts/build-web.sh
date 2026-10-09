@@ -5,7 +5,8 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT/app"
 [ -d node_modules ] || npm ci
 rm -rf dist
-npx expo export --platform web
+# --clear: Metro caches the app config it inlines, so without it the bundle can carry an old version.
+npx expo export --platform web --clear
 rm -rf "$ROOT/plugin/web"
 cp -r dist "$ROOT/plugin/web"
 echo "Bundled web app into plugin/web ($(du -sh "$ROOT/plugin/web" | cut -f1))"
