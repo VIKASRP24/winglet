@@ -117,6 +117,7 @@ ROUTE_POLICY = {
     "h_pause": "owner_signed", "h_restart": "owner_signed", "h_update": "owner_signed",
     "h_routine_create": "owner_signed", "h_routine_edit": "owner_signed", "h_routine_delete": "owner_signed",
     "h_routine_action": "owner_signed",
+    "h_sessions": "owner", "h_session_search": "owner", "h_session": "owner",
     "h_skills": "owner", "h_skill_catalog": "owner", "h_skill_content": "owner", "h_toolsets": "owner",
     "h_mcp": "owner", "h_mcp_catalog": "owner", "h_mcp_sign_in_status": "owner", "h_mcp_callback": "public",
     "h_skill_toggle": "owner_signed", "h_skill_install": "owner_signed", "h_skill_uninstall": "owner_signed",
@@ -318,6 +319,9 @@ class Hub:
         r.add_patch("/api/schedule/{routine_id}", self.h_routine_edit)
         r.add_delete("/api/schedule/{routine_id}", self.h_routine_delete)
         r.add_post("/api/schedule/{routine_id}/{action}", self.h_routine_action)
+        r.add_get("/api/sessions", self.h_sessions)
+        r.add_get("/api/sessions/search", self.h_session_search)
+        r.add_get("/api/sessions/{session_id}", self.h_session)
         r.add_get("/api/skills", self.h_skills)
         r.add_get("/api/skills/catalog", self.h_skill_catalog)
         r.add_post("/api/skills/install", self.h_skill_install)
@@ -549,6 +553,7 @@ class Hub:
                 "signed_actions": True, "ws_auth": True, "pickers": True, "agent": self.hermes is not None,
                 "control": self.hermes is not None, "goals": self.chat_goal is not None, "search": True, "files": True,
                 "abilities": self.hermes is not None, "commands": self.commands_provider is not None,
+                "sessions": self.hermes is not None and self._has(self.hermes, "sessions_available"),
                 "connection_status": True}
 
     def about(self) -> Dict[str, Any]:
@@ -1975,6 +1980,40 @@ class Hub:
         if not _ABILITY_NAME.match(name):
             raise web.HTTPNotFound(text=json.dumps({"error": "not found"}), content_type="application/json")
         return name
+
+    # -- sessions: past conversations on every platform, read-only ---------------------------------
+
+    @staticmethod
+    def _has(hermes, check: str) -> bool:
+        try:
+            return bool(getattr(hermes, check)())
+        except Exception:
+            return False
+
+    async def h_sessions(self, request: web.Request) -> web.Response:
+        self._require(request)
+        try:
+            limit = min(max(int(request.query.get("limit") or 30), 1), 100)
+            offset = max(int(request.query.get("offset") or 0), 0)
+        except ValueError:
+            return _error(400, "limit and offset must be numbers")
+        return _json(await self._call(self._need_hermes().list_sessions, limit, offset))
+
+    async def h_session_search(self, request: web.Request) -> web.Response:
+        self._require(request)
+        query = request.query.get("q", "").strip()
+        if not query:
+            return _json({"results": []})
+        if len(query) > 200:
+            return _error(400, "That search is too long.")
+        return _json({"results": await self._call(self._need_hermes().search_sessions, query)})
+
+    async def h_session(self, request: web.Request) -> web.Response:
+        self._require(request)
+        session_id = request.match_info["session_id"]
+        if not re.fullmatch(r"[A-Za-z0-9_.:-]{1,200}", session_id):
+            return _error(404, "No such session.")
+        return _json(await self._call(self._need_hermes().session_transcript, session_id))
 
     async def h_skills(self, request: web.Request) -> web.Response:
         self._require(request)
