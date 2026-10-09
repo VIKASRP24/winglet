@@ -49,3 +49,21 @@ test("a bot offers its main chat first, then recent chats, never Updates or some
   // A member sees their own chat as their main one.
   assert.deepEqual(Array.from(shareTargets(chats, 'm-alex', 'alex'), (c: any) => c.id), ['m-alex', 'b', 'a', 'general']);
 });
+
+test("file names with #, ? or % survive as a URI; other URIs don't change", () => {
+  const { fileUri } = exports;
+  assert.equal(fileUri('file:///data/cache/Invoice #123?.pdf'), 'file:///data/cache/Invoice %23123%3F.pdf');
+  assert.equal(fileUri('file:///data/cache/100%.png'), 'file:///data/cache/100%25.png');
+  assert.equal(fileUri('file:///data/cache/plain name.jpg'), 'file:///data/cache/plain name.jpg');
+  assert.equal(fileUri('content://media/external/images/1#x'), 'content://media/external/images/1#x');
+  assert.equal(fromShare({ files: [{ path: 'file:///c/a#b.pdf', mimeType: 'application/pdf', fileName: 'a#b.pdf' }] }, 10).files[0].uri, 'file:///c/a%23b.pdf');
+});
+
+test("before the server answers, a member's main chat is their own, not General", () => {
+  const { mainChat } = exports;
+  const chats = { general: { id: 'general' }, 'm-dev1': { id: 'm-dev1' } };
+  assert.equal(mainChat('m-dev1', chats, 'dev1'), 'm-dev1');
+  assert.equal(mainChat(undefined, chats, 'dev1'), 'm-dev1');
+  assert.equal(mainChat(undefined, chats, 'owner'), 'general');
+  assert.equal(mainChat(undefined, undefined, 'dev1'), 'general');
+});
