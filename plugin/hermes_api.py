@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import contextlib
 import functools
+import json
 import logging
 from typing import List, Optional
 
@@ -1027,3 +1028,109 @@ def finish_mcp_sign_in(server: str, *, code: Optional[str], state: Optional[str]
     except ValueError:
         return "rejected"
     return "denied" if error else "ok"
+
+
+# -- sessions: every conversation Hermes has had, on any platform (read-only) ----------------------------
+
+MAX_SESSION_TEXT = 20_000
+MAX_TOOL_TEXT = 2_000
+
+
+def sessions_available() -> bool:
+    try:
+        r = _router("sessions")
+    except HermesUnavailable:
+        return False
+    return all(hasattr(r, name) for name in ("get_sessions", "search_sessions", "get_session_detail",
+                                             "get_session_messages"))
+
+
+def _session_row(row: dict) -> dict:
+    preview = " ".join(str(row.get("preview") or "").split())
+    return {"id": str(row.get("id") or ""), "title": row.get("title") or row.get("display_name") or None,
+            "source": row.get("source") or "", "model": row.get("model") or "",
+            "started_at": row.get("started_at"), "last_active": row.get("last_active") or row.get("started_at"),
+            "message_count": int(row.get("message_count") or 0), "tool_call_count": int(row.get("tool_call_count") or 0),
+            "preview": preview[:200], "active": bool(row.get("is_active")), "pinned": bool(row.get("pinned"))}
+
+
+def list_sessions(limit: int, offset: int) -> dict:
+    """The most recently active conversations first, across every platform and routine."""
+    get_sessions = _router("sessions").get_sessions
+    try:
+        with _profile_scope():
+            # Called directly, so every query parameter is passed: their defaults are FastAPI markers.
+            page = get_sessions(limit=limit, offset=offset, min_messages=1, archived="exclude", order="recent",
+                                source=None, sources=None, exclude_sources=None, cwd_prefix=None, full=False,
+                                profile=None)
+    except Exception as exc:
+        if isinstance(getattr(exc, "status_code", None), int):
+            raise HermesRefused(_detail(exc)) from exc
+        raise
+    return {"sessions": [_session_row(s) for s in page.get("sessions") or []], "total": int(page.get("total") or 0)}
+
+
+async def search_sessions(query: str, limit: int = 30) -> list:
+    r = _router("sessions")
+    found = await _route(lambda: r.search_sessions(q=query, limit=limit, profile=None, source=None, sources=None,
+                                                   exclude_sources=None))
+    return [{**_session_row(x), "snippet": str(x.get("snippet") or "")[:300], "role": x.get("role")}
+            for x in found.get("results") or []]
+
+
+def _message_text(message: dict) -> str:
+    content = message.get("display_content")
+    if content is None:
+        content = message.get("content")
+    if isinstance(content, list):
+        content = " ".join(str(part.get("text") or "") if isinstance(part, dict) else str(part) for part in content)
+    return str(content or "")
+
+
+def _tool_names(calls) -> list:
+    if isinstance(calls, str):
+        try:
+            calls = json.loads(calls)
+        except ValueError:
+            return []
+    names = []
+    for call in calls or []:
+        if isinstance(call, dict):
+            fn = call.get("function") if isinstance(call.get("function"), dict) else {}
+            name = fn.get("name") or call.get("name")
+            if name:
+                names.append(str(name))
+    return names
+
+
+def _session_message(message: dict) -> Optional[dict]:
+    role = message.get("role")
+    if role not in ("user", "assistant", "tool") or message.get("display_kind") == "hidden":
+        return None
+    text = _message_text(message)
+    limit = MAX_TOOL_TEXT if role == "tool" else MAX_SESSION_TEXT
+    try:
+        at = float(message.get("timestamp")) if message.get("timestamp") is not None else None
+    except (TypeError, ValueError):
+        at = None
+    item = {"id": str(message.get("id") or message.get("message_uid") or ""), "role": role,
+            "text": text if len(text) <= limit else text[:limit] + "…", "at": at,
+            "failed": message.get("display_kind") == "failed_turn"}
+    if role == "assistant":
+        item["tools"] = _tool_names(message.get("tool_calls"))
+    if role == "tool":
+        item["tool"] = message.get("tool_name") or ""
+    if not item["text"] and not item.get("tools"):
+        return None
+    return item
+
+
+async def session_transcript(session_id: str) -> dict:
+    """One conversation's latest 500 messages, as text: images are named, not sent."""
+    r = _router("sessions")
+    detail = await _route(lambda: r.get_session_detail(session_id, profile=None))
+    page = await _route(lambda: r.get_session_messages(session_id, profile=None, limit=None, offset=0, order=None,
+                                                       include_compacted=False, inline_images=False))
+    messages = [m for m in (_session_message(x) for x in page.get("messages") or []) if m]
+    return {"session": _session_row(detail), "messages": messages,
+            "truncated": (page.get("pagination") or {}).get("returned", 0) >= 500}

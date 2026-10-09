@@ -80,6 +80,8 @@ the open-source agent by Nous Research, running on **your own machine or server*
   Winglet with progress that carries on across the restart.
 - **Schedule.** Routines in plain words ("weekdays at 9am", "every 2h"), with their results in the Updates chat.
 - **Logs** from Hermes, with keys and tokens hidden.
+- **Sessions:** every conversation your agent has had, in any app or routine. Search what was said and read
+  any of them back, with the tools it used.
 
 ### Safe by default
 - **Owners and members.** Share your agent with someone without sharing your chats or the controls.
@@ -261,7 +263,8 @@ hermes -p researcher winglet pair
 - [x] Share into Winglet from other apps
 - [ ] Live screen: watch the agent's computer and take over when it needs you
 - [ ] Real-time voice
-- [ ] Widgets, backups and a sessions browser
+- [x] A sessions browser: read and search every conversation
+- [ ] Widgets and backups
 
 The full plan, with priorities and the work behind each item, is in [docs/APP_PLAN.md](docs/APP_PLAN.md).
 

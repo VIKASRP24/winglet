@@ -55,6 +55,7 @@ export { default as Lock } from 'lucide-react-native/icons/lock';
 export { default as MemoryStick } from 'lucide-react-native/icons/memory-stick';
 export { default as MessageCircle } from 'lucide-react-native/icons/message-circle';
 export { default as MessageSquarePlus } from 'lucide-react-native/icons/message-square-plus';
+export { default as MessageSquareText } from 'lucide-react-native/icons/message-square-text';
 export { default as MessagesSquare } from 'lucide-react-native/icons/messages-square';
 export { default as Mic } from 'lucide-react-native/icons/mic';
 export { default as Monitor } from 'lucide-react-native/icons/monitor';
@@ -99,6 +100,7 @@ export { default as UserRoundPen } from 'lucide-react-native/icons/user-round-pe
 export { default as Vibrate } from 'lucide-react-native/icons/vibrate';
 export { default as Video } from 'lucide-react-native/icons/video';
 export { default as WifiOff } from 'lucide-react-native/icons/wifi-off';
+export { default as Wrench } from 'lucide-react-native/icons/wrench';
 export { default as X } from 'lucide-react-native/icons/x';
 export { default as XCircle } from 'lucide-react-native/icons/circle-x';
 export { default as Zap } from 'lucide-react-native/icons/zap';

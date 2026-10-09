@@ -312,3 +312,20 @@ export type ConnectionStatus = {
   listen?: string;
   web_keys?: boolean;
 };
+
+/** One of Hermes's conversations, from any app or routine. Times are server seconds. */
+export type SessionRow = {
+  id: string; title: string | null; source: string; model: string; started_at: number | null; last_active: number | null;
+  message_count: number; tool_call_count: number; preview: string; active: boolean; pinned: boolean;
+  /** Search results only: the words around the match, marked >>>like this<<<. */
+  snippet?: string; role?: string | null;
+};
+
+export type SessionMessage = {
+  id: string; role: 'user' | 'assistant' | 'tool'; text: string; at: number | null; failed: boolean;
+  /** Tools an assistant turn called, or the tool a result came from. */
+  tools?: string[]; tool?: string;
+};
+
+export type SessionTranscript = { session: SessionRow; messages: SessionMessage[]; truncated: boolean };
+
