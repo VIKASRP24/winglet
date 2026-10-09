@@ -588,3 +588,12 @@ async def test_malformed_input_is_rejected_cleanly(client, hub):
     bad = {"subscription": {"endpoint": "https://push.example/x", "keys": {"p256dh": "short", "auth": "x"}}}
     resp = await client.post("/api/push/webpush", json=bad, headers={"Authorization": f"Bearer {token}"})
     assert resp.status == 400
+
+
+async def test_push_test_only_rings_the_device_asking(client, hub):
+    mine, theirs = await pair(client, hub, "Mine"), await pair(client, hub, "Theirs")
+    for token in (mine, theirs):
+        await client.get("/api/push/ntfy", headers={"Authorization": f"Bearer {token}"})
+    hub._http.posts.clear()
+    data = await (await client.post("/api/push/test", headers={"Authorization": f"Bearer {mine}"})).json()
+    assert data["accepted"] == 1 and len(hub._http.posts) == 1

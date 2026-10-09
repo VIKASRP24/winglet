@@ -142,3 +142,67 @@ async def test_old_inflight_publish_cannot_delay_rotated_address(tmp_path):
         finish.set()
         await hub.aclose()
         store.close()
+
+
+async def test_connection_status_tells_each_device_what_applies_to_it(tmp_path, aiohttp_client):
+    store = Store(tmp_path / "hub.db")
+    async def post(url, **kwargs):
+        return SimpleNamespace(status_code=200)
+    hub = Hub(store, http_client=SimpleNamespace(post=post))
+    hub.connection = {"mode": "quick", "url": None}
+    hub.listen = "127.0.0.1:8787"
+    hub.tunnel = SimpleNamespace(status={"state": "retrying", "since": 1.0, "error": "cloudflared at /opt/x failed",
+                                         "retry_at": 3.0})
+    client = await aiohttp_client(hub.build_app())
+    try:
+        assert (await client.get("/api/connection/status")).status == 401
+        owner = await (await client.post("/api/pair", json={"code": store.create_pair_code(), "platform": "android"})).json()
+        member = await (await client.post("/api/pair", json={"code": store.create_pair_code(role="member"),
+                                                             "platform": "web"})).json()
+        auth = lambda d: {"Authorization": "Bearer " + d["token"]}  # noqa: E731
+
+        status = await (await client.get("/api/connection/status", headers=auth(owner))).json()
+        assert status["mode"] == "quick" and status["url"] is None and status["address_since"] is None
+        assert status["tunnel"]["state"] == "retrying" and "failed" in status["tunnel"]["error"]
+        assert status["recovery"] == {"enrolled": True, "last": None}
+        assert status["listen"] == "127.0.0.1:8787" and status["web_keys"] is False
+        assert status["push"] == {"ntfy": 0, "webpush": 0, "last": None, "ntfy_server": "ntfy.sh"}
+
+        await hub.set_connection("https://first.trycloudflare.com")
+        await hub.publish_addresses()
+        await client.get("/api/push/ntfy", headers=auth(owner))
+        assert (await (await client.post("/api/push/test", headers=auth(owner))).json())["accepted"] == 1
+        status = await (await client.get("/api/connection/status", headers=auth(owner))).json()
+        assert status["url"] == "https://first.trycloudflare.com" and status["address_since"] > 0
+        assert status["address_changes"] == 1
+        assert status["recovery"]["last"]["ok"] is True
+        assert status["push"]["ntfy"] == 1 and status["push"]["last"]["ok"] is True
+
+        # A member on the web app: no recovery, no server details, and no tunnel error text.
+        theirs = await (await client.get("/api/connection/status", headers=auth(member))).json()
+        assert theirs["recovery"] is None and theirs["push"]["ntfy"] == 0 and theirs["push"]["last"] is None
+        assert theirs["tunnel"]["state"] == "retrying" and theirs["tunnel"]["error"] is None
+        assert "listen" not in theirs and "web_keys" not in theirs
+    finally:
+        await client.close()
+        await hub.aclose()
+        store.close()
+
+
+async def test_a_direct_server_reports_the_address_it_gives_phones(tmp_path, aiohttp_client):
+    store = Store(tmp_path / "hub.db")
+    hub = Hub(store)
+    hub.public_url = "https://hermes.example.ts.net"
+    client = await aiohttp_client(hub.build_app())
+    try:
+        phone = await (await client.post("/api/pair", json={"code": store.create_pair_code(), "platform": "android"})).json()
+        status = await (await client.get("/api/connection/status", headers={"Authorization": "Bearer " + phone["token"]})).json()
+        assert status["mode"] == "direct" and status["url"] == "https://hermes.example.ts.net"
+        assert status["tunnel"] is None and status["recovery"] is None and status["address_changes"] is None
+        assert status["web_keys"] is True
+        # Not in the public info: it can name a private network.
+        assert "ts.net" not in json.dumps(await (await client.get("/api/info")).json())
+    finally:
+        await client.close()
+        await hub.aclose()
+        store.close()

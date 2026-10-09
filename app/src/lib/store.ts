@@ -17,7 +17,7 @@ export const MIN_SERVER_PROTOCOL = 1;
 
 export type Toast = { id: string; serverId: string; title: string; body: string; href?: string };
 
-/** What the diagnostics screen shows; never contains tokens, URLs or message text. */
+/** What the Connection screen shows; never contains tokens, URLs or message text. */
 export type ConnDetail = {
   recovering: boolean;
   nextRetryAt?: number;

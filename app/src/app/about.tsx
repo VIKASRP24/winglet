@@ -42,7 +42,7 @@ export default function AboutScreen() {
                   <Text style={s.botName}>{srv.bot.title}</Text>
                   <Text style={s.small}>{info ? `Winglet ${info.version || '?'} · Hermes ${info.hermes_version || 'unknown'}` : 'Versions show once connected'}</Text>
                 </View>
-                <Button size="sm" variant="secondary" title="Connection" icon={<Activity size={15} color={t.colors.text} />} onPress={() => router.push(`/diagnostics/${srv.id}`)} />
+                <Button size="sm" variant="secondary" title="Connection" icon={<Activity size={15} color={t.colors.text} />} onPress={() => router.push(`/connection/${srv.id}`)} />
               </View>
               {compat === 'update-app' ? (
                 <Text style={s.warn}>This app is too old for {srv.bot.title}. Install the latest Winglet app.</Text>

@@ -469,3 +469,25 @@ def test_secrets_never_reach_the_audit_log(store):
     assert store.get_kv("sealing_key") not in dump and store.get_kv("identity_key") not in dump
     assert hashlib.sha256(dump.encode()).hexdigest()  # the log is plain data
     assert k.fingerprint not in dump
+
+
+async def test_a_server_signs_whether_an_address_is_its_own(client, hub):
+    info = await (await client.get("/api/server-key")).json()
+    identity = Ed25519PublicKey.from_public_bytes(base64.urlsafe_b64decode(info["identity"] + "=="))
+
+    async def check(url):
+        data = await (await client.get("/api/address-check", params={"url": url})).json()
+        identity.verify(base64.urlsafe_b64decode(data["sig"] + "=="), b"winglet-address-v1" + data["statement"].encode())
+        statement = json.loads(data["statement"])
+        assert statement["server_id"] == hub.server_id() and statement["url"] == url
+        assert abs(statement["issued_at"] - time.time()) < 60
+        return statement["listed"]
+
+    assert await check("https://hermes.example.ts.net") is False  # nothing set yet
+    hub.public_url = "https://hermes.example.ts.net"
+    assert await check("https://hermes.example.ts.net") is True and await check("https://hermes.example.ts.net/") is True
+    # A relay asking on a phone's behalf gets a signed no for its own address, which it can't turn into a yes.
+    assert await check("https://relay.example") is False
+    hub.connection = {"mode": "quick", "url": "https://abc-def.trycloudflare.com"}
+    assert await check("https://abc-def.trycloudflare.com") is True and await check("https://hermes.example.ts.net") is False
+    assert (await client.get("/api/address-check")).status == 400

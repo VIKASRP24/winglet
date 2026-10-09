@@ -762,7 +762,7 @@ function ChatMenu({ server, chatId, title, visible, onClose, onGoal, hasGoal, on
               }
             }} />
           ) : null}
-          <SheetAction icon={<Activity size={20} color={t.colors.text} />} label="Connection details" onPress={() => { close(); router.push(`/diagnostics/${server.id}`); }} />
+          <SheetAction icon={<Activity size={20} color={t.colors.text} />} label="Connection details" onPress={() => { close(); router.push(`/connection/${server.id}`); }} />
           {side ? <SheetAction icon={<Trash2 size={20} color={t.colors.danger} />} label="Delete chat" destructive onPress={() => setMode('delete')} /> : null}
         </>
       ) : mode === 'mute' ? (

@@ -51,6 +51,10 @@ the open-source agent by Nous Research, running on **your own machine or server*
 - **Search every chat** and jump straight to the message. Each chat keeps its **files and photos** in one place.
 - **Works on a bad connection.** Chats open from the phone's cache, and what you send waits until the
   server is back.
+- **One screen for the connection.** See how phones reach the server, whether the tunnel is up, and
+  whether this phone's notifications are getting through. Moved the server to Tailscale or a new domain?
+  Point the Android app at the new address; it only moves once your server has signed that address as
+  its own.
 
 ### It asks, you answer
 - **Approvals.** Approve a risky command once, for the session, always, or deny it, from the app or the
@@ -193,7 +197,9 @@ hermes winglet pair
 ```
 
 Use the exact HTTPS URL printed by `tailscale serve`; keep Tailscale connected on the phone.
-Changing `--public-url` does not create HTTPS or update an already paired app connection.
+Changing `--public-url` does not create HTTPS or update an already paired app connection. To move a
+paired Android phone instead of pairing again, set the new address with `--public-url`, restart, then
+open the bot's **Connection** screen and choose **Change address**.
 An HTTPS domain with a reverse proxy or a
 [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/)
 works too. See the [remote access guide](docs/REMOTE_ACCESS.md) for setup and troubleshooting.
@@ -249,7 +255,7 @@ hermes -p researcher winglet pair
 
 **Next**
 - [x] Skills, toolsets and MCP servers from the phone, and limits on members' tools
-- [ ] Connection settings in one place
+- [x] Connection settings in one place
 - [ ] Share into Winglet from other apps
 - [ ] Live screen: watch the agent's computer and take over when it needs you
 - [ ] Real-time voice

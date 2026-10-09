@@ -41,7 +41,7 @@ export function ConnectionBanner({ server, compact }: { server: Server; compact?
       <View style={{ flex: 1, minWidth: 0 }}>
         <Text style={s.title}>{view.title}</Text>
         {!compact && view.detail ? <Text style={s.detail}>{view.detail}</Text> : null}
-        <Text accessibilityRole="link" style={s.link} onPress={() => router.push(`/diagnostics/${server.id}`)}>Details</Text>
+        <Text accessibilityRole="link" style={s.link} onPress={() => router.push(`/connection/${server.id}`)}>Details</Text>
       </View>
       {action ? (
         <Tap feedback="selection" accessibilityLabel={action} style={s.button} onPress={() => {

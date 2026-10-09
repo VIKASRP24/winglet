@@ -65,7 +65,7 @@ export default function AgentTab() {
           <ListRow icon={<Sparkles size={18} color={t.colors.success} />} iconColor={t.colors.success} title="Updates" subtitle="Results from scheduled routines"
             onPress={() => router.push(`/chat/${server.id}/home`)} />
           <ListRow icon={<Activity size={18} color={t.colors.onAccentSoft} />} title="Connection" value={view.kind === 'online' ? 'Online' : view.title}
-            onPress={() => router.push(`/diagnostics/${server.id}`)} />
+            onPress={() => router.push(`/connection/${server.id}`)} />
         </ListGroup>
 
         {rt?.info?.features?.agent && isOwner(rt) ? (

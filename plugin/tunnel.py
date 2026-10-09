@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 import urllib.request
 from pathlib import Path
 from typing import Awaitable, Callable
@@ -133,6 +134,11 @@ class QuickTunnel:
         self.host_header = host_header
         self.process = None
         self.task = None
+        # What the Connection screen shows: starting, ready or retrying, since when, and why it last failed.
+        self.status: dict = {"state": "starting", "since": time.time(), "error": None, "retry_at": None}
+
+    def _set(self, state: str, error: str | None = None, retry_at: float | None = None) -> None:
+        self.status = {"state": state, "since": time.time(), "error": error, "retry_at": retry_at}
 
     def start(self) -> None:
         self.task = asyncio.create_task(self.run())
@@ -183,6 +189,7 @@ class QuickTunnel:
             while self.process.returncode is None:
                 if await verify_url(url, self.server_id):
                     await self.changed(url)
+                    self._set("ready")
                     logger.info("[winglet] Automatic HTTPS is ready; run `hermes winglet pair`.")
                     await self.process.wait()
                     return
@@ -199,15 +206,20 @@ class QuickTunnel:
         delay = 2
         try:
             while True:
+                error = "Cloudflare closed the tunnel."
                 try:
+                    if self.status["state"] != "starting":
+                        self._set("starting")
                     executable = await asyncio.to_thread(install, self.directory, download=False)
                     await self._session(executable)
                     delay = 2  # A healthy session resets startup-failure backoff before reconnecting.
                 except (OSError, RuntimeError, asyncio.TimeoutError) as exc:
+                    error = str(exc) or "Cloudflare didn't answer in time."
                     logger.warning("[winglet] Automatic HTTPS unavailable: %s; retrying in %ss", exc, delay)
                 finally:
                     await self._stop_process()
                     await self.changed(None)
+                self._set("retrying", error, time.time() + delay)
                 await asyncio.sleep(delay)
                 delay = min(60, delay * 2)
         finally:

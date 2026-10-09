@@ -1,6 +1,6 @@
 import { Platform } from 'react-native';
 import { fetch } from 'expo/fetch';
-import { checkServerKey, newSigningKey, seal, signedHeaders, type ServerKeyInfo } from './crypto';
+import { addressConfirmed, checkServerKey, newSigningKey, seal, signedHeaders, type ServerKeyInfo } from './crypto';
 import { getItem, setItem } from './storage';
 import type { Bot, Server } from './types';
 
@@ -117,6 +117,30 @@ export async function verifyDevice(server: Server, code: string, fp: string): Pr
   });
   await setItem(signKeyName(server.id), signing.secret);
   return { ...server, fingerprint: key.fingerprint };
+}
+
+/**
+ * Point this phone at another address of the same server. The token goes there only after the server's
+ * pinned identity key has signed that this exact address is its own. Proving the server is reachable
+ * through an address isn't enough: a relay can forward any question to the real server.
+ */
+export async function moveServer(server: Server, url: string): Promise<Server> {
+  if (!server.fingerprint) {
+    throw new ApiError("Verify this phone first: scan a new pairing code from your server or another owner's phone.", 0);
+  }
+  const info = await fetchInfo(url);
+  if (info.server_id !== server.id) throw new ApiError(`That address is a different Winglet server, not ${server.bot.title}.`, 0);
+  const key = await serverKey(url, server.fingerprint);
+  if (!key) throw new ApiError('Update Winglet on the server first.', 0);
+  const answer = await request<{ statement?: string; sig?: string }>(`${url}/api/address-check?url=${encodeURIComponent(url)}`).catch(() => null);
+  if (!answer || !addressConfirmed(key, answer, server.id, url)) {
+    throw new ApiError(`${server.bot.title} doesn't list that address as its own. Set it on the server first ` +
+      '(hermes winglet setup --public-url …, then restart), or use the automatic HTTPS address.', 0);
+  }
+  const moved = { ...server, url };
+  const me = await api<{ server_id: string; device: { id: string } }>(moved, '/api/me');
+  if (me.server_id !== server.id || me.device.id !== server.deviceId) throw new ApiError("That address didn't recognise this phone.", 0);
+  return moved;
 }
 
 /** An owner action: signed with this phone's key, so a leaked token alone can't do it. */

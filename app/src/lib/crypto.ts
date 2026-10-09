@@ -14,6 +14,7 @@ export type ServerKeyInfo = { v: number; identity: string; fingerprint: string; 
 const te = new TextEncoder();
 const SEAL = te.encode('winglet-seal-v1');
 const SEALING_CONTEXT = te.encode('winglet-sealing-key-v1');
+const ADDRESS_CONTEXT = te.encode('winglet-address-v1');
 
 export type Random = (n: number) => Uint8Array;
 export const randomBytes: Random = (n) => getRandomBytes(n);
@@ -58,6 +59,23 @@ export function checkServerKey(info: ServerKeyInfo, pinned?: string): void {
   }
   if (!ed25519.verify(b64d(info.sealing_sig), concat(SEALING_CONTEXT, b64d(info.sealing)), identity)) {
     throw new KeyMismatch("The server's encryption key isn't signed by its identity.");
+  }
+}
+
+/**
+ * Whether a server's identity (already checked against the pinned fingerprint) signed "yes, I answer at
+ * exactly this address", recently. A relay can pass the question on, but only gets a no for its own address.
+ */
+export function addressConfirmed(info: ServerKeyInfo, answer: { statement?: unknown; sig?: unknown }, serverId: string,
+  url: string, now = Date.now()): boolean {
+  if (typeof answer?.statement !== 'string' || typeof answer.sig !== 'string' || answer.statement.length > 4096) return false;
+  try {
+    if (!ed25519.verify(b64d(answer.sig), concat(ADDRESS_CONTEXT, te.encode(answer.statement)), b64d(info.identity))) return false;
+    const s = JSON.parse(answer.statement);
+    return s.v === 1 && s.server_id === serverId && s.url === url && s.listed === true &&
+      Number.isFinite(s.issued_at) && Math.abs(now / 1000 - s.issued_at) < 3600;
+  } catch {
+    return false;
   }
 }
 
