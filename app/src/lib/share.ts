@@ -27,13 +27,22 @@ export function fromShare(share: IncomingShare | null | undefined, maxFiles: num
   const files: PickedFile[] = all.slice(0, maxFiles).map((f, i) => {
     const mime = f.mimeType || 'application/octet-stream';
     return {
-      uri: f.path, mime, name: f.fileName || defaultName(mime, i),
+      uri: fileUri(f.path), mime, name: f.fileName || defaultName(mime, i),
       ...(f.size ? { size: f.size } : {}), ...(f.width ? { width: f.width } : {}), ...(f.height ? { height: f.height } : {}),
       isImage: mime.startsWith('image/'),
     };
   });
   if (!text && !files.length) return null;
   return { text, files, dropped: Math.max(0, all.length - files.length) };
+}
+
+/**
+ * The library builds `file://` + the raw cache path, so a name like "Invoice #123.pdf" would be cut at
+ * the `#` when Android parses it. Escape the characters a URI gives meaning to; other URIs pass through.
+ */
+export function fileUri(path: string): string {
+  if (!path.startsWith('file://')) return path;
+  return 'file://' + path.slice(7).replace(/%/g, '%25').replace(/#/g, '%23').replace(/\?/g, '%3F');
 }
 
 function defaultName(mime: string, i: number) {
@@ -45,6 +54,16 @@ function defaultName(mime: string, i: number) {
 export function mergeDraft(existing: string, shared: string): string {
   if (!shared) return existing;
   return existing.trim() ? `${existing.replace(/\s+$/, '')}\n\n${shared}` : shared;
+}
+
+/**
+ * This device's main chat on a bot. Before the server has said (just after a cold start), a member's own
+ * chat is the one named after their device, never the owners' General they can't post in.
+ */
+export function mainChat(homeChat: string | undefined, chats: Record<string, Chat> | undefined, deviceId: string): string {
+  if (homeChat) return homeChat;
+  const mine = `m-${deviceId}`;
+  return chats?.[mine] ? mine : 'general';
 }
 
 /**
