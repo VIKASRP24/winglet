@@ -10,6 +10,7 @@ import { AppState, Platform, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { LockScreen } from '../components/LockScreen';
+import { ShareListener } from '../components/ShareListener';
 import { Toasts } from '../components/Toasts';
 import { lockOnStart, onAppVisibility } from '../lib/appLock';
 import { watchNetwork } from '../lib/network';
@@ -79,6 +80,7 @@ function Navigator() {
         <Stack.Screen name="pair" options={{ animation: 'fade_from_bottom' }} />
         <Stack.Screen name="scan" options={{ animation: 'fade', presentation: 'fullScreenModal' }} />
       </Stack>
+      <ShareListener />
       <Toasts />
       <LockScreen />
     </SafeAreaProvider>
