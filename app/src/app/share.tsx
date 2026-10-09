@@ -1,5 +1,6 @@
 import { Image } from 'expo-image';
 import { Redirect, router } from 'expo-router';
+import { useEffect } from 'react';
 import { ScrollView, Text, View } from 'react-native';
 import Animated, { FadeIn } from 'react-native-reanimated';
 import { BotAvatar } from '../components/BotAvatar';
@@ -9,9 +10,9 @@ import { Button, Card, IconButton, ListGroup, ListRow, SectionHeader } from '../
 import { attachFiles } from '../lib/attach';
 import { haptic } from '../lib/haptics';
 import { formatSize } from '../lib/media';
-import { mergeDraft, shareTargets, type Shared } from '../lib/share';
+import { mainChat, mergeDraft, shareTargets, type Shared } from '../lib/share';
 import { usePendingShare } from '../lib/shareStore';
-import { homeChat, useApp } from '../lib/store';
+import { useApp } from '../lib/store';
 import { makeStyles, useTheme } from '../lib/themeContext';
 
 /** Something shared from another app: pick the chat it goes to. It lands in that chat's composer to send. */
@@ -21,10 +22,12 @@ export default function ShareScreen() {
   const shared = usePendingShare((st) => st.shared);
   const servers = useApp((st) => st.servers);
   const runtime = useApp((st) => st.runtime);
+  // However the screen goes away (a chat picked, Cancel, or the system Back), the share goes with it.
+  // Clearing it here rather than before navigating also keeps the screen from redirecting mid-transition.
+  useEffect(() => () => usePendingShare.setState({ shared: null }), []);
   if (!shared) return <Redirect href="/" />;
 
   const close = () => {
-    usePendingShare.setState({ shared: null });
     if (router.canGoBack()) router.back();
     else router.replace('/');
   };
@@ -33,7 +36,6 @@ export default function ShareScreen() {
     app.setDraft(serverId, chatId, mergeDraft(app.drafts[`${serverId}:${chatId}`] ?? '', shared.text));
     if (shared.files.length) attachFiles(serverId, chatId, shared.files);
     app.select(serverId, chatId);
-    usePendingShare.setState({ shared: null });
     haptic.success();
     router.replace(`/chat/${serverId}/${chatId}`);
   };
@@ -45,11 +47,11 @@ export default function ShareScreen() {
       {!servers.length ? (
         <Card style={{ gap: 12, marginTop: 18 }}>
           <Text style={s.body}>Pair Winglet with your Hermes server first, then share again.</Text>
-          <Button title="Pair a server" onPress={() => { usePendingShare.setState({ shared: null }); router.replace('/pair'); }} />
+          <Button title="Pair a server" onPress={() => router.replace('/pair')} />
         </Card>
       ) : servers.map((server) => {
         const rt = runtime[server.id];
-        const main = homeChat(rt);
+        const main = mainChat(rt?.me?.home_chat, rt?.chats, server.deviceId);
         return (
           <Animated.View key={server.id} entering={FadeIn}>
             <SectionHeader title={server.bot.title} right={<BotAvatar name={server.bot.name} size={22} />} />
