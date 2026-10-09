@@ -7,7 +7,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BotAvatar } from '../../components/BotAvatar';
 import { BotSwitcher } from '../../components/BotSwitcher';
 import {
-  Activity, BarChart, Bell, Brain, CalendarClock, Cpu, Fingerprint, HeartPulse, Info, Key, MessageCircle, Palette, Plug, Plus, ScrollText,
+  Activity, BarChart, Bell, Brain, CalendarClock, Cpu, Fingerprint, HeartPulse, Info, Key, MessageCircle, MessageSquareText, Palette, Plug, Plus, ScrollText,
   ShieldCheck, Smartphone, Sparkles, SquareTerminal, UserRoundPen,
 } from '../../components/icons';
 import { shortModel } from '../../components/PickerCard';
@@ -99,6 +99,10 @@ export default function AgentTab() {
               <ListRow icon={<CalendarClock size={18} color={t.colors.onAccentSoft} />} title="Schedule" subtitle="Routines it runs on its own"
                 onPress={() => router.push('/schedule')} />
               <ListRow icon={<ScrollText size={18} color={t.colors.onAccentSoft} />} title="Logs" onPress={() => router.push('/logs')} />
+              {rt.info?.features?.sessions ? (
+                <ListRow icon={<MessageSquareText size={18} color={t.colors.onAccentSoft} />} title="Sessions"
+                  subtitle="Every conversation, in any app" onPress={() => router.push('/sessions')} />
+              ) : null}
             </ListGroup>
           </>
         ) : null}
