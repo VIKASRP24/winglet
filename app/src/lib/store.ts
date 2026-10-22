@@ -307,7 +307,8 @@ export const useApp = create<AppState>((set, get) => {
         const seeing = get().foreground && vis?.serverId === serverId && vis.chatId === ev.chat_id;
         // A reply ends the bot's turn. Its tool-progress bubbles arrive as final messages too, but it's still
         // working: Hermes only re-sends "typing" a moment later, and the chat shouldn't flicker in between.
-        if (isNotifiable(m)) {
+        const finished = isNotifiable(m) && (!before || before.status === 'streaming') && (!before || m.updated_at >= before.updated_at);
+        if (finished) {
           const wasTyping = !!get().runtime[serverId]?.typing[ev.chat_id];
           patch(serverId, (s) => {
             const typing = { ...s.typing };
@@ -317,7 +318,7 @@ export const useApp = create<AppState>((set, get) => {
           // Once per turn, and only where you can see it land (elsewhere it toasts).
           if (wasTyping && seeing) sound.reply();
         }
-        if (isNotifiable(m) && (!before || before.status === 'streaming') && !seeing && get().foreground && server) {
+        if (finished && !seeing && get().foreground && server) {
           const chat = get().runtime[serverId]?.chats[ev.chat_id];
           toast({ serverId, title: `${server.bot.title}${chat && chat.kind === 'chat' ? ` · ${chat.title}` : ''}`,
             body: m.text.slice(0, 140) || 'Sent an attachment', href: `/chat/${serverId}/${ev.chat_id}` });

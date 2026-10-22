@@ -480,6 +480,19 @@ test('a reply chimes once, when its turn ends in the chat on screen', async () =
   assert.deepEqual(h.played, ['reply']);
 });
 
+test('a replayed final reply cannot end a newer working turn or chime again', async () => {
+  const h = harness();
+  await h.connect(); await h.hello();
+  h.event({ type: 'typing', chat_id: 'general', on: true });
+  h.event({ type: 'message.new', chat_id: 'general', message: msg(1) });
+  h.event({ type: 'typing', chat_id: 'general', on: true });
+  const lastReply = h.store.getState().runtime.s.lastReplyAt;
+  h.event({ type: 'message.update', chat_id: 'general', message: msg(1) });
+  assert.ok(h.store.getState().runtime.s.typing.general);
+  assert.equal(h.store.getState().runtime.s.lastReplyAt, lastReply);
+  assert.deepEqual(h.played, ['reply']);
+});
+
 test('something needing you chimes while the app is open', async () => {
   const h = harness();
   await h.connect();

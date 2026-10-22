@@ -233,6 +233,26 @@ async def test_hermes_error_reply_leaves_the_actual_model_and_card_unchanged(cli
     assert hub.store.get_message(message["id"])["meta"]["picker"]["status"] == "open"
 
 
+@pytest.mark.parametrize("current,provider,model", [
+    ({"model": "shared-model", "provider": "first"}, "second", "shared-model"),
+    ({"model": "vendor-a/shared", "provider": "openrouter"}, "openrouter", "vendor-b/shared"),
+    (None, "openrouter", "missing/model"),
+])
+async def test_failed_route_changes_cannot_claim_a_different_provider_or_vendor(client, hub, current, provider, model):
+    owner = await pair_phone(client, hub)
+    hub.chat_model = lambda chat: current
+
+    async def choose(*args):
+        return "Provider rejected the route."
+
+    message = await hub.post_picker("general", "model", "Choose", {"providers": [
+        {"slug": provider, "models": [model]}]}, choose)
+    path = f"/api/pickers/{message['meta']['picker']['id']}/select"
+    response = await client.post(path, json={"provider": provider, "model": model}, headers=owner.auth)
+    assert response.status == 400
+    assert hub.store.get_message(message["id"])["meta"]["picker"]["status"] == "open"
+
+
 async def test_choice_and_confirm_pickers_hand_back_the_value(client, hub):
     owner = await pair_phone(client, hub)
     got = []

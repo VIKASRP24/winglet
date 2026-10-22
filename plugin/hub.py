@@ -41,7 +41,7 @@ from .store import ROLES, Store, new_id
 
 logger = logging.getLogger(__name__)
 
-VERSION = "0.4.0"
+VERSION = "0.5.1"
 # Wire protocol: bumped only for breaking changes. The app compares these to its own and asks for
 # whichever side is out of date to be updated.
 PROTOCOL = 2
@@ -216,7 +216,7 @@ class Hub:
         self._http = http_client
         self._sockets: Dict[web.WebSocketResponse, Dict[str, Any]] = {}
         self._push_tasks: Dict[str, asyncio.Task] = {}
-        self._pushed_messages: Dict[str, str] = {}
+        self._pushed_messages: Dict[str, None] = {}
         self._typing: Set[str] = set()
         self._pair_failures: Dict[str, List[float]] = {}
         self._alive_cache: Dict[str, tuple] = {}
@@ -1761,8 +1761,12 @@ class Hub:
         # Hermes callbacks return user-facing error text as well as confirmations.
         if kind == "model" and self.chat_model is not None:
             actual = self.chat_model(entry["chat_id"])
-            if (actual and actual.get("model") and actual == previous
-                    and str(actual["model"]).split("/")[-1] != model.split("/")[-1]):
+            actual_model = str((actual or {}).get("model") or "")
+            actual_provider = str((actual or {}).get("provider") or "")
+            same_model = actual_model == model or (actual_model.split("/")[-1] == model.split("/")[-1]
+                                                    and ("/" not in actual_model or "/" not in model))
+            same_provider = not actual_provider or actual_provider == provider or (actual_provider == "custom" and provider.startswith("custom:"))
+            if not actual_model or (actual == previous and not (same_model and same_provider)):
                 entry["busy"] = False
                 return _error(400, str(reply or "The model was not changed. Try again."))
         self._pickers.pop(picker_id, None)  # one successful answer per card
@@ -2827,9 +2831,9 @@ class Hub:
         message = self.store.get_message(message_id)
         if message is None or not self._notifiable(message) or not (message["text"].strip() or message.get("meta", {}).get("attachments")):
             return
-        if self._pushed_messages.get(chat_id) == message_id:
+        if message_id in self._pushed_messages:
             return
-        self._pushed_messages[chat_id] = message_id
+        self._pushed_messages[message_id] = None
         if len(self._pushed_messages) > 512:
             self._pushed_messages.pop(next(iter(self._pushed_messages)))
         chat = self.store.get_chat(chat_id) or {"title": chat_id}

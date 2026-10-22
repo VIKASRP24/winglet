@@ -337,6 +337,17 @@ async def test_an_open_phone_does_not_silence_other_devices(client, hub):
     await ws.close()
 
 
+async def test_replaying_an_older_reply_after_a_newer_reply_does_not_notify_again(client, hub, monkeypatch):
+    device, _ = hub.store.add_device("Phone")
+    hub.store.add_push_sub(device["id"], "ntfy", "https://ntfy.sh/t", {"server": "https://ntfy.sh", "topic": "t"})
+    monkeypatch.setattr(hub, "schedule_push", lambda *args, **kwargs: None)
+    older = await hub.post_message("general", "First answer")
+    newer = await hub.post_message("general", "Second answer")
+    for message in (older, newer, older):
+        await hub._delayed_push("general", message["id"], 0)
+    assert len(hub._http.posts) == 2
+
+
 async def test_static_serving_and_spa_fallback(client, hub):
     root = hub.web_root
     root.mkdir()

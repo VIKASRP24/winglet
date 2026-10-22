@@ -40,8 +40,8 @@ and inconsistent server settings pages. The bundled web app includes the repaire
 
 ## Validation
 
-- Plugin suite: **291 passed, 17 skipped**. The skips require optional Hermes integrations or platforms.
-- App suite: **232 passed**, including regressions for the reported failures and preference-save races.
+- Plugin suite: **296 passed, 17 skipped**. The skips require optional Hermes integrations or platforms.
+- App suite: **233 passed**, including regressions for the reported failures and preference-save races.
 - TypeScript typecheck, production web export, Android export with Hermes bytecode and bundled asset
   validation passed.
 - Isolated production-browser preview: searched and selected the last entry in a 502-model catalog,
@@ -53,3 +53,11 @@ Browser verification used a disposable local database and fake Hermes/provider s
 model calls or changes to an existing Hermes installation. Physical Android/iPhone behavior, actual
 provider credentials and real push-provider delivery still require device/server validation. These
 checks establish coverage for the repaired paths; they are not a guarantee that every possible bug is gone.
+
+## Pre-merge review
+
+The review also covered reply updates arriving during a newer turn, failed provider/vendor changes
+with the same model name, and failed selections before a chat has a resolved model. These now remain
+silent or report failure correctly. Notification deduplication remembers individual messages so an
+older final edit stays silent after a newer reply. App, plugin, lockfile and server API versions are
+aligned at 0.5.1 and checked together in CI.
