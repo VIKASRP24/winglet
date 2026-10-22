@@ -484,8 +484,37 @@ test('something needing you chimes while the app is open', async () => {
   const h = harness();
   await h.connect();
   await h.hello();
-  h.event({ type: 'inbox.new', item: { id: 'q1', kind: 'question', title: 'Which one?', body: '', created_at: 1, chat_id: 'general' }, pending: 1 });
+  h.event({ type: 'inbox.new', item: { id: 'q1', kind: 'question', status: 'pending', title: 'Which one?', body: '', created_at: 1, chat_id: 'general' }, pending: 1 });
   assert.deepEqual(h.played, ['needsYou']);
+});
+
+test('streaming pauses, tool progress and repeated finals do not flood the toast stack', async () => {
+  const h = harness();
+  await h.connect(); await h.hello();
+  h.store.getState().setVisibleChat(undefined);
+  const streaming = { ...msg(1), status: 'streaming', text: 'Half an answer' };
+  h.event({ type: 'message.new', chat_id: 'general', message: streaming });
+  for (const meta of [{ activity: true }, { inbox_id: 'approval' }, { notify: false }]) {
+    h.event({ type: 'message.new', chat_id: 'general', message: { ...msg(2), id: JSON.stringify(meta), meta } });
+  }
+  assert.equal(h.store.getState().toasts.length, 0);
+  h.event({ type: 'message.update', chat_id: 'general', message: { ...msg(1), text: 'Finished answer', updated_at: 2 } });
+  assert.equal(h.store.getState().toasts.length, 1);
+  h.event({ type: 'message.update', chat_id: 'general', message: { ...msg(1), text: 'Finished answer', updated_at: 2 } });
+  assert.equal(h.store.getState().toasts.length, 1);
+});
+
+test('background replies and stale inbox events do not replay alerts on returning', async () => {
+  const h = harness();
+  await h.connect(); await h.hello();
+  h.store.getState().setVisibleChat(undefined);
+  h.store.getState().setForeground(false);
+  h.event({ type: 'message.new', chat_id: 'general', message: msg(1) });
+  h.event({ type: 'inbox.new', item: { id: 'q', kind: 'question', status: 'pending', title: 'Which?', body: '' } });
+  h.store.getState().setForeground(true);
+  h.event({ type: 'inbox.new', item: { id: 'old', kind: 'question', status: 'expired', title: 'Which?', body: '' } });
+  assert.equal(h.store.getState().toasts.length, 0);
+  assert.deepEqual(h.played, []);
 });
 
 test('model and thinking controls do not end a working turn, chime or toast as replies', async () => {
