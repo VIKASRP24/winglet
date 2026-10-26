@@ -17,10 +17,10 @@ and tap you on the shoulder when they need you.
 
 <br/>
 
-<img src="docs/screenshots/home.png" width="200" alt="Home: what your agent needs from you" />&nbsp;
-<img src="docs/screenshots/trip.png" width="200" alt="A chat working toward a goal, with a question to answer" />&nbsp;
-<img src="docs/screenshots/goal.png" width="200" alt="A goal's progress and requirements" />&nbsp;
-<img src="docs/screenshots/server.png" width="200" alt="Server health and controls" />
+<img src="docs/screenshots/home.png" width="200" alt="Home: your bot, ready for a message" />&nbsp;
+<img src="docs/screenshots/sidebar.png" width="200" alt="The sidebar: inbox, rooms, schedule, projects and chats" />&nbsp;
+<img src="docs/screenshots/chat.png" width="200" alt="A chat working toward a goal" />&nbsp;
+<img src="docs/screenshots/inbox.png" width="200" alt="Inbox: questions and approvals waiting on you" />
 
 **[Get started](#get-started)** · **[Features](#what-it-does)** · **[How it works](#how-it-works)** · **[FAQ](#faq)**
 
@@ -128,22 +128,20 @@ See **[all features](docs/FEATURES.md)** for the full list.
 
 <table>
   <tr>
-    <td align="center"><img src="docs/screenshots/home-goals.png" width="190" alt="Home: working now and working toward" /><br/><sub>What it's working on</sub></td>
-    <td align="center"><img src="docs/screenshots/chat.png" width="190" alt="A reply with highlighted code" /><br/><sub>Code, highlighted</sub></td>
-    <td align="center"><img src="docs/screenshots/model.png" width="190" alt="Choosing a model for one chat" /><br/><sub>A model per chat</sub></td>
-    <td align="center"><img src="docs/screenshots/agent.png" width="190" alt="The Agent tab" /><br/><sub>Your agent</sub></td>
+    <td align="center"><img src="docs/screenshots/chat.png" width="190" alt="A chat with a goal in progress" /><br/><sub>Chats with goals</sub></td>
+    <td align="center"><img src="docs/screenshots/inbox.png" width="190" alt="Questions and approvals in the inbox" /><br/><sub>Answer from the inbox</sub></td>
+    <td align="center"><img src="docs/screenshots/agent.png" width="190" alt="Managing your agent" /><br/><sub>Your agent</sub></td>
+    <td align="center"><img src="docs/screenshots/settings.png" width="190" alt="Settings" /><br/><sub>Settings</sub></td>
   </tr>
   <tr>
+    <td align="center"><img src="docs/screenshots/sidebar.png" width="190" alt="The sidebar" /><br/><sub>Everything in one sidebar</sub></td>
     <td align="center"><img src="docs/screenshots/schedule.png" width="190" alt="Scheduled routines" /><br/><sub>Routines</sub></td>
-    <td align="center"><img src="docs/screenshots/updates.png" width="190" alt="A routine's result in the Updates chat" /><br/><sub>Results in Updates</sub></td>
-    <td align="center"><img src="docs/screenshots/search.png" width="190" alt="Searching every chat" /><br/><sub>Search every chat</sub></td>
-    <td align="center"><img src="docs/screenshots/home-light.png" width="190" alt="Home in light mode" /><br/><sub>Light mode</sub></td>
+    <td align="center"><img src="docs/screenshots/usage.png" width="190" alt="Token usage and cost" /><br/><sub>Usage and cost</sub></td>
+    <td align="center"><img src="docs/screenshots/home.png" width="190" alt="Home" /><br/><sub>Home</sub></td>
   </tr>
 </table>
 
-<img src="docs/screenshots/desktop.png" alt="Winglet in a desktop browser: chats on the left, a chat working toward a goal on the right" />
-
-<sub>Screenshots show the interface before v0.4, which redesigned Home, avatars and model controls.</sub>
+<sub>Screenshots use sample data from the offline demo in <code>scripts/demo</code>.</sub>
 
 <a id="how-it-works"></a>
 
