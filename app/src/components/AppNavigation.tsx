@@ -1,6 +1,5 @@
 import { router, usePathname } from 'expo-router';
 import { BlurTargetView } from 'expo-blur';
-import { LinearGradient } from 'expo-linear-gradient';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { BackHandler, Keyboard, Platform, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
@@ -15,19 +14,23 @@ import { haptic } from '../lib/haptics';
 import { spring, useReducedMotion, useReducedTransparency } from '../lib/motion';
 import { navigationWidth, sidebarChats, sidebarDrawerWidth } from '../lib/navigation';
 import { usePrefs } from '../lib/prefs';
-import { homeChat, useApp } from '../lib/store';
+import { homeChat, isOwner, useApp } from '../lib/store';
 import { useActivityClock } from '../lib/useActivityClock';
 import { makeStyles, useTheme } from '../lib/themeContext';
-import { alpha } from '../lib/theme';
 import type { Chat, Server } from '../lib/types';
 import { ChatMenu } from './ChatMenu';
 import { ChatFilters } from './ChatFilters';
 import { ProjectSection } from '../features/projects/ProjectSection';
 import { Glass } from './Glass';
 import { KeyboardViewport } from './KeyboardViewport';
-import { Bot, Inbox, MessageCircle, MessageSquarePlus, MessagesSquare, MoreHorizontal, PanelLeft, Pin, Settings, Users } from './icons';
-import { Badge, IconButton, SearchField, Tap } from './ui';
+import { Archive, Bot, CalendarClock, Inbox, MessageCircle, MessagesSquare, MoreHorizontal, PanelLeft, Pin, Settings, SquarePen, Users } from './icons';
+import { AgentFace } from './AgentFace';
+import { Badge, Button, IconButton, SearchField, Tap } from './ui';
+import { ago } from '../lib/agent';
+import { connectionView } from '../lib/connection';
 
+/** A mouse can't long-press: rows get a visible options button only where there's hover. */
+const HOVER = Platform.OS === 'web' && !globalThis.matchMedia?.('(hover: none)').matches;
 const Navigation = createContext({ open: () => {}, close: () => {}, home: () => {}, homeRevision: 0, reserved: 0 });
 const NO_CHATS = {};
 const NO_TYPING = {};
@@ -77,7 +80,7 @@ export function NavigationToggle() {
   const t = useTheme();
   const nav = useAppNavigation();
   return <IconButton label={nav.reserved >= 280 ? 'Collapse sidebar' : 'Open sidebar'} onPress={nav.reserved >= 280 ? () => usePrefs.getState().update({ sidebar: 'drawer' }) : nav.open}>
-    <MoreHorizontal size={24} color={t.colors.text} />
+    <PanelLeft size={22} color={t.colors.text} />
   </IconButton>;
 }
 
@@ -156,13 +159,19 @@ function Sidebar({ onClose, drawer = false }: { onClose: () => void; drawer?: bo
   const typing = useApp(useShallow((st) => Object.fromEntries(st.servers.map((bot) => [bot.id, st.runtime[bot.id]?.typing ?? NO_TYPING]))));
   const inbox = useApp(useShallow((st) => Object.fromEntries(st.servers.map((bot) => [bot.id, st.runtime[bot.id]?.inbox ?? NO_INBOX]))));
   const roles = useApp(useShallow((st) => Object.fromEntries(st.servers.map((bot) => [bot.id, st.runtime[bot.id]?.me?.role ?? 'owner']))));
+  const waiting = useApp((st) => Object.values(st.runtime).reduce((n, rt) => n + (rt?.pending ?? 0), 0));
   const drafts = useApp((st) => st.drafts);
   const draftFiles = useApp((st) => st.draftFiles);
   const replyTo = useApp((st) => st.replyTo);
+  const network = useApp((st) => st.network);
   const now = useActivityClock(typing);
   const [menu, setMenu] = useState<{ server: Server; chat: Chat } | null>(null);
   const glassTarget = useRef<View>(null);
   const reducedTransparency = useReducedTransparency();
+  const server = servers.find((bot) => bot.id === selected.serverId) ?? servers[0];
+  const rt = useApp((st) => server ? st.runtime[server.id] : undefined);
+  const view = connectionView(network, rt, server?.bot.title ?? '');
+  const canSchedule = !!rt?.info?.features?.control && isOwner(rt);
   // Actionable chats remain findable even if they were archived on this device.
   const all = useMemo(() => {
     const previews = Object.fromEntries(servers.flatMap((bot) => Object.values(chats[bot.id] ?? {}).map((chat) => {
@@ -184,7 +193,6 @@ function Sidebar({ onClose, drawer = false }: { onClose: () => void; drawer?: bo
   }, { running: 0, pending: 0 });
   const [creating, setCreating] = useState(false);
   const go = (path: string) => { Keyboard.dismiss(); if (drawer) onClose(); if (path === '/') navigation.home(); else router.navigate(path); };
-  const server = servers.find((bot) => bot.id === selected.serverId) ?? servers[0];
   const newChat = async () => {
     if (!server || creating) return;
     setCreating(true);
@@ -194,69 +202,77 @@ function Sidebar({ onClose, drawer = false }: { onClose: () => void; drawer?: bo
     });
     setCreating(false);
   };
-  const nav = (label: string, Icon: typeof Bot, path: string) => <Tap key={path} accessibilityLabel={label} onPress={() => go(path)}
-    style={[s.navRow, pathname === path && s.active]}>
-    <Icon size={19} color={t.colors.textSecondary} /><Text style={s.navText}>{label}</Text>
+  const tile = (label: string, Icon: typeof Bot, path: string, badge = 0) => <Tap key={path} accessibilityLabel={badge ? `${label}, ${badge} waiting` : label}
+    accessibilityState={{ selected: pathname === path }} onPress={() => go(path)}
+    style={({ pressed, hovered }) => [s.tile, (pressed || hovered || pathname === path) && s.active]}>
+    <Icon size={18} color={t.colors.textSecondary} /><Text style={s.tileText} numberOfLines={1}>{label}</Text>
+    {badge ? <Badge count={badge} style={{ marginLeft: 'auto' }} /> : null}
   </Tap>;
-  return <View style={[s.sidebar, { width: drawer ? '100%' : 280, paddingTop: insets.top + 8, paddingBottom: Math.max(insets.bottom, 12) }]}>
-    {!reducedTransparency ? <BlurTargetView ref={glassTarget} pointerEvents="none" style={StyleSheet.absoluteFill}>
-      <LinearGradient colors={[alpha(t.colors.accent, t.scheme === 'dark' ? 0.12 : 0.09), 'transparent', alpha(t.colors.accent, 0.04)]}
-        start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} />
-    </BlurTargetView> : null}
+  const multiBot = servers.length > 1;
+  return <View style={[s.sidebar, { width: drawer ? '100%' : 300, paddingTop: insets.top + 8, paddingBottom: Math.max(insets.bottom, 12) }]}>
+    {!reducedTransparency ? <BlurTargetView ref={glassTarget} pointerEvents="none" style={StyleSheet.absoluteFill} /> : null}
     <Glass target={glassTarget} intensity={24} borderless style={StyleSheet.absoluteFill} />
-    <View style={s.brandRow}><Text style={s.brand}>Winglet</Text><IconButton label="Close sidebar" onPress={onClose}><PanelLeft size={21} color={t.colors.textSecondary} /></IconButton></View>
-    <View style={s.mainLinks}>
-      <View style={s.groupCard}>
-      <Text style={s.groupTitle}>Conversations</Text>
-      {nav('Chat', MessageCircle, '/')}
-      {nav('Rooms', Users, '/rooms')}
-      <Tap accessibilityLabel="New chat" disabled={creating} accessibilityState={{ disabled: creating }} onPress={newChat} style={s.navRow}>
-        <MessageSquarePlus size={19} color={t.colors.textSecondary} /><Text style={s.navText}>{creating ? 'Creating…' : 'New chat'}</Text>
-      </Tap>
-      </View>
+    <View style={s.brandRow}>
+      {server ? <Tap accessibilityLabel={`${server.bot.title}, ${view.kind === 'online' ? 'online' : view.title}. Open main chat`} onPress={() => go('/')}
+        style={({ pressed }) => [s.brand, pressed && { opacity: 0.7 }]}>
+        <AgentFace server={server} size={36} still />
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text style={s.brandName} numberOfLines={1}>{server.bot.title}</Text>
+          <View style={s.brandStatus}>
+            <View style={[s.dot, { backgroundColor: view.tone === 'ok' ? t.colors.success : view.tone === 'error' ? t.colors.danger : t.colors.warning }]} />
+            <Text style={s.brandStatusText} numberOfLines={1}>{view.kind === 'online' ? 'Online' : view.title}</Text>
+          </View>
+        </View>
+      </Tap> : <View style={{ flex: 1 }} />}
+      <IconButton label="Settings" onPress={() => go('/settings')}><Settings size={21} color={t.colors.textSecondary} /></IconButton>
+      {drawer ? null : <IconButton label="Collapse sidebar" onPress={onClose}><PanelLeft size={21} color={t.colors.textSecondary} /></IconButton>}
     </View>
-    <ScrollView style={{ flex: 1 }} keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: 16 }}>
-      {server ? <View style={[s.groupCard, s.projectsCard]}><ProjectSection server={server} onNavigate={navigation.close} /></View> : null}
-      <View style={s.groupCard}>
-      <SearchField value={query} onChangeText={setQuery} placeholder="Search chats" style={s.historySearch} />
+    <SearchField value={query} onChangeText={setQuery} placeholder="Search chats" style={s.search} />
+    <ScrollView style={{ flex: 1 }} keyboardShouldPersistTaps="handled" contentContainerStyle={s.scroll}>
+      {query ? null : <View style={s.tiles}>
+        {tile('Inbox', Inbox, '/inbox', waiting)}
+        {tile('Rooms', Users, '/rooms')}
+        {canSchedule ? tile('Schedule', CalendarClock, '/schedule') : null}
+        {tile('All chats', Archive, '/chats')}
+      </View>}
+      {server && !query ? <ProjectSection server={server} onNavigate={navigation.close} /> : null}
       <ChatFilters value={filter} counts={counts} onChange={(value) => { if (value !== 'archived') setFilter(value); }} />
       {rows.length ? rows.slice(0, query || filter !== 'all' ? 100 : 40).map(({ server: bot, chat, pinned }, index) => {
         const previous = rows[index - 1];
         const group = index === 0 || pinned !== previous?.pinned;
         const active = pathname.startsWith('/chat/') && selected.serverId === bot.id && selected.chatId === chat.id;
         const state = stateOf(bot.id, chat.id);
+        const home = chat.id === homeChat(useApp.getState().runtime[bot.id]);
+        const title = home ? bot.bot.title : chat.title;
         const draft = draftPreview(drafts[`${bot.id}:${chat.id}`], draftFiles[`${bot.id}:${chat.id}`], !!replyTo[`${bot.id}:${chat.id}`]);
         const status = chatActivityLabel(state);
+        const detail = draft ?? status;
+        const tone = draft ? t.colors.textSecondary : state.pending ? t.colors.warning : t.colors.accent;
         return <View key={chatKey(bot.id, chat.id)}>
-          {group ? <Text style={s.section}>{filter === 'running' ? 'Running' : filter === 'needs-you' ? 'Needs you' : pinned ? 'Pinned' : 'Recent chats'}</Text> : null}
-          <Tap accessibilityLabel={`${chat.id === homeChat(useApp.getState().runtime[bot.id]) ? `${bot.bot.title} main chat` : chat.title}${pinned ? ', pinned' : ''}${status ? `, ${status}` : ''}${draft ? `, ${draft}` : ''}`}
+          {group && !query ? <Text style={s.section}>{filter === 'running' ? 'Running' : filter === 'needs-you' ? 'Needs you' : pinned ? 'Pinned' : 'Recent'}</Text> : null}
+          <Tap accessibilityLabel={`${home ? `${bot.bot.title} main chat` : chat.title}${multiBot && !home ? `, ${bot.bot.title}` : ''}${pinned ? ', pinned' : ''}${status ? `, ${status}` : ''}${draft ? `, ${draft}` : ''}`}
             accessibilityHint="Long-press for chat options" onLongPress={() => { Keyboard.dismiss(); setMenu({ server: bot, chat }); }} delayLongPress={350}
             accessibilityState={{ selected: active }} onPress={() => { haptic.selection(); useApp.getState().select(bot.id, chat.id); go(`/chat/${bot.id}/${chat.id}`); }}
-            style={[s.chatRow, active && s.active]}>
-            {pinned ? <Pin size={14} color={t.colors.textSecondary} /> : null}
+            style={({ pressed, hovered }) => [s.chatRow, (active || pressed || hovered) && s.active]}>
+            {multiBot ? <AgentFace server={bot} size={26} still /> : null}
             <View style={{ flex: 1, minWidth: 0 }}>
-              <Text style={s.chatTitle} numberOfLines={1}>{chat.id === homeChat(useApp.getState().runtime[bot.id]) ? `${bot.bot.title}` : chat.title}</Text>
-              {draft || status ? <Text numberOfLines={1} style={[s.chatBot, { color: state.pending ? t.colors.warning : t.colors.onAccentSoft }]}>{draft ?? status}</Text> : null}
-              {servers.length > 1 && chat.id !== homeChat(useApp.getState().runtime[bot.id]) ? <Text style={s.chatBot} numberOfLines={1}>{bot.bot.title}</Text> : null}
+              <View style={s.chatTop}>
+                {pinned ? <Pin size={13} color={t.colors.textTertiary} /> : null}
+                <Text style={s.chatTitle} numberOfLines={1}>{title}</Text>
+                <Text style={s.chatTime}>{ago(chat.updated_at)}</Text>
+              </View>
+              {detail ? <Text numberOfLines={1} style={[s.chatDetail, { color: tone }]}>{detail}</Text> : null}
             </View>
-            {status ? <View accessibilityLabel={status} style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: state.pending ? t.colors.warning : t.colors.accent }} /> : null}
-            <IconButton label={`Options for ${chat.title}`} size={36} onPress={(e) => { e.stopPropagation(); Keyboard.dismiss(); setMenu({ server: bot, chat }); }}>
-              <MoreHorizontal size={17} color={t.colors.textSecondary} />
-            </IconButton>
+            {HOVER ? <IconButton label={`Options for ${title}`} size={32} onPress={(e) => { e.stopPropagation(); setMenu({ server: bot, chat }); }}>
+              <MoreHorizontal size={16} color={t.colors.textTertiary} />
+            </IconButton> : null}
           </Tap>
         </View>;
-      }) : <Text style={s.noChats}>{query ? 'No matching chats' : filter === 'running' ? 'No tasks running.' : filter === 'needs-you' ? 'Nothing waiting on you.' : 'Your conversations will appear here.'}</Text>}
-      <Tap accessibilityLabel="All chats and archived chats" onPress={() => go('/chats')} style={s.navRow}>
-        <MessagesSquare size={17} color={t.colors.textSecondary} /><Text style={s.more}>All chats & archived</Text>
-      </Tap>
-      </View>
+      }) : <Text style={s.noChats}>{query ? 'No matching chats' : filter === 'running' ? 'Nothing running.' : filter === 'needs-you' ? 'Nothing waiting on you.' : 'Your chats will appear here.'}</Text>}
     </ScrollView>
     <View style={s.footer}>
-      <View style={s.groupCard}>
-      <Text style={s.groupTitle}>Workspace</Text>
-      {nav('Agent', Bot, '/agent')}
-      {nav('Settings', Settings, '/settings')}
-      </View>
+      <Button title={creating ? 'Starting…' : 'New chat'} icon={<SquarePen size={18} color={t.colors.onAccent} />} disabled={creating || !server}
+        onPress={newChat} style={{ flex: 1 }} />
     </View>
     {menu ? <ChatMenu server={menu.server} chatId={menu.chat.id} title={menu.chat.title} visible onClose={() => setMenu(null)} /> : null}
   </View>;
@@ -297,26 +313,29 @@ function NavigationRail() {
 
 const useStyles = makeStyles((t) => ({
   sidebar: { height: '100%', backgroundColor: t.colors.surface, borderRightWidth: 1, borderRightColor: t.colors.border },
-  header: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, paddingBottom: 8 },
-  headerTitle: { flex: 1, minWidth: 0, ...t.type.bodyStrong, color: t.colors.text, textAlign: 'center' },
-  brandRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingLeft: 22, paddingRight: 12, paddingBottom: 12 },
-  brand: { ...t.type.heading, color: t.colors.text },
-  mainLinks: { paddingHorizontal: 12, paddingBottom: 12 },
-  groupCard: { padding: 6, borderRadius: 20, backgroundColor: alpha(t.colors.surfaceRaised, t.scheme === 'dark' ? 0.68 : 0.76), borderWidth: 1, borderColor: t.colors.borderStrong,
-    shadowColor: t.colors.shadow, shadowOpacity: t.scheme === 'dark' ? 0.08 : 0.025, shadowRadius: 12, shadowOffset: { width: 0, height: 4 } },
-  historySearch: { margin: 6, marginBottom: 4, height: 40, backgroundColor: alpha(t.colors.surfaceSunken, 0.65), borderRadius: 13 },
-  projectsCard: { marginBottom: 10 },
-  groupTitle: { ...t.type.caption, color: t.colors.textSecondary, fontFamily: t.fonts.semibold, paddingHorizontal: 12, paddingTop: 8, paddingBottom: 6 },
-  navRow: { flexDirection: 'row', alignItems: 'center', gap: 12, minHeight: 46, paddingHorizontal: 12, borderRadius: 12 },
-  navText: { ...t.type.body, color: t.colors.text, fontSize: 15 },
+  header: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingBottom: 6 },
+  headerTitle: { flex: 1, minWidth: 0, ...t.type.heading, color: t.colors.text },
+  brandRow: { flexDirection: 'row', alignItems: 'center', gap: 2, paddingLeft: 16, paddingRight: 8, paddingBottom: 12 },
+  brand: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 12, minHeight: 48 },
+  brandName: { ...t.type.heading, color: t.colors.text },
+  brandStatus: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 1 },
+  brandStatusText: { ...t.type.footnote, color: t.colors.textSecondary },
+  dot: { width: 7, height: 7, borderRadius: 4 },
+  search: { marginHorizontal: 12, marginBottom: 8, height: 44 },
+  scroll: { paddingHorizontal: 8, paddingBottom: 16 },
+  tiles: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, paddingHorizontal: 4, paddingBottom: 8 },
+  tile: { flexGrow: 1, flexBasis: '45%', flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: 46, paddingHorizontal: 12,
+    borderRadius: t.radius.md, backgroundColor: t.colors.surfaceSunken },
+  tileText: { ...t.type.callout, fontFamily: t.fonts.medium, color: t.colors.text, flexShrink: 1 },
   active: { backgroundColor: t.colors.pressed },
-  section: { ...t.type.caption, fontFamily: t.fonts.semibold, color: t.colors.textSecondary, paddingHorizontal: 12, paddingTop: 10, paddingBottom: 8 },
-  chatRow: { flexDirection: 'row', alignItems: 'center', gap: 6, minHeight: 48, paddingVertical: 5, paddingLeft: 12, paddingRight: 2, borderRadius: 12 },
-  chatTitle: { ...t.type.callout, color: t.colors.text },
-  chatBot: { ...t.type.caption, color: t.colors.textTertiary, fontSize: 11, marginTop: 3 },
-  noChats: { ...t.type.callout, color: t.colors.textSecondary, padding: 14, marginTop: 12 },
-  more: { ...t.type.caption, color: t.colors.textSecondary },
-  footer: { paddingHorizontal: 12, paddingTop: 8 },
+  section: { ...t.type.label, color: t.colors.textSecondary, paddingHorizontal: 12, paddingTop: 14, paddingBottom: 6 },
+  chatRow: { flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: 50, paddingVertical: 7, paddingHorizontal: 12, borderRadius: t.radius.sm },
+  chatTop: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  chatTitle: { ...t.type.callout, color: t.colors.text, flex: 1, minWidth: 0 },
+  chatTime: { ...t.type.caption, fontFamily: t.fonts.regular, color: t.colors.textTertiary },
+  chatDetail: { ...t.type.caption, fontFamily: t.fonts.medium, marginTop: 2 },
+  noChats: { ...t.type.callout, color: t.colors.textSecondary, padding: 14 },
+  footer: { flexDirection: 'row', paddingHorizontal: 12, paddingTop: 8 },
   rail: { width: 64, alignItems: 'center', gap: 9, backgroundColor: t.colors.surface, borderRightWidth: 1, borderRightColor: t.colors.border },
   railSlot: { width: 64, alignItems: 'center', justifyContent: 'center', minHeight: 46 },
   railButton: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center', borderRadius: 23, backgroundColor: t.colors.surfaceRaised },

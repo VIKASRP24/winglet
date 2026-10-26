@@ -77,8 +77,8 @@ export function ChatMenu({ server, chatId, title, visible, onClose, onGoal, hasG
   };
 
   return (
-    <Sheet visible={visible} onClose={close}
-      title={mode === 'mute' ? 'Mute notifications' : mode === 'move' ? 'Move to project' : title}>
+    <Sheet visible={visible} onClose={close} scrollable
+      title={mode === 'mute' ? 'Mute notifications' : mode === 'move' ? 'Move to project' : mode === 'rename' ? 'Rename chat' : mode === 'delete' ? 'Delete chat' : 'Chat options'}>
       {mode === 'menu' ? (
         <>
           {side ? <SheetAction icon={archived ? <ArchiveRestore size={20} color={t.colors.text} /> : pinned ? <PinOff size={20} color={t.colors.text} /> : <Pin size={20} color={t.colors.text} />}
@@ -112,8 +112,9 @@ export function ChatMenu({ server, chatId, title, visible, onClose, onGoal, hasG
               }
             }} />
           ) : null}
-          <SheetAction icon={<Activity size={20} color={t.colors.text} />} label="Connection details" onPress={() => { close(); router.push(`/connection/${server.id}`); }} />
           {side ? <SheetAction icon={<Trash2 size={20} color={t.colors.danger} />} label="Delete chat" destructive onPress={() => setMode('delete')} /> : null}
+          <View style={s.divider} />
+          <SheetAction icon={<Activity size={20} color={t.colors.text} />} label="Connection details" onPress={() => { close(); router.push(`/connection/${server.id}`); }} />
         </>
       ) : mode === 'mute' ? (
         <>
@@ -139,5 +140,6 @@ export function ChatMenu({ server, chatId, title, visible, onClose, onGoal, hasG
 }
 
 const useStyles = makeStyles((t) => ({
-  menuNote: { ...t.type.callout, color: t.colors.textSecondary, textAlign: 'center', paddingHorizontal: 12, marginBottom: 6 },
+  menuNote: { ...t.type.footnote, color: t.colors.textSecondary, paddingHorizontal: t.space.md, marginBottom: t.space.sm },
+  divider: { height: 1, backgroundColor: t.colors.border, marginHorizontal: t.space.md, marginVertical: t.space.sm },
 }));

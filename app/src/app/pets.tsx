@@ -9,7 +9,7 @@ import { PetSprite } from '../components/PetSprite';
 import { Screen } from '../components/Screen';
 import { withSelectedServer } from '../components/ServerScreen';
 import { Sheet } from '../components/Sheet';
-import { Button, Card, Chip, ConfirmButton, Field, ListGroup, ListRow, SectionHeader, Skeleton, Tap, Toggle } from '../components/ui';
+import { Button, Card, Chip, ConfirmButton, Footnote, SearchField, ListGroup, ListRow, SectionHeader, Skeleton, Tap, Toggle } from '../components/ui';
 import { api, ApiError, mediaUrl, signedApi } from '../lib/api';
 import { idempotencyKey } from '../lib/control';
 import { haptic } from '../lib/haptics';
@@ -133,7 +133,7 @@ function PetsScreen() {
   const tile = width ? Math.floor((width - TILE_GAP * (columns - 1)) / columns) : 0;
   const installed = mine?.pets ?? [];
   return (
-    <Screen title="Pet" subtitle="Your agent's animated face. It shows what the agent is doing, on every phone paired with this bot.">
+    <Screen title="Pet">
       <View onLayout={(e) => setWidth(e.nativeEvent.layout.width)}>
         <Card style={s.stage}>
           {current ? (
@@ -144,7 +144,7 @@ function PetsScreen() {
           ) : (
             <View style={{ alignItems: 'center', gap: 10 }}>
               <BotAvatar name={server.bot.name} size={88} animated glow />
-              <Text style={s.note}>{mine && installed.length ? 'The pet is off. The orb shows instead.' : 'No pet yet. Pick one from the gallery below.'}</Text>
+              <Text style={s.note}>{mine && installed.length ? 'Pet display is off.' : 'Pick a pet from the gallery.'}</Text>
             </View>
           )}
           {current ? (
@@ -164,7 +164,7 @@ function PetsScreen() {
 
         {installed.length ? (
           <>
-            <SectionHeader title={`On your server · ${installed.length}`} />
+            <SectionHeader title="On your server" right={<Text style={s.credit}>{installed.length}</Text>} />
             <View style={s.grid}>
               {installed.map((p) => (
                 <PetTile key={p.slug} server={server} name={p.name} thumb={p.thumb_url} size={tile}
@@ -175,12 +175,11 @@ function PetsScreen() {
         ) : null}
 
         <SectionHeader title="Gallery" right={<Text style={s.credit}>petdex.dev</Text>} />
-        <Field value={query} onChangeText={setQuery} placeholder="Search pets" autoCapitalize="none" autoCorrect={false}
-          accessibilityLabel="Search the pet gallery" />
+        <SearchField value={query} onChangeText={setQuery} placeholder="Search the pet gallery" />
         {galleryError ? <Text style={s.error}>{galleryError}</Text> : null}
         {!gallery ? (
           <View style={{ marginTop: 12, gap: 10 }}>
-            <Text style={s.caption}>Getting pets from petdex.dev. The first time can take a few seconds.</Text>
+            <Text style={s.caption}>Loading the gallery…</Text>
             <View style={s.grid}>{[0, 1, 2, 3, 4, 5].map((i) => <Skeleton key={i} width={tile || 96} height={(tile || 96) + 24} radius={16} />)}</View>
           </View>
         ) : gallery.pets.length ? (
@@ -192,7 +191,7 @@ function PetsScreen() {
               ))}
             </View>
             {gallery.pets.length < gallery.total ? (
-              <Button title={`Show more · ${gallery.total - gallery.pets.length} left`} variant="secondary" loading={more} style={{ marginTop: 14 }}
+              <Button title={`Show more (${gallery.total - gallery.pets.length} left)`} variant="secondary" loading={more} style={{ marginTop: 14 }}
                 onPress={async () => { setMore(true); await loadGallery(query.trim(), gallery.pets.length); setMore(false); }} />
             ) : null}
           </Animated.View>
@@ -202,7 +201,7 @@ function PetsScreen() {
             <Text style={s.note}>{query ? `No pets match "${query}".` : 'The gallery is empty.'}</Text>
           </View>
         ) : null}
-        <Text style={s.footnote}>Pets come from petdex.dev, a public gallery made by its community. Your server downloads the one you pick.</Text>
+        <Footnote>Community pets from petdex.dev download to your server.</Footnote>
       </View>
 
       <PetSheet server={server} picked={picked} busy={busy} active={!!mine?.enabled && mine.active === picked?.pet.slug}
@@ -253,15 +252,16 @@ function PetSheet({ server, picked, busy, active, onClose, onAdopt, onRemove }: 
         <View style={[s.thumb, { height: 150, alignSelf: 'center', width: 150 }]}>
           <Image source={{ uri: mediaUrl(server, pet.thumb_url) }} style={{ width: '86%', height: '86%' }} contentFit="contain" cachePolicy="disk" />
         </View>
-        {by || about ? <Text style={s.note}>{[about, by].filter(Boolean).join(' · ')}</Text> : null}
+        {about ? <Text style={s.note}>{about}</Text> : null}
+        {by ? <Text style={s.caption}>{by}</Text> : null}
         {active ? (
-          <Text style={[s.note, { color: t.colors.success }]}>This is your agent's pet now.</Text>
+          <Text style={[s.note, { color: t.colors.success }]}>Selected pet</Text>
         ) : (
           <Button title={x.installed ? 'Make it the pet' : 'Adopt'} loading={busy}
             icon={x.installed ? <PawPrint size={16} color={t.colors.onAccent} /> : <Download size={16} color={t.colors.onAccent} />}
             onPress={() => onAdopt(pet.slug)} />
         )}
-        {!x.installed ? <Text style={s.caption}>Your server downloads it from petdex.dev. Everyone paired with this bot sees it.</Text> : null}
+        {!x.installed ? <Text style={s.caption}>Downloads to your server and appears on every paired device.</Text> : null}
         {x.installed ? (
           <ConfirmButton title="Remove from server" loading={busy} icon={<Trash2 size={16} color={t.colors.danger} />}
             onConfirm={() => onRemove(pet.slug)} accessibilityLabel={`Remove ${pet.name} from the server`} />
@@ -286,5 +286,4 @@ const useStyles = makeStyles((t) => ({
     alignItems: 'center', justifyContent: 'center' },
   tileName: { ...t.type.caption, color: t.colors.text, textAlign: 'center' },
   empty: { alignItems: 'center', gap: 8, paddingVertical: 28 },
-  footnote: { ...t.type.caption, color: t.colors.textTertiary, marginTop: 18, paddingHorizontal: 4 },
 }));

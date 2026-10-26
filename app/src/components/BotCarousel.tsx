@@ -163,10 +163,10 @@ function DeckFrame({ index, page, nearby, width, viewport, stride, compact, redu
     const distance = index - page.value;
     const depth = Math.min(1, Math.abs(distance));
     return {
-      opacity: 1 - depth * 0.5,
+      opacity: Math.abs(distance) >= 2 ? 0 : 1 - depth * 0.7,
       zIndex: 10 - Math.round(depth * 10),
       transform: [{ translateX: distance * stride }, { translateY: reduced ? 0 : depth * 12 },
-        { scale: reduced ? 1 : 1 - depth * 0.16 }, { rotate: `${reduced ? 0 : Math.max(-1, Math.min(1, distance)) * 1.5}deg` }],
+        { scale: 1 - depth * 0.2 }],
     };
   });
   return <Animated.View aria-hidden={!nearby} accessibilityElementsHidden={!nearby} importantForAccessibility={nearby ? 'auto' : 'no-hide-descendants'}
@@ -231,7 +231,7 @@ const useStyles = makeStyles((t) => ({
   cardBody: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 12, paddingBottom: 8 },
   scene: { width: '100%', alignItems: 'center', justifyContent: 'center' },
   actionIcon: { width: 72, height: 72, borderRadius: 36, alignItems: 'center', justifyContent: 'center' },
-  name: { ...t.type.title, color: t.colors.text, fontSize: 23, textAlign: 'center' },
+  name: { ...t.type.title, color: t.colors.text, textAlign: 'center' },
   status: { ...t.type.caption, textAlign: 'center', marginTop: 6 },
   navigation: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 12 },
   pages: { flexDirection: 'row', flexShrink: 1, flexWrap: 'wrap', justifyContent: 'center' },

@@ -5,7 +5,7 @@ import Animated, { FadeIn } from 'react-native-reanimated';
 import { ChevronDown, ChevronRight, TriangleAlert, Wrench } from '../../components/icons';
 import { Markdown } from '../../components/Markdown';
 import { Screen } from '../../components/Screen';
-import { Skeleton, Tap } from '../../components/ui';
+import { ListGroup, ListRow, SectionHeader, Skeleton, Tap } from '../../components/ui';
 import { agoText } from '../../lib/agent';
 import { api } from '../../lib/api';
 import { sessionTitle, sourceLabel } from '../../lib/sessions';
@@ -30,11 +30,16 @@ export default function SessionScreen() {
 
   if (!server) return null;
   const session = data?.session;
-  const subtitle = session
-    ? [sourceLabel(session.source), session.model, session.started_at ? `started ${agoText(session.started_at)}` : null].filter(Boolean).join(' · ')
-    : '';
   return (
-    <Screen title={session ? sessionTitle(session) : 'Session'} subtitle={subtitle}>
+    <Screen title={session ? sessionTitle(session) : 'Session'}>
+      {session ? <>
+        <SectionHeader title="Session" />
+        <ListGroup>
+          <ListRow title="Source" value={sourceLabel(session.source)} />
+          {session.model ? <ListRow title="Model" value={session.model} /> : null}
+          {session.started_at ? <ListRow title="Started" value={agoText(session.started_at)} /> : null}
+        </ListGroup>
+      </> : null}
       {error ? <Text style={s.error}>{error}</Text> : null}
       {!data && !error ? (
         <View style={{ gap: 12, marginTop: 18 }}>{[64, 120, 64, 160].map((h, i) => <Skeleton key={i} height={h} radius={16} />)}</View>
@@ -43,7 +48,7 @@ export default function SessionScreen() {
         <Animated.View entering={FadeIn} style={{ gap: 12, marginTop: 18 }}>
           {data.truncated ? <Text style={s.note}>Showing the latest 500 messages.</Text> : null}
           {data.messages.map((m, i) => <Turn key={`${m.id}-${i}`} message={m} />)}
-          {!data.messages.length ? <Text style={s.note}>Nothing to show in this conversation.</Text> : null}
+          {!data.messages.length ? <Text style={s.note}>No messages in this session.</Text> : null}
         </Animated.View>
       ) : null}
     </Screen>
@@ -105,16 +110,16 @@ const useStyles = makeStyles((t) => ({
   error: { ...t.type.callout, color: t.colors.danger, marginTop: 10 },
   note: { ...t.type.caption, color: t.colors.textTertiary, textAlign: 'center' },
   userWrap: { alignItems: 'flex-end', gap: 4 },
-  user: { maxWidth: '88%', paddingHorizontal: 14, paddingVertical: 10, borderRadius: 18, borderBottomRightRadius: 6, backgroundColor: t.colors.accentSoft },
-  userText: { ...t.type.body, color: t.colors.text },
+  user: { maxWidth: '88%', paddingHorizontal: 14, paddingVertical: 10, borderRadius: 18, borderBottomRightRadius: 6, backgroundColor: t.colors.accentFill },
+  userText: { ...t.type.body, color: t.colors.onAccent },
   time: { ...t.type.caption, color: t.colors.textTertiary },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
-  chip: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 9, paddingVertical: 4, borderRadius: 999, backgroundColor: t.colors.surfaceSunken },
+  chip: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 9, paddingVertical: 4, borderRadius: t.radius.pill, backgroundColor: t.colors.surfaceSunken },
   chipText: { ...t.type.caption, color: t.colors.textSecondary, fontFamily: t.fonts.mono },
   tool: { padding: 10, borderRadius: t.radius.md, backgroundColor: t.colors.surfaceSunken, gap: 8 },
   toolHead: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   toolLabel: { ...t.type.caption, color: t.colors.textSecondary, fontFamily: t.fonts.mono },
-  toolText: { fontFamily: t.fonts.mono, fontSize: 12.5, lineHeight: 18, color: t.colors.text },
+  toolText: { ...t.type.footnote, fontFamily: t.fonts.mono, color: t.colors.text },
   failed: { padding: 12, borderRadius: t.radius.md, backgroundColor: t.colors.warningSoft, gap: 6 },
   failedHead: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   failedLabel: { ...t.type.caption, color: t.colors.text, fontFamily: t.fonts.semibold },

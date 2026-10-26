@@ -1,21 +1,20 @@
 import { router } from 'expo-router';
 import { useState } from 'react';
-import { Text, View } from 'react-native';
+import { View } from 'react-native';
 import { useAddBot } from '../components/AddBot';
 import { AgentFace } from '../components/AgentFace';
 import { Plus, Trash2 } from '../components/icons';
 import { Screen } from '../components/Screen';
-import { Button, ListGroup, ListRow, SectionHeader } from '../components/ui';
+import { Button, Footnote, ListGroup, ListRow, SectionHeader } from '../components/ui';
 import { mainFirst } from '../lib/bots';
-import { addressKind, connectionView } from '../lib/connection';
+import { connectionView } from '../lib/connection';
 import { usePrefs } from '../lib/prefs';
 import { homeChat, useApp } from '../lib/store';
-import { makeStyles, useTheme } from '../lib/themeContext';
+import { useTheme } from '../lib/themeContext';
 
 /** Every bot this phone is paired with. Removing one unpairs this phone from it. */
 export default function BotsScreen() {
   const t = useTheme();
-  const s = useStyles();
   const servers = useApp((st) => st.servers);
   const runtime = useApp((st) => st.runtime);
   const network = useApp((st) => st.network);
@@ -34,8 +33,8 @@ export default function BotsScreen() {
           return (
             <View key={srv.id}>
               <ListRow icon={<AgentFace server={srv} size={32} still />} iconColor="transparent"
-                title={srv.bot.title} subtitle={`${i === 0 ? 'Main · ' : ''}${parent ? `${view.kind === 'online' ? 'Online' : view.title} · on ${parent.bot.title}'s server`
-                  : `${view.kind === 'online' ? 'Online' : view.title} · ${addressKind(srv.url)}`}`}
+                title={`${srv.bot.title}${i === 0 ? ' (main)' : ''}`} value={view.kind === 'online' ? 'Online' : view.title}
+                subtitle={parent ? `On ${parent.bot.title}'s server` : undefined}
                 onPress={() => { select(srv.id, homeChat(useApp.getState().runtime[srv.id])); router.navigate('/agent'); }} right={parent ? undefined : (
                   <Button size="sm" variant={confirm === srv.id ? 'danger' : 'ghost'} title={confirm === srv.id ? 'Remove' : ''}
                     accessibilityLabel={confirm === srv.id ? `Confirm removing ${srv.bot.title}` : `Remove ${srv.bot.title}`}
@@ -48,11 +47,8 @@ export default function BotsScreen() {
         <ListRow icon={<Plus size={18} color={t.colors.success} />} iconColor={t.colors.success} title="Add a bot" onPress={addBot.open} />
       </ListGroup>
       {addBot.sheet}
-      <Text style={s.note}>Removing a server's bot unpairs this phone from that server and its other bots. Their chats stay on the server; pair again any time with a new code.</Text>
+      <Footnote>Removing a server unpairs all its bots from this phone. Chats stay on the server; you can pair again.</Footnote>
     </Screen>
   );
 }
 
-const useStyles = makeStyles((t) => ({
-  note: { ...t.type.caption, fontFamily: t.fonts.regular, fontSize: 13, color: t.colors.textSecondary, marginTop: 12, lineHeight: 18 },
-}));

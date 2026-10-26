@@ -57,7 +57,7 @@ export default function ScanScreen() {
     return (
       <View style={[styles.root, styles.center, { padding: 24 }]}>
         <Text style={styles.title}>Camera access</Text>
-        <Text style={styles.text}>Winglet needs the camera only to scan the pairing code shown by `hermes winglet pair`.</Text>
+        <Text style={styles.text}>Camera access is only used to scan pairing codes.</Text>
         <Button title="Allow camera" onPress={requestPermission} size="lg" style={{ alignSelf: 'stretch' }} />
         <Button title="Enter the code instead" variant="ghost" onPress={() => router.back()} />
       </View>
@@ -81,7 +81,7 @@ export default function ScanScreen() {
           {status === 'pairing' || status === 'verifying' ? <ActivityIndicator color={FIXED.white} /> : null}
           <Text style={styles.hint}>
             {status === 'pairing' ? 'Pairing…' : status === 'verifying' ? 'Verifying this phone…'
-              : error || 'Point at the QR code from `hermes winglet pair` or another phone'}
+              : error || 'Scan the code from hermes winglet pair or another phone.'}
           </Text>
           {status === 'error' ? (
             <Button title="Try again" onPress={() => { handled.current = false; setError(''); setStatus('scanning'); }} />
@@ -96,10 +96,10 @@ const useStyles = makeStyles((t) => ({
   root: { flex: 1, backgroundColor: FIXED.camera },
   center: { alignItems: 'center', justifyContent: 'center', gap: 14, backgroundColor: t.colors.bg },
   title: { ...t.type.title, color: t.colors.text },
-  text: { ...t.type.callout, fontSize: 15, color: t.colors.textSecondary, textAlign: 'center' },
+  text: { ...t.type.callout, color: t.colors.textSecondary, textAlign: 'center' },
   overlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'space-between', paddingBottom: 60 },
   close: { alignSelf: 'flex-start', marginLeft: 12, backgroundColor: FIXED.cameraScrim, borderRadius: 20 },
   frame: { width: 250, height: 250, borderRadius: 32, borderWidth: 3, borderColor: FIXED.cameraFrame },
   hintBox: { alignItems: 'center', gap: 12, backgroundColor: FIXED.cameraScrim, borderRadius: t.radius.lg, paddingHorizontal: 18, paddingVertical: 14, marginHorizontal: 24 },
-  hint: { fontFamily: t.fonts.semibold, fontSize: 15, color: FIXED.white, textAlign: 'center' },
+  hint: { ...t.type.callout, color: FIXED.white, textAlign: 'center' },
 }));

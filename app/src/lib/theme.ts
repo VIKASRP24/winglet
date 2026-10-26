@@ -20,7 +20,7 @@ type Accent = {
 };
 
 export const ACCENTS: Record<AccentName, Accent> = {
-  iris: { label: 'Iris', light: '#5B4BD6', dark: '#8B7CFF', fill: '#5B4BD6', fillLight: '#6E64DC', deep: '#4E2ECA' },
+  iris: { label: 'Iris', light: '#5B4BD6', dark: '#988CFF', fill: '#5B4BD6', fillLight: '#6E64DC', deep: '#4E2ECA' },
   ocean: { label: 'Ocean', light: '#0369A1', dark: '#38BDF8', fill: '#0369A1', fillLight: '#037BB7', deep: '#024479' },
   mint: { label: 'Mint', light: '#047857', dark: '#34D399', fill: '#047857', fillLight: '#04845E', deep: '#035141' },
   sunset: { label: 'Sunset', light: '#BA3E0B', dark: '#FB923C', fill: '#C2410C', fillLight: '#D1430D', deep: '#9C410A' },
@@ -31,10 +31,10 @@ export const ACCENT_NAMES = Object.keys(ACCENTS) as AccentName[];
 
 const base = {
   light: {
-    bg: '#F6F6F9',
+    bg: '#F5F5F7',
     surface: '#FFFFFF',
     surfaceRaised: '#FFFFFF',
-    surfaceSunken: '#EEEEF3',
+    surfaceSunken: '#ECECF1',
     /** Selected segment, raised chip: one step above whatever it sits on. */
     surfaceHigh: '#FFFFFF',
     glass: 'rgba(255,255,255,0.88)',
@@ -61,22 +61,22 @@ const base = {
     pressed: 'rgba(0,0,0,0.05)',
   },
   dark: {
-    bg: '#000000',
-    surface: '#0B0B0D',
-    surfaceRaised: '#141417',
-    surfaceSunken: '#141417',
-    surfaceHigh: '#26262C',
-    glass: 'rgba(16,16,20,0.86)',
-    glassOpaque: '#141417',
-    border: 'rgba(255,255,255,0.09)',
-    borderStrong: 'rgba(255,255,255,0.16)',
+    bg: '#09090B',
+    surface: '#131316',
+    surfaceRaised: '#1A1A1F',
+    surfaceSunken: '#1A1A1F',
+    surfaceHigh: '#26262D',
+    glass: 'rgba(19,19,22,0.88)',
+    glassOpaque: '#1A1A1F',
+    border: 'rgba(255,255,255,0.08)',
+    borderStrong: 'rgba(255,255,255,0.14)',
     text: '#F5F5F7',
     textSecondary: '#A1A1AA',
     textTertiary: '#8E8E96',
     success: '#22C55E',
     warning: '#F59E0B',
     danger: '#FB7185',
-    codeBg: '#0F0F12',
+    codeBg: '#0E0E11',
     codeText: '#E4E4EA',
     synKeyword: '#FF7AB2',
     synString: '#8BD99A',
@@ -150,8 +150,11 @@ export function alpha(hex: string, a: number): string {
 
 export const SOFT_ALPHA = { light: 0.1, dark: 0.16 } as const;
 
-export function buildColors(scheme: Scheme, accentName: AccentName): Colors {
-  const b = base[scheme];
+/** Dark surfaces one step down, for OLED screens: true black behind everything. */
+const PURE_BLACK = { bg: '#000000', surface: '#0B0B0D', surfaceRaised: '#141417', surfaceSunken: '#141417', surfaceHigh: '#26262C', glass: 'rgba(16,16,20,0.86)', glassOpaque: '#141417', codeBg: '#0B0B0D' };
+
+export function buildColors(scheme: Scheme, accentName: AccentName, pureBlack = false): Colors {
+  const b = scheme === 'dark' && pureBlack ? { ...base.dark, ...PURE_BLACK } : base[scheme];
   const a = ACCENTS[accentName];
   const accent = scheme === 'light' ? a.light : a.dark;
   const soft = SOFT_ALPHA[scheme];
@@ -170,8 +173,8 @@ export function buildColors(scheme: Scheme, accentName: AccentName): Colors {
   };
 }
 
-export function buildTheme(scheme: Scheme, accentName: AccentName): Theme {
-  return { scheme, accentName, colors: buildColors(scheme, accentName), radius, space, fonts, type };
+export function buildTheme(scheme: Scheme, accentName: AccentName, pureBlack = false): Theme {
+  return { scheme, accentName, colors: buildColors(scheme, accentName, pureBlack), radius, space, fonts, type };
 }
 
 export const fonts = {
@@ -183,20 +186,21 @@ export const fonts = {
   mono: Platform.select({ ios: 'Menlo', android: 'monospace', default: 'ui-monospace, SFMono-Regular, Menlo, monospace' }),
 };
 
-export const radius = { xs: 8, sm: 12, md: 16, lg: 22, xl: 28, pill: 999 };
+export const radius = { xs: 8, sm: 12, md: 16, lg: 20, xl: 26, pill: 999 };
 
 export const space = { xs: 4, sm: 8, md: 12, lg: 16, xl: 24, xxl: 32 };
 
 /** Type scale. Body stays at 16 for reading; headings get tighter tracking. */
 export const type = {
-  display: { fontFamily: fonts.extrabold, fontSize: 30, lineHeight: 36, letterSpacing: -0.8 },
+  display: { fontFamily: fonts.bold, fontSize: 28, lineHeight: 34, letterSpacing: -0.6 },
   title: { fontFamily: fonts.bold, fontSize: 22, lineHeight: 28, letterSpacing: -0.4 },
   heading: { fontFamily: fonts.semibold, fontSize: 17, lineHeight: 22, letterSpacing: -0.2 },
   body: { fontFamily: fonts.regular, fontSize: 16, lineHeight: 23 },
   bodyStrong: { fontFamily: fonts.semibold, fontSize: 16, lineHeight: 23 },
   callout: { fontFamily: fonts.regular, fontSize: 14.5, lineHeight: 20 },
+  footnote: { fontFamily: fonts.regular, fontSize: 13, lineHeight: 18 },
   caption: { fontFamily: fonts.medium, fontSize: 12.5, lineHeight: 16 },
-  label: { fontFamily: fonts.semibold, fontSize: 12, lineHeight: 16, letterSpacing: 0.4, textTransform: 'uppercase' as const },
+  label: { fontFamily: fonts.semibold, fontSize: 13, lineHeight: 18 },
 };
 
 export const WIDE_BREAKPOINT = 900;

@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { cloneElement, isValidElement, useEffect, useState, type ReactElement, type ReactNode } from 'react';
 import { Keyboard, Modal, Platform, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { Gesture, GestureDetector, GestureHandlerRootView, ScrollView } from 'react-native-gesture-handler';
 import Animated, { runOnJS, useAnimatedStyle, useSharedValue, withSpring, withTiming } from 'react-native-reanimated';
@@ -117,7 +117,9 @@ export function SheetAction({ icon, label, onPress, destructive, disabled, hint 
       accessibilityState={{ disabled: !!disabled }} disabled={!!disabled}
       onPress={() => { haptic.selection(); onPress(); }}
       style={({ pressed }) => [s.action, disabled && { opacity: 0.5 }, pressed && !disabled && { backgroundColor: t.colors.pressed }]}>
-      {icon}
+      {icon ? <View style={s.actionIcon}>{isValidElement(icon)
+        ? cloneElement(icon as ReactElement<{ color?: string; size?: number }>, { size: 20, color: destructive ? t.colors.danger : t.colors.textSecondary })
+        : icon}</View> : null}
       <View style={{ flex: 1, minWidth: 0 }}>
         <Text style={[s.actionText, destructive && { color: t.colors.danger }]}>{label}</Text>
         {hint ? <Text style={[s.actionHint, destructive && { color: t.colors.danger }]}>{hint}</Text> : null}
@@ -130,18 +132,19 @@ const useStyles = makeStyles((t) => ({
   host: { flex: 1, justifyContent: 'flex-end' },
   hostWide: { justifyContent: 'center', alignItems: 'center', padding: 24 },
   panel: { width: '100%', flexShrink: 1 },
-  panelWide: { maxWidth: 460 },
+  panelWide: { maxWidth: 640 },
   glass: {
     borderTopLeftRadius: t.radius.xl, borderTopRightRadius: t.radius.xl, paddingHorizontal: 16, paddingTop: 10,
     flexShrink: 1,
   },
-  grabber: { alignSelf: 'center', width: 38, height: 5, borderRadius: 3, backgroundColor: t.colors.borderStrong, marginBottom: 6 },
+  grabber: { alignSelf: 'center', width: 36, height: 4, borderRadius: 2, backgroundColor: t.colors.borderStrong, marginBottom: t.space.sm },
   handle: { flexShrink: 0 },
   heading: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingLeft: 4, marginBottom: 6 },
   title: { ...t.type.heading, color: t.colors.text, flex: 1 },
   close: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center', borderRadius: 20, backgroundColor: t.colors.surfaceSunken },
   content: { flexShrink: 1, minHeight: 0 },
-  action: { flexDirection: 'row', alignItems: 'center', gap: 14, minHeight: 52, paddingHorizontal: 12, borderRadius: t.radius.md },
+  action: { flexDirection: 'row', alignItems: 'center', gap: 14, minHeight: 52, paddingHorizontal: t.space.md, paddingVertical: t.space.sm, borderRadius: t.radius.md },
+  actionIcon: { width: 22, alignItems: 'center', justifyContent: 'center' },
   actionText: { ...t.type.body, fontFamily: t.fonts.medium, color: t.colors.text },
   actionHint: { ...t.type.caption, color: t.colors.textSecondary, marginTop: 2 },
 }));

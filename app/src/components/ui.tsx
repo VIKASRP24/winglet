@@ -1,7 +1,6 @@
-import { LinearGradient } from 'expo-linear-gradient';
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { cloneElement, isValidElement, useEffect, useRef, useState, type ReactElement, type ReactNode } from 'react';
 import {
-  ActivityIndicator, Platform, Pressable, Switch, Text, TextInput, View,
+  ActivityIndicator, Platform, Pressable, StyleSheet, Switch, Text, TextInput, View,
   type AccessibilityRole, type PressableProps, type StyleProp, type TextInputProps, type ViewStyle,
 } from 'react-native';
 import Animated, {
@@ -77,7 +76,7 @@ export function Button({ title, onPress, variant = 'primary', size = 'md', icon,
   const c = t.colors;
   const height = size === 'lg' ? 54 : size === 'sm' ? 38 : 46;
   const fg = { primary: c.onAccent, secondary: c.text, tonal: c.onAccentSoft, ghost: c.accent, danger: c.danger }[variant];
-  const bg = { primary: 'transparent', secondary: c.surfaceSunken, tonal: c.accentSoft, ghost: 'transparent', danger: c.dangerSoft }[variant];
+  const bg = { primary: c.accentFill, secondary: c.surfaceSunken, tonal: c.accentSoft, ghost: 'transparent', danger: c.dangerSoft }[variant];
   const inner = (
     <>
       {loading ? <ActivityIndicator color={fg} /> : icon}
@@ -93,14 +92,7 @@ export function Button({ title, onPress, variant = 'primary', size = 'md', icon,
       disabled={disabled || loading}
       style={[s.buttonShell, { minHeight: height, opacity: disabled ? 0.45 : 1, backgroundColor: bg }, style]}
     >
-      {variant === 'primary' ? (
-        <LinearGradient colors={[c.accentFillLight, c.accentFill]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
-          style={[s.buttonInner, { minHeight: height }, size === 'sm' && { paddingHorizontal: 14 }]}>
-          {inner}
-        </LinearGradient>
-      ) : (
-        <View style={[s.buttonInner, { minHeight: height }, size === 'sm' && { paddingHorizontal: 14 }]}>{inner}</View>
-      )}
+      <View style={[s.buttonInner, { minHeight: height }, size === 'sm' && { paddingHorizontal: 14 }]}>{inner}</View>
     </Tap>
   );
 }
@@ -153,6 +145,12 @@ export function SectionHeader({ title, right, style }: { title: string; right?: 
   );
 }
 
+/** One short line under a group, for the rare thing a title can't say. Not a place for descriptions. */
+export function Footnote({ children, style }: { children: ReactNode; style?: StyleProp<ViewStyle> }) {
+  const s = useStyles();
+  return <View style={[s.footnote, style]}><Text style={s.footnoteText}>{children}</Text></View>;
+}
+
 /** A grouped list, like iOS settings: rows inside one rounded card, divided by hairlines. */
 export function ListGroup({ children, style }: { children: ReactNode; style?: StyleProp<ViewStyle> }) {
   const s = useStyles();
@@ -177,7 +175,9 @@ export function ListRow({ icon, iconColor, title, subtitle, value, right, onPres
   const s = useStyles();
   const body = (
     <>
-      {icon ? <View style={[s.rowIcon, { backgroundColor: iconColor ? `${iconColor}22` : t.colors.accentSoft }]}>{icon}</View> : null}
+      {icon ? <View style={s.rowIcon}>{isValidElement(icon)
+        ? cloneElement(icon as ReactElement<{ color?: string; size?: number }>, { color: destructive ? t.colors.danger : iconColor ?? t.colors.textSecondary, size: 20 })
+        : icon}</View> : null}
       <View style={{ flex: 1, minWidth: 0 }}>
         <Text style={[s.rowTitle, destructive && { color: t.colors.danger }]}>{title}</Text>
         {subtitle ? <Text style={s.rowSubtitle}>{subtitle}</Text> : null}
@@ -388,14 +388,16 @@ const useStyles = makeStyles((t) => ({
   },
   badgeText: { color: t.colors.onDanger, fontFamily: t.fonts.bold, fontSize: 11 },
   dot: { width: 9, height: 9, borderRadius: 5 },
-  section: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 4, paddingTop: 22, paddingBottom: 10 },
-  sectionText: { ...t.type.heading, color: t.colors.text },
+  section: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', minHeight: 20, paddingHorizontal: 16, paddingTop: 24, paddingBottom: 8 },
+  sectionText: { ...t.type.label, color: t.colors.textSecondary },
+  footnote: { paddingHorizontal: 16, paddingTop: 8 },
+  footnoteText: { ...t.type.footnote, color: t.colors.textTertiary },
   group: { backgroundColor: t.colors.surface, borderRadius: t.radius.lg, borderWidth: 1, borderColor: t.colors.border, overflow: 'hidden' },
-  hairline: { height: 1, backgroundColor: t.colors.border, marginLeft: 60 },
-  row: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 16, paddingVertical: 13, minHeight: 56 },
-  rowIcon: { width: 32, height: 32, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
-  rowTitle: { ...t.type.body, fontFamily: t.fonts.medium, color: t.colors.text },
-  rowSubtitle: { ...t.type.callout, color: t.colors.textSecondary, marginTop: 1 },
+  hairline: { height: StyleSheet.hairlineWidth * 2, backgroundColor: t.colors.border, marginLeft: 16 },
+  row: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 16, paddingVertical: 12, minHeight: 52 },
+  rowIcon: { width: 22, alignItems: 'center', justifyContent: 'center' },
+  rowTitle: { ...t.type.body, color: t.colors.text },
+  rowSubtitle: { ...t.type.footnote, color: t.colors.textSecondary, marginTop: 2 },
   rowValue: { ...t.type.callout, color: t.colors.textSecondary, maxWidth: 160 },
   segmented: { flexDirection: 'row', backgroundColor: t.colors.surfaceSunken, borderRadius: t.radius.pill, padding: 4 },
   segmentPill: {

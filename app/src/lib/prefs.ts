@@ -8,6 +8,8 @@ export type Prefs = {
   voiceSpeakWith: 'server' | 'device';
   theme: 'system' | 'light' | 'dark';
   accent: AccentName;
+  /** Dark theme on true black instead of graphite, for OLED screens. */
+  pureBlack: boolean;
   /** Bubbles: your messages in accent bubbles, replies unboxed. Compact: everything left-aligned. */
   layout: 'bubbles' | 'compact';
   /** "system" follows the phone's accessibility setting. */
@@ -36,7 +38,7 @@ export type Prefs = {
 
 export const DEFAULT_PREFS: Prefs = {
   voiceListenWith: 'server', voiceSpeakWith: 'server',
-  theme: 'system', accent: 'iris', layout: 'bubbles', motion: 'system', transparency: 'system', haptics: true, sounds: true, busyMode: 'steer', appLock: false, updateCheck: true, mainBot: '', sidebar: 'auto', pinnedChats: [], archivedChats: [], favoriteModels: [], recentModels: [],
+  theme: 'system', accent: 'iris', pureBlack: false, layout: 'bubbles', motion: 'system', transparency: 'system', haptics: true, sounds: true, busyMode: 'steer', appLock: false, updateCheck: true, mainBot: '', sidebar: 'auto', pinnedChats: [], archivedChats: [], favoriteModels: [], recentModels: [],
 };
 
 const KEY = 'winglet.prefs';

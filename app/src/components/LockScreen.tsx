@@ -27,7 +27,7 @@ export function LockScreen() {
 const useStyles = makeStyles((t) => ({
   cover: {
     position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 100, backgroundColor: t.colors.bg,
-    alignItems: 'center', justifyContent: 'center', gap: 20, padding: 32,
+    alignItems: 'center', justifyContent: 'center', gap: t.space.xl, padding: t.space.xxl,
   },
   title: { ...t.type.title, color: t.colors.text },
 }));

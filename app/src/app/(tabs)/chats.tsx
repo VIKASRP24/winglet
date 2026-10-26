@@ -1,17 +1,16 @@
 import { Redirect, router } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
-import { Platform, ScrollView, Text, TextInput, View } from 'react-native';
+import { Platform, ScrollView, Text, View } from 'react-native';
 import Animated, { FadeIn, LinearTransition } from 'react-native-reanimated';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AgentFace } from '../../components/AgentFace';
-import { NavigationToggle, useContentWidth } from '../../components/AppNavigation';
+import { NavigationHeader, useContentWidth } from '../../components/AppNavigation';
 import { ChatView } from '../../components/ChatView';
 import { ChatMenu } from '../../components/ChatMenu';
 import { ChatFilters } from '../../components/ChatFilters';
 import { ConnectionBanner } from '../../components/ConnectionBanner';
-import { Archive, Folder, Hash, MessageSquarePlus, MoreHorizontal, Pin, Search, Sparkles, X } from '../../components/icons';
+import { Folder, Hash, MessageSquarePlus, MoreHorizontal, Pin, Search, Sparkles } from '../../components/icons';
 import { useTabBarSpace } from '../../components/TabBar';
-import { Button, Chip, IconButton, SectionHeader, Skeleton, Tap } from '../../components/ui';
+import { Button, Chip, IconButton, SearchField, SectionHeader, Skeleton, Tap } from '../../components/ui';
 import { projectChatIds } from '../../features/projects/logic';
 import { ago } from '../../lib/agent';
 import { api } from '../../lib/api';
@@ -21,7 +20,6 @@ import { organizeChats } from '../../lib/chatOrganization';
 import { chatActivity, chatActivityLabel, draftPreview, matchesChatFilter, type ChatFilter } from '../../lib/chatActivity';
 import { useActivityClock } from '../../lib/useActivityClock';
 import { usePrefs } from '../../lib/prefs';
-import { plainText } from '../../lib/text';
 import { homeChat, useApp, useServerState } from '../../lib/store';
 import { WIDE_BREAKPOINT } from '../../lib/theme';
 import { makeStyles, useTheme } from '../../lib/themeContext';
@@ -49,8 +47,8 @@ export default function ChatsTab() {
 function ChatList({ server, activeChatId }: { server: Server; activeChatId?: string }) {
   const t = useTheme();
   const s = useStyles();
-  const insets = useSafeAreaInsets();
   const tabSpace = useTabBarSpace();
+  const multiBot = useApp((st) => st.servers.length > 1);
   const width = useContentWidth();
   const wide = width >= WIDE_BREAKPOINT;
   const rt = useServerState(server.id);
@@ -114,33 +112,23 @@ function ChatList({ server, activeChatId }: { server: Server; activeChatId?: str
   };
   const row = (c: Chat, pinned = false) => (
     <Animated.View key={c.id} entering={FadeIn.duration(200)} layout={LinearTransition.duration(220).easing(easeOut)}>
-      <ChatRow icon={c.id === mainId ? <AgentFace server={server} size={32} still /> : pinned ? <Pin size={17} color={t.colors.onAccentSoft} /> : archived ? <Archive size={17} color={t.colors.textSecondary} /> : <Hash size={17} color={t.colors.onAccentSoft} />}
-        tint={c.id === mainId ? 'transparent' : archived ? t.colors.surfaceSunken : t.colors.accentSoft} title={c.id === mainId ? 'Main chat' : c.title}
-        subtitle={draftOf(c) ?? chatActivityLabel(chatActivity(rt, c.id, now)) ?? plainText(c.preview)} time={c.updated_at}
-        subtitleColor={states.get(c.id)?.pending ? t.colors.warning : draftOf(c) || states.get(c.id)?.running ? t.colors.onAccentSoft : undefined}
+      <ChatRow server={server} showFace={multiBot} pinned={pinned} title={c.id === mainId ? server.bot.title : c.title}
+        subtitle={draftOf(c) ?? chatActivityLabel(chatActivity(rt, c.id, now)) ?? undefined} time={c.updated_at}
+        subtitleColor={draftOf(c) ? t.colors.textSecondary : states.get(c.id)?.pending ? t.colors.warning : t.colors.accent}
         active={activeChatId === c.id} onPress={() => open(c.id)} onMenu={() => setMenu(c)} />
     </Animated.View>
   );
 
   return (
     <View style={s.root}>
-      <ScrollView contentContainerStyle={{ paddingTop: insets.top + 8, paddingBottom: wide ? 24 : tabSpace + 8, paddingHorizontal: 16 }} keyboardShouldPersistTaps="handled">
-        <View style={s.topRow}>
-          <NavigationToggle />
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-            {rt?.info?.features?.projects ? <IconButton label="Projects" onPress={() => router.push('/projects')}>
-              <Folder size={21} color={t.colors.text} /></IconButton> : null}
-            <IconButton label={project ? `New chat in ${project.name}` : 'New chat'} variant="filled" onPress={newChat}>
-              <MessageSquarePlus size={20} color={t.colors.text} /></IconButton>
-          </View>
-        </View>
-        <Text style={s.title} accessibilityRole="header">Chats</Text>
-        <View style={s.search}>
-          <Search size={18} color={t.colors.textTertiary} />
-          <TextInput value={query} onChangeText={setQuery} placeholder="Search" placeholderTextColor={t.colors.textTertiary}
-            style={s.searchInput} accessibilityLabel="Search chats" returnKeyType="search" />
-          {query ? <IconButton label="Clear search" size={32} onPress={() => setQuery('')}><X size={16} color={t.colors.textSecondary} /></IconButton> : null}
-        </View>
+      <NavigationHeader title={archived ? 'Archived chats' : 'All chats'} right={<>
+        {rt?.info?.features?.projects ? <IconButton label="Projects" onPress={() => router.push('/projects')}>
+          <Folder size={21} color={t.colors.text} /></IconButton> : null}
+        <IconButton label={project ? `New chat in ${project.name}` : 'New chat'} onPress={newChat}>
+          <MessageSquarePlus size={20} color={t.colors.text} /></IconButton>
+      </>} />
+      <ScrollView contentContainerStyle={{ paddingBottom: wide ? 24 : tabSpace + 8, paddingHorizontal: 16 }} keyboardShouldPersistTaps="handled">
+        <SearchField value={query} onChangeText={setQuery} placeholder="Search chats" style={{ marginBottom: t.space.md }} />
         <ConnectionBanner server={server} compact />
         <ChatFilters value={filter} onChange={setFilter} counts={counts} archived={archivedCount} />
         {projectChips.length ? (
@@ -171,7 +159,7 @@ function ChatList({ server, activeChatId }: { server: Server; activeChatId?: str
             {!archived && !activeFilter && resume && match(resume) ? <><SectionHeader title="Continue" style={s.section} />{row(resume)}</> : null}
             {(archived || activeFilter ? side : recents.slice(1)).some(match) ? <SectionHeader title={archived ? 'Archived chats' : filter === 'running' ? 'Running' : filter === 'needs-you' ? 'Needs you' : 'Recent'} style={s.section} /> : null}
             {(archived || activeFilter ? side : recents.slice(1)).filter(match).map((c) => row(c))}
-            {q && !archived && !activeFilter && updates && match(updates) ? <ChatRow icon={<Sparkles size={17} color={t.colors.textSecondary} />} tint={t.colors.surfaceSunken} title="Updates" subtitle={plainText(updates.preview)} time={updates.updated_at} onPress={() => open('home')} /> : null}
+            {q && !archived && !activeFilter && updates && match(updates) ? <ChatRow server={server} showFace={multiBot} title="Updates" time={updates.updated_at} onPress={() => open('home')} /> : null}
             {!(archived || activeFilter ? side.length : recents.length || pinned.length) && !q ? (
               <View style={s.empty}>
                 <Text style={s.emptyText}>{archived ? 'No archived chats' : filter === 'running' ? 'No tasks running.' : filter === 'needs-you' ? 'Nothing waiting on you.'
@@ -201,25 +189,29 @@ function ChatList({ server, activeChatId }: { server: Server; activeChatId?: str
   );
 }
 
-function ChatRow({ icon, tint, title, subtitle, time, subtitleColor, active, onPress, onMenu }: {
-  icon: React.ReactNode; tint: string; title: string; subtitle: string; time: number; subtitleColor?: string; active?: boolean;
+function ChatRow({ server, showFace, pinned, title, subtitle, time, subtitleColor, active, onPress, onMenu }: {
+  server: Server; showFace: boolean; pinned?: boolean; title: string; subtitle?: string; time: number; subtitleColor?: string; active?: boolean;
   onPress: () => void; onMenu?: () => void;
 }) {
   const t = useTheme();
   const s = useStyles();
+  const mouse = Platform.OS === 'web' && typeof window !== 'undefined' && window.matchMedia?.('(hover: hover) and (pointer: fine)').matches;
   return (
-    <Tap feedback="selection" scaleTo={0.99} accessibilityLabel={`${title}. ${subtitle}`} accessibilityHint={onMenu ? 'Long-press for options' : undefined}
+    <Tap feedback="selection" scaleTo={0.99} accessibilityLabel={`${title}${pinned ? ', pinned' : ''}${subtitle ? `. ${subtitle}` : ''}`}
+      accessibilityHint={onMenu ? 'Long-press for chat options' : undefined} accessibilityState={{ selected: !!active }}
       onPress={onPress} onLongPress={onMenu} delayLongPress={350}
-      style={({ pressed, hovered }) => [s.row, active && s.active, (pressed || hovered) && !active && { backgroundColor: t.colors.pressed }]}>
-      <View style={[s.rowIcon, { backgroundColor: tint }]}>{icon}</View>
+      style={({ pressed, hovered }) => [s.row, (active || pressed || hovered) && s.active]}>
+      {showFace ? <AgentFace server={server} size={26} still /> : null}
       <View style={{ flex: 1, minWidth: 0 }}>
         <View style={s.rowHead}>
+          {pinned ? <Pin size={13} color={t.colors.textTertiary} /> : null}
           <Text style={s.rowTitle} numberOfLines={1}>{title}</Text>
           <Text style={s.time}>{ago(time)}</Text>
         </View>
-        {subtitle ? <Text style={[s.preview, subtitleColor ? { color: subtitleColor } : null]} numberOfLines={1}>{subtitle}</Text> : null}
+        {subtitle ? <Text style={[s.preview, { color: subtitleColor ?? t.colors.textSecondary }]} numberOfLines={1}>{subtitle}</Text> : null}
       </View>
-      {onMenu ? <IconButton label={`Options for ${title}`} size={40} onPress={(e) => { e.stopPropagation(); onMenu(); }}><MoreHorizontal size={18} color={t.colors.textSecondary} /></IconButton> : null}
+      {onMenu && mouse ? <IconButton label={`Options for ${title}`} size={32} onPress={(e) => { e.stopPropagation(); onMenu(); }}>
+        <MoreHorizontal size={16} color={t.colors.textTertiary} /></IconButton> : null}
     </Tap>
   );
 }
@@ -295,8 +287,6 @@ const useStyles = makeStyles((t) => ({
   split: { flex: 1, flexDirection: 'row', backgroundColor: t.colors.bg },
   listPane: { width: 360, borderRightWidth: 1, borderRightColor: t.colors.border },
   root: { flex: 1, backgroundColor: t.colors.bg },
-  topRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', minHeight: 48 },
-  title: { ...t.type.display, color: t.colors.text, marginTop: 6, marginBottom: 10 },
   section: { paddingTop: 12, paddingBottom: 4 },
   chipScroll: { marginTop: 10, marginHorizontal: -16 },
   chipRow: { flexDirection: 'row', gap: 8, paddingHorizontal: 16, paddingBottom: 2 },
@@ -304,18 +294,13 @@ const useStyles = makeStyles((t) => ({
   filterText: { ...t.type.callout, fontFamily: t.fonts.medium, color: t.colors.textSecondary },
   updates: { flexDirection: 'row', gap: 5, alignItems: 'center', minHeight: 44, flexShrink: 1 },
   updateLabel: { ...t.type.caption, fontFamily: t.fonts.medium, color: t.colors.textSecondary, flexShrink: 1 },
-  search: {
-    flexDirection: 'row', alignItems: 'center', gap: 10, paddingLeft: 14, paddingRight: 6, minHeight: 46, borderRadius: t.radius.pill,
-    backgroundColor: t.colors.surfaceSunken, marginBottom: 14,
-  },
-  searchInput: { flex: 1, ...t.type.body, color: t.colors.text, paddingVertical: 10, ...(Platform.OS === 'web' ? ({ outlineStyle: 'none' } as object) : {}) },
-  active: { backgroundColor: t.colors.accentSoft, borderColor: 'transparent' },
-  row: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 4, paddingVertical: 10, borderRadius: t.radius.md, minHeight: 64 },
+  active: { backgroundColor: t.colors.pressed },
+  row: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: t.space.md, paddingVertical: 7, borderRadius: t.radius.sm, minHeight: 50 },
   rowIcon: { width: 32, height: 32, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
   rowHead: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  rowTitle: { ...t.type.bodyStrong, color: t.colors.text, flex: 1 },
-  preview: { ...t.type.callout, color: t.colors.textSecondary, marginTop: 1 },
-  time: { ...t.type.caption, color: t.colors.textTertiary, marginLeft: 'auto' },
+  rowTitle: { ...t.type.callout, color: t.colors.text, flex: 1, minWidth: 0 },
+  preview: { ...t.type.caption, color: t.colors.textSecondary, marginTop: 2 },
+  time: { ...t.type.caption, fontFamily: t.fonts.regular, color: t.colors.textTertiary },
   empty: { alignItems: 'center', gap: 14, paddingVertical: 24, paddingHorizontal: 12 },
   emptyText: { ...t.type.callout, color: t.colors.textSecondary, textAlign: 'center' },
   hit: { fontFamily: t.fonts.semibold, color: t.colors.text, backgroundColor: t.colors.accentSoft },

@@ -3,7 +3,7 @@ import { Pressable, Text, View } from 'react-native';
 import { shortModel } from '../components/PickerCard';
 import { Screen } from '../components/Screen';
 import { withSelectedServer } from '../components/ServerScreen';
-import { Card, LoadError, SectionHeader, Segmented, Skeleton } from '../components/ui';
+import { Card, Footnote, ListGroup, ListRow, LoadError, SectionHeader, Segmented, Skeleton } from '../components/ui';
 import { api } from '../lib/api';
 import { useApp } from '../lib/store';
 import { makeStyles, useTheme } from '../lib/themeContext';
@@ -44,18 +44,20 @@ function UsageScreen() {
   const totalTokens = (data?.totals.total_input ?? 0) + (data?.totals.total_output ?? 0);
   const cost = data?.totals.total_actual_cost || data?.totals.total_estimated_cost || 0;
   return (
-    <Screen title="Usage" subtitle="Tokens and estimated cost from your agent's sessions. Costs are estimates from public prices." onRefresh={load}>
+    <Screen title="Usage" onRefresh={load}>
       <Segmented label="Period" value={days} onChange={setDays}
         options={[{ value: '7', label: '7 days' }, { value: '30', label: '30 days' }, { value: '90', label: '90 days' }]} />
       {error && data ? <Text style={s.error}>{error}</Text> : null}
       {!data ? (error ? <LoadError message={error} onRetry={load} />
         : <View style={{ gap: 12, marginTop: 16 }}><Skeleton height={88} radius={20} /><Skeleton height={200} radius={20} /></View>) : (
         <>
-          <View style={s.tiles}>
-            <Tile label="Tokens" value={compact(totalTokens)} />
-            <Tile label="Est. cost" value={money(cost)} />
-            <Tile label="Sessions" value={String(data.totals.total_sessions ?? 0)} />
-          </View>
+          <SectionHeader title="Total" />
+          <ListGroup>
+            <ListRow title="Tokens" value={compact(totalTokens)} />
+            <ListRow title="Estimated cost" value={money(cost)} />
+            <ListRow title="Sessions" value={String(data.totals.total_sessions ?? 0)} />
+          </ListGroup>
+          <Footnote>Costs use public prices and may differ from your bill.</Footnote>
           <SectionHeader title="Tokens per day" />
           <DailyBars rows={data.daily} />
           <SectionHeader title="By model" />
@@ -63,16 +65,6 @@ function UsageScreen() {
         </>
       )}
     </Screen>
-  );
-}
-
-function Tile({ label, value }: { label: string; value: string }) {
-  const s = useStyles();
-  return (
-    <Card style={s.tile} accessibilityLabel={`${label}: ${value}`}>
-      <Text style={s.tileLabel}>{label}</Text>
-      <Text style={s.tileValue} numberOfLines={1} adjustsFontSizeToFit>{value}</Text>
-    </Card>
   );
 }
 
@@ -94,7 +86,10 @@ export function DailyBars({ rows }: { rows: Usage['daily'] }) {
     <Card style={{ gap: 12 }}>
       <View style={s.readout} accessibilityLiveRegion="polite">
         <Text style={s.readoutDay}>{label(shown.day)}{picked === null ? ' (latest)' : ''}</Text>
-        <Text style={s.readoutValue}>{compact(tokens(shown))} tokens · {money(shown.estimated_cost ?? 0)}</Text>
+        <View style={s.modelHead}>
+          <Text style={s.readoutValue}>{compact(tokens(shown))} tokens</Text>
+          <Text style={s.modelValue}>{money(shown.estimated_cost ?? 0)}</Text>
+        </View>
       </View>
       <View style={s.plot}>
         <View style={s.grid} />
@@ -120,31 +115,19 @@ export function DailyBars({ rows }: { rows: Usage['daily'] }) {
 }
 
 function Models({ rows }: { rows: Usage['by_model'] }) {
-  const t = useTheme();
   const s = useStyles();
-  if (!rows.length) return <Card><Text style={s.empty}>Nothing yet.</Text></Card>;
-  const max = Math.max(1, ...rows.map(tokens));
   return (
-    <Card style={{ gap: 14 }}>
-      {rows.slice(0, 12).map((r) => (
-        <View key={r.model} style={{ gap: 6 }} accessible accessibilityLabel={`${r.model}: ${compact(tokens(r))} tokens, ${money(r.estimated_cost ?? 0)}`}>
-          <View style={s.modelHead}>
-            <Text style={s.modelName} numberOfLines={1}>{shortModel(r.model)}</Text>
-            <Text style={s.modelValue}>{compact(tokens(r))} · {money(r.estimated_cost ?? 0)}</Text>
-          </View>
-          <View style={s.track}><View style={[s.fill, { width: `${Math.max(1, (tokens(r) / max) * 100)}%`, backgroundColor: t.colors.accent }]} /></View>
-        </View>
-      ))}
-    </Card>
+    <ListGroup>
+      {rows.length ? rows.slice(0, 12).map((r) => (
+        <ListRow key={r.model} title={shortModel(r.model)} value={`${compact(tokens(r))} tokens`}
+          right={<Text style={s.modelValue}>{money(r.estimated_cost ?? 0)}</Text>} />
+      )) : <ListRow title="No model usage yet." />}
+    </ListGroup>
   );
 }
 
 const useStyles = makeStyles((t) => ({
   error: { ...t.type.callout, color: t.colors.danger, marginTop: 10 },
-  tiles: { flexDirection: 'row', gap: 10, marginTop: 16 },
-  tile: { flex: 1, gap: 4, paddingVertical: 14, paddingHorizontal: 14 },
-  tileLabel: { ...t.type.caption, color: t.colors.textSecondary },
-  tileValue: { fontFamily: t.fonts.bold, fontSize: 24, color: t.colors.text, letterSpacing: -0.5 },
   empty: { ...t.type.callout, color: t.colors.textSecondary },
   readout: { gap: 2 },
   readoutDay: { ...t.type.caption, color: t.colors.textSecondary },
@@ -155,10 +138,7 @@ const useStyles = makeStyles((t) => ({
   hit: { flex: 1, height: 148, justifyContent: 'flex-end', alignItems: 'center' },
   bar: { width: '100%', maxWidth: 18, borderTopLeftRadius: 4, borderTopRightRadius: 4 },
   axis: { flexDirection: 'row', justifyContent: 'space-between' },
-  axisText: { ...t.type.caption, fontSize: 11.5, color: t.colors.textTertiary },
+  axisText: { ...t.type.caption, color: t.colors.textTertiary },
   modelHead: { flexDirection: 'row', justifyContent: 'space-between', gap: 12 },
-  modelName: { ...t.type.callout, fontFamily: t.fonts.semibold, color: t.colors.text, flexShrink: 1 },
   modelValue: { ...t.type.callout, color: t.colors.textSecondary },
-  track: { height: 6, borderRadius: 3, backgroundColor: t.colors.surfaceSunken, overflow: 'hidden' },
-  fill: { height: 6, borderRadius: 3 },
 }));

@@ -9,11 +9,11 @@ import { buildTheme, type AccentName, type Scheme, type Theme } from './theme';
 
 const themes = new Map<string, Theme>();
 /** One theme object per scheme and accent, so styles can be cached by identity. */
-export function themeFor(scheme: Scheme, accent: AccentName): Theme {
-  const key = `${scheme}:${accent}`;
+export function themeFor(scheme: Scheme, accent: AccentName, pureBlack = false): Theme {
+  const key = `${scheme}:${accent}:${pureBlack}`;
   let t = themes.get(key);
   if (!t) {
-    t = buildTheme(scheme, accent);
+    t = buildTheme(scheme, accent, pureBlack);
     themes.set(key, t);
   }
   return t;
@@ -23,9 +23,9 @@ const ThemeContext = createContext<Theme>(themeFor('dark', 'iris'));
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const system = useColorScheme();
-  const { theme: mode, accent, motion } = usePrefs((s) => s.prefs);
+  const { theme: mode, accent, motion, pureBlack } = usePrefs((s) => s.prefs);
   const scheme: Scheme = mode === 'system' ? (system === 'light' ? 'light' : 'dark') : mode;
-  const theme = useMemo(() => themeFor(scheme, accent), [scheme, accent]);
+  const theme = useMemo(() => themeFor(scheme, accent, pureBlack), [scheme, accent, pureBlack]);
 
   // Keep the system chrome (status bar, navigation bar, browser UI) in step with the theme.
   useEffect(() => {

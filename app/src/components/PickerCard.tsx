@@ -95,9 +95,15 @@ export function PickerCard({ server, message, presentation = 'card', onChosen }:
         state.update({ favoriteModels: toggleSavedModel(state.prefs.favoriteModels, value) });
         haptic.selection();
       }} style={s.star}>
-      <Star size={17} color={selected ? t.colors.accent : t.colors.textTertiary} fill={selected ? t.colors.accent : 'none'} />
+      <Star size={17} color={selected ? t.colors.textSecondary : t.colors.textTertiary} fill={selected ? t.colors.textSecondary : 'none'} />
     </Pressable>;
   };
+  // Saved sections are shortcuts, not duplicates of the same selectable model below.
+  const quickKeys = new Set(sheet && !q
+    ? availableSavedModels([...favorites, ...recent], picker).map(savedModelKey) : []);
+  const displayedProviders = providers.map((provider) => ({ ...provider,
+    models: provider.models.filter((model) => !quickKeys.has(savedModelKey({ provider: provider.slug, model }))),
+  })).filter((provider) => provider.models.length > 0);
   const savedSection = (title: string, saved: SavedModel[]) => {
     const entries = availableSavedModels(saved, picker);
     if (!sheet || q || !entries.length) return null;
@@ -161,7 +167,7 @@ export function PickerCard({ server, message, presentation = 'card', onChosen }:
           ) : null}
           {savedSection('Starred', favorites)}
           {savedSection('Recent', recent.filter((entry) => !favoriteKeys.has(savedModelKey(entry))))}
-          {providers.map((p) => {
+          {displayedProviders.map((p) => {
             const all = expanded[p.slug] || !!q;
             const limit = sheet ? 4 : SHOWN_PER_PROVIDER;
             const models = all ? p.models : p.models.slice(0, limit);
@@ -185,7 +191,7 @@ export function PickerCard({ server, message, presentation = 'card', onChosen }:
                           <Text style={s.modelName}>{name}</Text>
                           {showId ? <Text style={s.modelId} numberOfLines={1}>{m}</Text> : null}
                         </View>
-                        {busy === key ? <ActivityIndicator color={t.colors.accent} /> : <View style={[s.radio, current && s.radioOn]}>{current ? <Check size={13} color={t.colors.onAccent} strokeWidth={3} /> : null}</View>}
+                        {busy === key ? <ActivityIndicator size="small" color={t.colors.accent} /> : current ? <Check size={16} color={t.colors.accent} /> : null}
                       </Pressable>{star(p.slug, m)}</View> : <Chip key={key} label={shortModel(m)} selected={current} accessibilityLabel={`${m} from ${p.name}${current ? ', current' : ''}`}
                         icon={busy === key ? <ActivityIndicator size="small" color={t.colors.accent} /> : current ? <Check size={14} color={t.colors.onAccentSoft} /> : undefined}
                         onPress={() => !busy && choose(key, { provider: p.slug, model: m })} />
@@ -249,15 +255,13 @@ const useStyles = makeStyles((t) => ({
   sheetCard: { padding: 0, borderWidth: 0, backgroundColor: 'transparent', maxWidth: undefined, marginTop: 0 },
   modelRows: { gap: 2 },
   savedRow: { flexDirection: 'row', alignItems: 'center', borderRadius: t.radius.sm },
-  star: { minHeight: 44, width: 42, alignItems: 'center', justifyContent: 'center' },
-  settingRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 12, paddingVertical: 8, minHeight: 44, borderRadius: t.radius.sm },
-  modelRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 12, paddingVertical: 8, minHeight: 44, borderRadius: t.radius.sm },
+  star: { minHeight: 48, width: 48, alignItems: 'center', justifyContent: 'center' },
+  settingRow: { flexDirection: 'row', alignItems: 'center', gap: t.space.sm, paddingHorizontal: t.space.md, paddingVertical: t.space.sm, minHeight: 52, borderRadius: t.radius.sm },
+  modelRow: { flexDirection: 'row', alignItems: 'center', gap: t.space.sm, paddingHorizontal: t.space.md, paddingVertical: t.space.sm, minHeight: 52, borderRadius: t.radius.sm },
   currentRow: { backgroundColor: t.colors.accentSoft },
   modelText: { flex: 1, minWidth: 0, gap: 1 },
   modelName: { ...t.type.callout, fontFamily: t.fonts.medium, color: t.colors.text },
-  modelId: { ...t.type.caption, fontSize: 11.5, color: t.colors.textSecondary },
-  radio: { width: 22, height: 22, borderRadius: 11, borderWidth: 1.5, borderColor: t.colors.borderStrong, alignItems: 'center', justifyContent: 'center' },
-  radioOn: { backgroundColor: t.colors.accentFill, borderColor: t.colors.accentFill },
+  modelId: { ...t.type.caption, color: t.colors.textSecondary },
   more: { minHeight: 44, paddingHorizontal: 12, flexDirection: 'row', gap: 6, alignItems: 'center' },
   moreText: { ...t.type.callout, fontFamily: t.fonts.medium, color: t.colors.accent },
   clear: { width: 28, height: 32, alignItems: 'center', justifyContent: 'center' },
@@ -269,7 +273,7 @@ const useStyles = makeStyles((t) => ({
   icon: { width: 36, height: 36, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
   title: { ...t.type.bodyStrong, color: t.colors.text },
   sub: { ...t.type.caption, color: t.colors.textSecondary, marginTop: 2 },
-  provider: { ...t.type.label, fontSize: 11.5, color: t.colors.textSecondary },
+  provider: { ...t.type.label, color: t.colors.textSecondary },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   buttons: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   chosen: { flexDirection: 'row', alignItems: 'center', gap: 6 },

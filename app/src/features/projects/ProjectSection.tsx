@@ -12,7 +12,7 @@ import { projectCountLabel } from './logic';
 
 const useStyles = makeStyles((t) => ({
   head: { flexDirection: 'row', alignItems: 'center', gap: 4, minHeight: 44, paddingLeft: 10, paddingRight: 4, borderRadius: 12 },
-  heading: { ...t.type.caption, fontFamily: t.fonts.semibold, color: t.colors.textSecondary, flex: 1, letterSpacing: 0.2 },
+  heading: { ...t.type.label, color: t.colors.textSecondary, flex: 1 },
   count: { ...t.type.caption, fontFamily: t.fonts.regular, color: t.colors.textTertiary },
   row: { flexDirection: 'row', alignItems: 'center', gap: 9, minHeight: 42, paddingLeft: 12, paddingRight: 2, borderRadius: 12 },
   active: { backgroundColor: t.colors.pressed },
@@ -53,7 +53,7 @@ export function ProjectSection({ server, onNavigate }: { server: Server; onNavig
         accessibilityState={{ expanded }} accessibilityHint={expanded ? 'Collapse projects' : 'Expand projects'}
         onPress={() => { haptic.selection(); setExpanded((v) => !v); }} style={s.head}>
         {expanded ? <ChevronDown size={16} color={t.colors.textSecondary} /> : <ChevronRight size={16} color={t.colors.textSecondary} />}
-        <Text style={s.heading}>PROJECTS</Text>
+        <Text style={s.heading}>Projects</Text>
         {active.length ? <Text style={s.count}>{active.length}</Text> : null}
       </Tap>
       {expanded ? (
@@ -77,7 +77,7 @@ export function ProjectSection({ server, onNavigate }: { server: Server; onNavig
               </Tap>
             );
           })}
-          {!active.length ? <Text style={s.small}>Group chats by topic, on every device.</Text> : null}
+          
           {active.length > 6 ? <Text style={s.small}>{active.length - 6} more in All projects</Text> : null}
           <Tap accessibilityLabel="All projects" onPress={() => { onNavigate?.(); useApp.getState().select(server.id); router.navigate('/projects'); }}
             style={({ pressed, hovered }) => [s.link, (pressed || hovered) && s.active]}>

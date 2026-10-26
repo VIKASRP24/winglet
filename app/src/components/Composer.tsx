@@ -306,10 +306,7 @@ export function Composer({ server, chatId, busy, bottomInset, target, onHeight, 
         <SheetAction icon={<ImagePlus size={20} color={t.colors.text} />} label="Photos and videos" onPress={() => pick('photos')} />
         <SheetAction icon={<FileText size={20} color={t.colors.text} />} label="Files" onPress={() => pick('files')} />
         <View style={s.keepRow}>
-          <View style={{ flex: 1 }}>
-            <Text style={s.keepTitle}>Send full-size originals</Text>
-            <Text style={s.keepText}>Off: photos are resized and their location data removed.</Text>
-          </View>
+          <Text style={s.keepTitle}>Send full-size originals</Text>
           <Toggle label="Send full-size originals" value={keepOriginal} onValueChange={setKeepOriginal} />
         </View>
       </Sheet>
@@ -442,7 +439,7 @@ const useStyles = makeStyles((t) => ({
   recDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: t.colors.danger },
   recTime: { ...t.type.bodyStrong, color: t.colors.text, fontVariant: ['tabular-nums'] },
   recHint: { ...t.type.caption, color: t.colors.textSecondary, flex: 1, textAlign: 'right' },
-  keepRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 12, paddingVertical: 12, marginTop: 4 },
-  keepTitle: { ...t.type.body, fontFamily: t.fonts.medium, color: t.colors.text },
-  keepText: { ...t.type.caption, fontFamily: t.fonts.regular, color: t.colors.textSecondary, marginTop: 2 },
+  keepRow: { flexDirection: 'row', alignItems: 'center', gap: t.space.md, paddingHorizontal: t.space.md, paddingVertical: t.space.md,
+    marginTop: t.space.sm, borderTopWidth: 1, borderTopColor: t.colors.border, minHeight: 52 },
+  keepTitle: { ...t.type.body, color: t.colors.text, flex: 1 },
 }));

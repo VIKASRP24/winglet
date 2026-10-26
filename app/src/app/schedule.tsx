@@ -4,11 +4,11 @@ import { router } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Text, View } from 'react-native';
 import Animated, { FadeIn, LinearTransition } from 'react-native-reanimated';
-import { CalendarClock, CalendarPlus, CircleAlert, CirclePause, Pause, Play, Plus } from '../components/icons';
+import { CalendarClock, CircleAlert, CirclePause, Pause, Play, Plus } from '../components/icons';
 import { Screen } from '../components/Screen';
 import { withSelectedServer } from '../components/ServerScreen';
 import { Sheet } from '../components/Sheet';
-import { Button, Card, Chip, ConfirmButton, Field, IconButton, LoadError, Skeleton, Tap } from '../components/ui';
+import { Button, Card, Chip, ConfirmButton, Field, IconButton, ListGroup, ListRow, LoadError, SectionHeader, Skeleton } from '../components/ui';
 import { agoText } from '../lib/agent';
 import { api, signedApi } from '../lib/api';
 import { firstLine, whenNext } from '../lib/control';
@@ -67,7 +67,7 @@ function ScheduleScreen() {
   const active = (routines ?? []).filter((r) => r.state !== 'completed');
   const finished = (routines ?? []).filter((r) => r.state === 'completed');
   return (
-    <Screen title="Schedule" subtitle="Things your agent does on its own, on a schedule. Results arrive in the Updates chat."
+    <Screen title="Schedule"
       right={<IconButton label="New routine" variant="filled" onPress={() => setDraft({ name: '', prompt: '', schedule: '' })}>
         <Plus size={22} color={t.colors.text} />
       </IconButton>} onRefresh={load}>
@@ -77,18 +77,20 @@ function ScheduleScreen() {
       )) : !routines.length ? (
         <Empty onPick={(idea) => setDraft(idea ?? { name: '', prompt: '', schedule: '' })} />
       ) : (
-        <View style={{ gap: 12, marginTop: 16 }}>
-          {active.map((r) => (
-            <RoutineCard key={r.id} routine={r} busy={busy} onAction={(a) => act(r, a)}
-              history={history} onEdit={() => history ? router.push(routineHref(server.id, r.id) as any) : setDraft({ id: r.id, name: r.name ?? '', prompt: r.prompt, schedule: r.schedule_display ?? '' })} />
-          ))}
-          {finished.length ? <Text style={s.group}>Done</Text> : null}
-          {finished.map((r) => (
-            <RoutineCard key={r.id} routine={r} busy={busy} onAction={(a) => act(r, a)}
-              history={history} onEdit={() => history ? router.push(routineHref(server.id, r.id) as any) : setDraft({ id: r.id, name: r.name ?? '', prompt: r.prompt, schedule: r.schedule_display ?? '' })} />
-          ))}
-          <Button title="Open Updates" variant="ghost" onPress={() => router.push(`/chat/${server.id}/home`)} />
-        </View>
+        <>
+          {([{ title: 'Routines', rows: active }, { title: 'Done', rows: finished }]).map((group) => group.rows.length ? (
+            <View key={group.title}>
+              <SectionHeader title={group.title} />
+              <ListGroup>
+                {group.rows.map((r) => (
+                  <RoutineCard key={r.id} routine={r} busy={busy} onAction={(a) => act(r, a)}
+                    history={history} onEdit={() => history ? router.push(routineHref(server.id, r.id) as any) : setDraft({ id: r.id, name: r.name ?? '', prompt: r.prompt, schedule: r.schedule_display ?? '' })} />
+                ))}
+              </ListGroup>
+            </View>
+          ) : null)}
+          <Button title="Open Updates" style={{ marginTop: t.space.md }} variant="secondary" onPress={() => router.push(`/chat/${server.id}/home`)} />
+        </>
       )}
       {history ? <ArchivedRoutineLinks server={server} revision={routines} /> : null}
       <EditSheet server={server} draft={draft} onClose={() => setDraft(null)} onSaved={() => { setDraft(null); load(); }} />
@@ -100,23 +102,15 @@ function Empty({ onPick }: { onPick: (d?: Draft) => void }) {
   const t = useTheme();
   const s = useStyles();
   return (
-    <Animated.View entering={FadeIn} style={{ marginTop: 20 }}>
-      <Card style={{ alignItems: 'center', gap: 10, paddingVertical: 28 }}>
-        <View style={s.emptyIcon}><CalendarPlus size={28} color={t.colors.onAccentSoft} /></View>
-        <Text style={s.emptyTitle}>Nothing scheduled yet</Text>
-        <Text style={s.emptyBody}>Have it check something every morning, wrap up the week on Fridays, or nudge you in an hour.</Text>
-        <Button title="New routine" icon={<Plus size={16} color={t.colors.onAccent} />} onPress={() => onPick()} style={{ marginTop: 6 }} />
+    <Animated.View entering={FadeIn}>
+      <Card style={{ gap: t.space.md, marginTop: t.space.lg }}>
+        <Text style={s.emptyBody}>No routines scheduled.</Text>
+        <Button title="New routine" icon={<Plus size={16} color={t.colors.onAccent} />} onPress={() => onPick()} />
       </Card>
-      <Text style={s.group}>Ideas</Text>
-      <View style={{ gap: 10 }}>
-        {IDEAS.map((idea) => (
-          <Tap key={idea.name} feedback="selection" onPress={() => onPick(idea)} accessibilityLabel={`${idea.name}, ${idea.schedule}`}
-            style={({ hovered }) => [s.idea, hovered && { borderColor: t.colors.borderStrong }]}>
-            <Text style={s.ideaName}>{idea.name}</Text>
-            <Text style={s.ideaWhen}>{idea.schedule}</Text>
-          </Tap>
-        ))}
-      </View>
+      <SectionHeader title="Ideas" />
+      <ListGroup>
+        {IDEAS.map((idea) => <ListRow key={idea.name} title={idea.name} value={idea.schedule} onPress={() => onPick(idea)} />)}
+      </ListGroup>
     </Animated.View>
   );
 }
@@ -131,37 +125,22 @@ function RoutineCard({ routine: r, busy, onAction, onEdit, history }: {
   const failed = r.last_status && r.last_status !== 'ok';
   const next = !paused && !done ? whenNext(r.next_run_at) : '';
   const spin = (a: string) => busy === `${r.id}:${a}`;
+  const status = failed ? `Last run failed: ${r.last_error || r.last_status}`
+    : paused ? r.paused_reason || 'Paused' : done ? 'Completed'
+    : r.last_run_at ? `Last ran ${agoText(Date.parse(r.last_run_at) / 1000)}` : undefined;
   return (
-    <Animated.View layout={LinearTransition.duration(180)}>
-      <Card onPress={onEdit} accessibilityLabel={`${r.name || r.prompt}, ${r.schedule_display}. ${paused ? 'Paused.' : next ? `Next ${next}.` : ''} ${history ? 'History' : 'Edit'}`}
-        style={[s.card, done && { opacity: 0.7 }]}>
-        <View style={s.head}>
-          <View style={[s.icon, { backgroundColor: paused ? t.colors.warningSoft : t.colors.accentSoft }]}>
-            {paused ? <CirclePause size={18} color={t.colors.warning} /> : <CalendarClock size={18} color={t.colors.onAccentSoft} />}
-          </View>
-          <View style={{ flex: 1, minWidth: 0 }}>
-            <Text style={s.name} numberOfLines={1}>{r.name || r.prompt}</Text>
-            <Text style={s.when} numberOfLines={1}>{r.schedule_display}{paused ? ' · paused' : done ? ' · done' : next ? ` · next ${next}` : ''}</Text>
-          </View>
-        </View>
-        {paused && r.paused_reason ? <Text style={s.prompt} numberOfLines={2}>Paused: {r.paused_reason}</Text> : null}
-        {r.name ? <Text style={s.prompt} numberOfLines={2}>{r.prompt}</Text> : null}
-        {failed ? (
-          <View style={s.failure}>
-            <CircleAlert size={14} color={t.colors.danger} />
-            <Text style={s.failureText} numberOfLines={2}>Last run failed{r.last_run_at ? ` ${agoText(Date.parse(r.last_run_at) / 1000)}` : ''}: {r.last_error || r.last_status}</Text>
-          </View>
-        ) : r.last_run_at ? <Text style={s.last}>Last ran {agoText(Date.parse(r.last_run_at) / 1000)}</Text> : null}
-        {!done ? (
-          <View style={s.actions}>
-            <Button size="sm" variant="tonal" title="Run now" loading={spin('run')} disabled={!!busy}
-              icon={<Play size={14} color={t.colors.onAccentSoft} />} onPress={() => onAction('run')} />
-            <Button size="sm" variant="secondary" title={paused ? 'Resume' : 'Pause'} loading={spin(paused ? 'resume' : 'pause')} disabled={!!busy}
-              icon={paused ? <Play size={14} color={t.colors.text} /> : <Pause size={14} color={t.colors.text} />}
-              onPress={() => onAction(paused ? 'resume' : 'pause')} />
-          </View>
-        ) : null}
-      </Card>
+    <Animated.View layout={LinearTransition.duration(180)} style={done ? { opacity: 0.7 } : undefined}>
+      <ListRow title={r.name || r.prompt} subtitle={r.schedule_display ?? undefined} value={next ? `Next ${next}` : paused ? 'Paused' : done ? 'Done' : undefined}
+        icon={failed ? <CircleAlert /> : paused ? <CirclePause /> : <CalendarClock />}
+        iconColor={failed ? t.colors.danger : paused ? t.colors.warning : undefined} onPress={onEdit} />
+      {status ? <Text style={[s.last, failed && { color: t.colors.danger }]}>{status}</Text> : null}
+      {!done ? <View style={s.actions}>
+        <Button size="sm" variant="tonal" title="Run now" loading={spin('run')} disabled={!!busy}
+          icon={<Play size={14} color={t.colors.onAccentSoft} />} onPress={() => onAction('run')} />
+        <Button size="sm" variant="secondary" title={paused ? 'Resume' : 'Pause'} loading={spin(paused ? 'resume' : 'pause')} disabled={!!busy}
+          icon={paused ? <Play size={14} color={t.colors.text} /> : <Pause size={14} color={t.colors.text} />}
+          onPress={() => onAction(paused ? 'resume' : 'pause')} />
+      </View> : null}
     </Animated.View>
   );
 }
@@ -255,26 +234,9 @@ export function EditSheet({ server, draft, onClose, onSaved }: { server: Server;
 
 const useStyles = makeStyles((t) => ({
   error: { ...t.type.callout, color: t.colors.danger, marginTop: 10 },
-  group: { ...t.type.label, fontSize: 12, color: t.colors.textSecondary, marginTop: 18, marginBottom: 10 },
-  card: { gap: 10 },
-  head: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  icon: { width: 38, height: 38, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
-  name: { ...t.type.bodyStrong, color: t.colors.text },
-  when: { ...t.type.caption, color: t.colors.textSecondary, marginTop: 2 },
-  prompt: { ...t.type.callout, color: t.colors.textSecondary },
-  failure: { flexDirection: 'row', alignItems: 'flex-start', gap: 6 },
-  failureText: { ...t.type.caption, color: t.colors.danger, flex: 1 },
-  last: { ...t.type.caption, color: t.colors.textTertiary },
-  actions: { flexDirection: 'row', gap: 8, marginTop: 2 },
-  emptyIcon: { width: 60, height: 60, borderRadius: 20, alignItems: 'center', justifyContent: 'center', backgroundColor: t.colors.accentSoft },
-  emptyTitle: { ...t.type.bodyStrong, color: t.colors.text, marginTop: 4 },
-  emptyBody: { ...t.type.callout, color: t.colors.textSecondary, textAlign: 'center', maxWidth: 340 },
-  idea: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: 14, borderRadius: t.radius.md,
-    backgroundColor: t.colors.surface, borderWidth: 1, borderColor: t.colors.border,
-  },
-  ideaName: { ...t.type.callout, fontFamily: t.fonts.semibold, color: t.colors.text },
-  ideaWhen: { ...t.type.caption, color: t.colors.textSecondary },
+  last: { ...t.type.footnote, color: t.colors.textTertiary, paddingHorizontal: t.space.lg, paddingBottom: t.space.sm },
+  actions: { flexDirection: 'row', gap: t.space.sm, paddingHorizontal: t.space.lg, paddingBottom: t.space.md },
+  emptyBody: { ...t.type.callout, color: t.colors.textSecondary },
   presets: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   preview: {
     flexDirection: 'row', alignItems: 'center', gap: 8, padding: 12, borderRadius: t.radius.md, backgroundColor: t.colors.surfaceSunken,

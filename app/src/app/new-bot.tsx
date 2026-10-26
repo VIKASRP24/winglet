@@ -83,9 +83,7 @@ export default function NewBotScreen() {
   };
 
   return (
-    <Screen title="Add a bot" subtitle={canMake
-      ? `A new agent on ${main.bot.title}'s server, for one job: its own persona, memory, skills, chats and pet. It's ready on this phone straight away, no pairing.`
-      : 'Pair a bot from another Hermes server.'}>
+    <Screen title="Add a bot" subtitle={main.bot.title}>
       {canMake ? (
         made ? (
           <Card style={{ gap: 12, marginTop: 18, alignItems: 'center' }}>
@@ -93,7 +91,7 @@ export default function NewBotScreen() {
             <Text style={s.lead}>{title.trim()} is ready</Text>
             {made.restart ? (
               <>
-                <Text style={s.note}>Hermes is serving only your main bot right now. Restart the server once and it serves every bot.</Text>
+                <Text style={s.note}>Restart the server once to bring every bot online.</Text>
                 <Button title="Restart the server" icon={<RotateCw size={16} color={t.colors.onAccent} />} onPress={restart} />
               </>
             ) : null}
@@ -103,10 +101,9 @@ export default function NewBotScreen() {
           <View style={{ gap: 12, marginTop: 18 }}>
             {state && !state.multiplex ? (
               <Card style={{ gap: 6 }}>
-                <Text style={s.lead}>One restart after you make it</Text>
+                <Text style={s.lead}>Restart required after creation</Text>
                 <Text style={s.note}>
-                  Hermes serves one profile until there are two{state.reason ? ` (${state.reason})` : ''}. After you make this bot,
-                  restart the server once from here.
+                  Restart once after creation{state.reason ? `: ${state.reason}` : '.'}
                 </Text>
               </Card>
             ) : null}
@@ -115,12 +112,12 @@ export default function NewBotScreen() {
               hint="How Hermes and your other bots refer to it" autoCapitalize="none" autoCorrect={false} maxLength={40} />
             <View style={{ gap: 6 }}>
               <Text style={s.label}>What it's for</Text>
-              <TextInput value={purpose} onChangeText={setPurpose} multiline placeholder="Plans the week's meals, keeps the shopping list, and suggests recipes from what's in the fridge."
+              <TextInput value={purpose} onChangeText={setPurpose} multiline placeholder="Plans meals and keeps the shopping list."
                 placeholderTextColor={t.colors.textTertiary} style={s.area} accessibilityLabel="What the bot is for" />
-              <Text style={s.hint}>This becomes its persona. You can change it later under Persona.</Text>
+              <Text style={s.hint}>Sets its persona; editable later.</Text>
             </View>
             {error ? <Text style={s.error}>{error}</Text> : null}
-            <Button title={`Make ${title.trim() || 'the bot'}`} icon={<Bot size={16} color={t.colors.onAccent} />} loading={busy}
+            <Button title="Create bot" icon={<Bot size={16} color={t.colors.onAccent} />} loading={busy}
               disabled={!title.trim() || !slug} onPress={create} />
           </View>
         )

@@ -2,13 +2,13 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, ScrollView, Text, useWindowDimensions, View } from 'react-native';
 import Animated, { FadeIn } from 'react-native-reanimated';
 import { JobSheet } from '../components/JobSheet';
-import { Download, Search, Sparkles, Trash2 } from '../components/icons';
+import { Download, Search, Trash2 } from '../components/icons';
 import { Markdown } from '../components/Markdown';
 import { Screen } from '../components/Screen';
 import { withSelectedServer } from '../components/ServerScreen';
 import { Sheet } from '../components/Sheet';
-import { Button, ConfirmButton, ListGroup, ListRow, LoadError, SearchField, SectionHeader, Segmented, Skeleton, Toggle } from '../components/ui';
-import { byCategory, categoryLabel, matches, shortDescription } from '../lib/abilities';
+import { Button, ConfirmButton, Footnote, ListGroup, ListRow, LoadError, SearchField, SectionHeader, Segmented, Skeleton, Toggle } from '../components/ui';
+import { byCategory, categoryLabel, matches } from '../lib/abilities';
 import { api, ApiError, signedApi } from '../lib/api';
 import { idempotencyKey } from '../lib/control';
 import { haptic } from '../lib/haptics';
@@ -16,7 +16,7 @@ import { useApp } from '../lib/store';
 import { makeStyles, useTheme } from '../lib/themeContext';
 import type { CatalogSkill, Job, Server, Skill } from '../lib/types';
 
-const ORIGIN: Record<Skill['provenance'], string> = { bundled: 'Comes with Hermes', hub: 'Installed', agent: 'Made by your agent or you' };
+const ORIGIN: Record<Skill['provenance'], string> = { bundled: 'Comes with Hermes', hub: 'Installed', agent: 'Agent or you' };
 
 /** What your agent knows how to do: turn skills on and off, read them, and add Hermes's official ones. */
 export default withSelectedServer(SkillsScreen);
@@ -70,11 +70,11 @@ function SkillsScreen() {
 
   const enabled = (skills ?? []).filter((x) => x.enabled).length;
   return (
-    <Screen title="Skills" subtitle="Know-how your agent loads when a task calls for it. Turn off what you don't need, or add Hermes's official skills."
+    <Screen title="Skills"
       onRefresh={load}>
       <View style={{ marginTop: 18, gap: 12 }}>
         <Segmented label="Show" value={tab} onChange={setTab} options={[
-          { value: 'installed', label: skills ? `Installed · ${skills.length}` : 'Installed' },
+          { value: 'installed', label: skills ? `Installed (${skills.length})` : 'Installed' },
           { value: 'add', label: 'Add more' },
         ]} />
         <SearchField value={query} onChangeText={setQuery} placeholder={tab === 'installed' ? 'Search your skills' : 'Search official skills'} />
@@ -84,13 +84,13 @@ function SkillsScreen() {
       {tab === 'installed' ? (
         !skills ? (error ? <LoadError message={error} onRetry={load} /> : <Loading />) : (
           <Animated.View entering={FadeIn}>
-            <Text style={s.summary}>{enabled} of {skills.length} on. Changes apply to new conversations.</Text>
+            <Footnote>{enabled} of {skills.length} enabled for new chats.</Footnote>
             {installedGroups.map((g) => (
               <View key={g.title}>
                 <SectionHeader title={g.title} />
                 <ListGroup>
                   {g.items.map((x) => (
-                    <ListRow key={x.name} title={x.name} subtitle={withUsage(shortDescription(x.description), x.usage)} onPress={() => setOpen(x)} chevron={false}
+                    <ListRow key={x.name} title={x.name} value={x.usage ? `${x.usage} uses` : undefined} onPress={() => setOpen(x)} chevron={false}
                       right={<Toggle label={`${x.name} skill`} value={x.enabled} onValueChange={(on) => toggle(x, on)} />} />
                   ))}
                 </ListGroup>
@@ -101,13 +101,13 @@ function SkillsScreen() {
         )
       ) : !catalog ? <Loading /> : (
         <Animated.View entering={FadeIn}>
-          <Text style={s.summary}>Official skills ship with Hermes and are checked by its team. They install on the server in a few seconds.</Text>
+          <Footnote>Official skills from Hermes.</Footnote>
           {catalogGroups.map((g) => (
             <View key={g.title}>
               <SectionHeader title={g.title} />
               <ListGroup>
                 {g.items.map((x) => (
-                  <ListRow key={x.identifier} title={x.name} subtitle={shortDescription(x.description)} onPress={() => setOpen(x)} chevron={false}
+                  <ListRow key={x.identifier} title={x.name} onPress={() => setOpen(x)} chevron={false}
                     right={x.installed ? <Text style={s.installed}>Installed</Text>
                       : <Button size="sm" variant="tonal" title="Install" onPress={() => start('POST', '/api/skills/install', { identifier: x.identifier })} />} />
                 ))}
@@ -126,13 +126,6 @@ function SkillsScreen() {
       <JobSheet server={server} job={job} onClose={() => setJob(null)} onDone={load} />
     </Screen>
   );
-}
-
-/** "Used 12 times" after a skill's description, once the agent has used it. */
-function withUsage(description: string, usage?: number) {
-  if (!usage) return description;
-  const used = usage === 1 ? 'Used once' : `Used ${usage} times`;
-  return description ? `${description} · ${used}` : used;
 }
 
 function Loading() {
@@ -179,10 +172,10 @@ function SkillSheet({ server, item, onClose, onToggle, onInstall, onRemove }: {
   return (
     <Sheet visible={!!item} onClose={onClose} title={x.name}>
       <View style={{ gap: 14, paddingHorizontal: 4 }}>
-        <View style={s.meta}>
-          <View style={s.metaIcon}><Sparkles size={16} color={t.colors.onAccentSoft} /></View>
-          <Text style={s.metaText}>{categoryLabel(x.category)} · {isSkill(x) ? ORIGIN[x.provenance] : 'Official'}</Text>
-        </View>
+        <ListGroup>
+          <ListRow title="Category" value={categoryLabel(x.category)} />
+          <ListRow title="Source" value={isSkill(x) ? ORIGIN[x.provenance] : 'Official'} />
+        </ListGroup>
         <Text style={s.description}>{x.description}</Text>
         {isSkill(x) ? (
           <>
@@ -191,14 +184,14 @@ function SkillSheet({ server, item, onClose, onToggle, onInstall, onRemove }: {
                 : content ? <Markdown text={content} /> : <Text style={s.metaText}>No instructions to show.</Text>}
               {truncated ? <Text style={[s.metaText, { marginTop: 10 }]}>Showing the first part. The whole skill is on the server.</Text> : null}
             </ScrollView>
-            <ListGroup>
-              <ListRow title="Use this skill" subtitle="Changes apply to new conversations"
-                right={<Toggle label={`${x.name} skill`} value={x.enabled} onValueChange={(on) => onToggle(x, on)} />} />
-            </ListGroup>
             {x.provenance === 'hub' ? (
               <ConfirmButton title="Remove from server" icon={<Trash2 size={16} color={t.colors.danger} />} onConfirm={() => onRemove(x)}
                 accessibilityLabel={`Remove ${x.name} from the server`} />
             ) : null}
+            <ListGroup>
+              <ListRow title="Use this skill" subtitle="Applies to new chats"
+                right={<Toggle label={`${x.name} skill`} value={x.enabled} onValueChange={(on) => onToggle(x, on)} />} />
+            </ListGroup>
           </>
         ) : x.installed ? (
           <Text style={s.metaText}>Already installed. Find it under Installed.</Text>
@@ -212,12 +205,9 @@ function SkillSheet({ server, item, onClose, onToggle, onInstall, onRemove }: {
 
 const useStyles = makeStyles((t) => ({
   error: { ...t.type.callout, color: t.colors.danger, marginTop: 10 },
-  summary: { ...t.type.caption, color: t.colors.textSecondary, marginTop: 14, paddingHorizontal: 4 },
   installed: { ...t.type.caption, color: t.colors.textTertiary },
   empty: { alignItems: 'center', gap: 8, paddingVertical: 32 },
   emptyText: { ...t.type.callout, color: t.colors.textSecondary },
-  meta: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  metaIcon: { width: 30, height: 30, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: t.colors.accentSoft },
   metaText: { ...t.type.caption, color: t.colors.textSecondary },
   description: { ...t.type.callout, color: t.colors.text },
   doc: { borderRadius: t.radius.md, backgroundColor: t.colors.surfaceSunken },

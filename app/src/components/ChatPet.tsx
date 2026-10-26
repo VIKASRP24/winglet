@@ -6,8 +6,8 @@ import type { DockPetFrame } from './BotCarousel';
 import { LivePet } from './LivePet';
 
 /** One selected character settles from its measured dock slot onto the message box. */
-export const ChatPet = memo(function ChatPet({ server, active, width, composerHeight, dockHeight, frame, sent, perched = false }: {
-  server: Server; active: boolean; width: number; composerHeight: number; dockHeight: number; frame: DockPetFrame; sent: number; perched?: boolean;
+export const ChatPet = memo(function ChatPet({ server, active, width, composerHeight, dockHeight, dockOffset = 0, frame, sent, perched = false }: {
+  server: Server; active: boolean; width: number; composerHeight: number; dockHeight: number; dockOffset?: number; frame: DockPetFrame; sent: number; perched?: boolean;
 }) {
   const reduced = useReducedMotion();
   const progress = useSharedValue(perched ? 1 : 0);
@@ -21,7 +21,7 @@ export const ChatPet = memo(function ChatPet({ server, active, width, composerHe
     if (!sent || reduced) return;
     hop.value = withSequence(withTiming(-10, { duration: 100 }), withSpring(0, spring.snappy));
   }, [sent, reduced, hop]);
-  const rise = 8 + dockHeight - frame.centerY - frame.size / 2;
+  const rise = 8 + dockOffset + dockHeight - frame.centerY - frame.size / 2;
   const destinationX = Math.max(10, (width - 820) / 2) + 42;
   const pose = useAnimatedStyle(() => ({
     opacity: opacity.value,

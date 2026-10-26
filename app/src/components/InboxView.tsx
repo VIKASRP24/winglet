@@ -2,7 +2,6 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { FlatList, ScrollView, Text, useWindowDimensions, View } from 'react-native';
 import Animated, { FadeInDown } from 'react-native-reanimated';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useShallow } from 'zustand/react/shallow';
 import { ago } from '../lib/agent';
 import { useApp, useServerState } from '../lib/store';
@@ -10,8 +9,7 @@ import { WIDE_BREAKPOINT } from '../lib/theme';
 import { makeStyles, useTheme } from '../lib/themeContext';
 import type { InboxItem, Server } from '../lib/types';
 import { AgentFace } from './AgentFace';
-import { NavigationToggle } from './AppNavigation';
-import { CheckCheck } from './icons';
+import { NavigationHeader } from './AppNavigation';
 import { InboxCard } from './InboxCards';
 import { useTabBarSpace } from './TabBar';
 import { Chip, Segmented } from './ui';
@@ -23,7 +21,6 @@ type Entry = { server: Server; item: InboxItem };
 export function InboxView() {
   const t = useTheme();
   const s = useStyles();
-  const insets = useSafeAreaInsets();
   const tabSpace = useTabBarSpace();
   const { width } = useWindowDimensions();
   const params = useLocalSearchParams<{ item?: string; server?: string }>();
@@ -68,26 +65,26 @@ export function InboxView() {
 
   return (
     <View style={s.root}>
+      <NavigationHeader title="Inbox" />
       <FlatList
         ref={list}
         data={entries}
         keyExtractor={(e) => `${e.server.id}:${e.item.id}`}
         onScrollToIndexFailed={() => undefined}
-        contentContainerStyle={[s.content, { paddingTop: insets.top + 8, paddingBottom: (width >= WIDE_BREAKPOINT ? 24 : tabSpace) + 8 }]}
+        contentContainerStyle={[s.content, { paddingBottom: (width >= WIDE_BREAKPOINT ? 24 : tabSpace) + 8 }]}
         ListHeaderComponent={
           <View style={{ gap: 14, marginBottom: 6 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}><NavigationToggle /><Text style={s.title} accessibilityRole="header">Inbox</Text></View>
             <Segmented
               label="Show"
               value={view}
               onChange={setView}
-              options={[{ value: 'pending', label: pendingCount ? `Needs you · ${pendingCount}` : 'Needs you' }, { value: 'all', label: 'Everything' }]}
+              options={[{ value: 'pending', label: pendingCount ? `Needs you (${pendingCount})` : 'Needs you' }, { value: 'all', label: 'Everything' }]}
             />
             {servers.length > 1 ? (
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
                 <Chip label="All bots" selected={!only} onPress={() => setOnly(null)} />
                 {servers.map((srv, i) => (
-                  <Chip key={srv.id} label={`${srv.bot.title}${pendings[i] ? ` · ${pendings[i]}` : ''}`}
+                  <Chip key={srv.id} label={`${srv.bot.title}${pendings[i] ? ` (${pendings[i]})` : ''}`}
                     icon={<AgentFace server={srv} size={20} still />} selected={only === srv.id} onPress={() => setOnly(only === srv.id ? null : srv.id)} />
                 ))}
               </ScrollView>
@@ -97,9 +94,7 @@ export function InboxView() {
         ItemSeparatorComponent={() => <View style={{ height: 14 }} />}
         ListEmptyComponent={
           <View style={s.empty}>
-            <View style={s.emptyIcon}><CheckCheck size={34} color={t.colors.onAccentSoft} /></View>
-            <Text style={s.emptyTitle}>{view === 'pending' ? "You're all caught up" : 'Nothing here yet'}</Text>
-            <Text style={s.emptyText}>Approvals, questions and routine results from your bots land here. You'll get a notification when something needs you.</Text>
+            <Text style={s.emptyText}>{view === 'pending' ? 'Nothing needs you right now.' : 'Approvals, questions and results appear here.'}</Text>
           </View>
         }
         renderItem={({ item: e, index }) => (
@@ -122,11 +117,11 @@ function EntryMeta({ server, item }: { server: Server; item: InboxItem }) {
   return (
     <View style={s.meta}>
       <AgentFace server={server} size={24} still />
-      <Text style={s.metaText} numberOfLines={1}>
-        <Text style={s.metaBot}>{server.bot.title}</Text>
-        {'  ·  '}{chat?.kind === 'home' ? 'Updates' : `#${chat?.title ?? item.chat_id}`}
-        {'  ·  '}{ago(item.created_at)}
-      </Text>
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <Text style={s.metaBot} numberOfLines={1}>{server.bot.title}</Text>
+        <Text style={s.metaText} numberOfLines={1}>{chat?.kind === 'home' ? 'Updates' : chat?.title ?? item.chat_id}</Text>
+      </View>
+      <Text style={s.time}>{ago(item.created_at)}</Text>
       <Text accessibilityRole="link" style={s.open} onPress={() => router.push(`/chat/${server.id}/${item.chat_id}`)}>Open chat</Text>
     </View>
   );
@@ -134,15 +129,13 @@ function EntryMeta({ server, item }: { server: Server; item: InboxItem }) {
 
 const useStyles = makeStyles((t) => ({
   root: { flex: 1, backgroundColor: t.colors.bg },
-  content: { paddingHorizontal: 16, flexGrow: 1, maxWidth: 760, width: '100%', alignSelf: 'center' },
-  title: { ...t.type.display, color: t.colors.text },
+  content: { paddingHorizontal: 16, flexGrow: 1, maxWidth: 680, width: '100%', alignSelf: 'center' },
   meta: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 2 },
-  metaText: { flex: 1, ...t.type.caption, color: t.colors.textSecondary },
-  metaBot: { color: t.colors.text, fontFamily: t.fonts.semibold },
-  open: { ...t.type.caption, fontFamily: t.fonts.semibold, color: t.colors.accent, paddingVertical: 8, paddingLeft: 8 },
+  metaText: { ...t.type.caption, color: t.colors.textSecondary },
+  metaBot: { ...t.type.footnote, color: t.colors.text, fontFamily: t.fonts.semibold },
+  time: { ...t.type.caption, color: t.colors.textTertiary },
+  open: { ...t.type.caption, fontFamily: t.fonts.semibold, color: t.colors.accent, paddingVertical: t.space.lg, paddingLeft: t.space.sm },
   highlight: { borderRadius: t.radius.lg, padding: 6, margin: -6, backgroundColor: t.colors.accentSoft },
   empty: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32, gap: 10, minHeight: 360 },
-  emptyIcon: { width: 76, height: 76, borderRadius: 26, backgroundColor: t.colors.accentSoft, alignItems: 'center', justifyContent: 'center', marginBottom: 6 },
-  emptyTitle: { ...t.type.title, color: t.colors.text },
   emptyText: { ...t.type.callout, color: t.colors.textSecondary, textAlign: 'center', maxWidth: 360 },
 }));

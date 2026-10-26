@@ -30,9 +30,8 @@ function HowTo() {
   const s = useStyles();
   return (
     <Text style={s.body}>
-      On the server, run <Text style={s.mono}>hermes winglet pair</Text>, or on a phone that's already verified open
-      Agent → Devices → Add a device. Then scan the code{Platform.OS === 'web' ? ' or paste its link on the Devices page' : ''}.
-      Your chats and settings stay as they are.
+      Run <Text style={s.mono}>hermes winglet pair</Text> on the server, or use Devices → Add a device on a verified phone.
+      {' '}Scan the code{Platform.OS === 'web' ? ' or paste its link in Devices' : ''}; your chats stay unchanged.
     </Text>
   );
 }
@@ -55,8 +54,7 @@ export function VerifySheet() {
       <View style={{ gap: 14, paddingHorizontal: 4 }}>
         <View style={s.badge}><KeyRound size={22} color={t.colors.warning} /></View>
         <Text style={s.lead}>
-          {shown.bot.title} only lets verified phones restart, update or change its settings, so a leaked sign-in can't. This phone
-          isn't verified yet. It takes one scan.
+          Verify this phone to manage {shown.bot.title}.
         </Text>
         <HowTo />
         <Button title={Platform.OS === 'web' ? 'Open Devices' : 'Scan the code'} icon={<QrCode size={16} color={t.colors.onAccent} />}
