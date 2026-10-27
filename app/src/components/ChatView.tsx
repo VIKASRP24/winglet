@@ -207,7 +207,7 @@ export function ChatView({ server, chatId, showBack, embedded, landing }: { serv
       return <View style={s.root} onLayout={(e) => { setWidth(e.nativeEvent.layout.width); setViewportH(e.nativeEvent.layout.height ?? 0); }}>
       <BlurTargetView ref={target} style={{ flex: 1 }}>
         {!composing ? <Animated.View entering={landing ? FadeIn.duration(reduced ? 0 : 180) : undefined} style={{ flex: 1 }}><MessageList key={turnKey} server={server} chatId={chatId} messages={shown} loaded={!!loaded || !!messages?.length}
-          typing={typing} top={headerH} bottom={composerH + (committed ? 60 : 0)} onOpen={setSelected} onReply={reply} onQuote={runtime?.info?.features?.quoted_comments ? quoteMessage : undefined} focus={focus}
+          typing={typing} top={headerH} bottom={composerH + (committed ? 48 : 0)} onOpen={setSelected} onReply={reply} onQuote={runtime?.info?.features?.quoted_comments ? quoteMessage : undefined} focus={focus}
           offline={view.kind !== 'online' && view.kind !== 'connecting'} /></Animated.View> : null}
         {landing && composing ? <View pointerEvents={committed ? 'none' : 'box-none'}
           style={[s.landingStage, { top: headerH, bottom: composerH + 8, display: committed ? 'none' : 'flex' }]}>

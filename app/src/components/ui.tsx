@@ -75,8 +75,8 @@ export function Button({ title, onPress, variant = 'primary', size = 'md', icon,
   const s = useStyles();
   const c = t.colors;
   const height = size === 'lg' ? 50 : size === 'sm' ? 34 : 44;
-  const fg = { primary: c.onInk, secondary: c.text, tonal: c.onAccentSoft, ghost: c.accent, danger: c.danger }[variant];
-  const bg = { primary: c.ink, secondary: c.surfaceSunken, tonal: c.accentSoft, ghost: 'transparent', danger: c.dangerSoft }[variant];
+  const fg = { primary: c.onInk, secondary: c.text, tonal: c.accent, ghost: c.accent, danger: c.danger }[variant];
+  const bg = { primary: c.ink, secondary: c.surfaceSunken, tonal: c.surfaceSunken, ghost: 'transparent', danger: c.dangerSoft }[variant];
   const inner = (
     <>
       {loading ? <ActivityIndicator color={fg} /> : icon}

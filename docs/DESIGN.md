@@ -4,24 +4,23 @@ How every screen in the app should look and read. When a screen disagrees with t
 
 ## Character
 
-Premium, playful and light on its feet, in the spirit of the newest AI apps (Meta AI, Muse): a dark graphite canvas
-lit by a soft, slowly drifting **aurora** in the bot's own colour, with **frosted glass** chrome floating over it. The
-pets, the glow and the conversation carry the personality; text and navigation stay calm and sparse. Every feature
-stays one or two taps away, but nothing shouts for attention.
+Calm, crisp and professional, in the family of ChatGPT, Claude, Linear and Apple's own apps: a near-black (or near-white)
+canvas, solid surfaces one step apart, hairline borders and confident type. Polish comes from spacing, alignment and
+restraint, never from effects. The pets are the one place with colour and motion of their own.
 
-- **Aurora** (`components/Aurora.tsx`, colours from `useAuroraColors(server)`): behind the landing (full strength),
-  behind a chat (faint, top only) and behind every pushed screen's large title (`Screen` does this for you). Never
-  behind long text at full strength. Holds still with reduced motion.
-- **Glass** (`components/Glass.tsx`): floating chrome only — headers, the composer, sheets, toasts, floating pills.
-  Lit top sheen and a light edge (`glassBorder`). Pass a `BlurTargetView` target for a real blur on Android.
-- **Frosted cards**: `ListGroup`, `Card`, `Chip` and `SearchField` use `colors.card` / `colors.cardBorder`, a
-  translucent pane that lets the glow through. Don't hand-roll `surface` cards.
-- **Shape**: generous radii (cards 22, sheets and composer 28, pills everywhere for buttons and chips).
-- **Motion**: springs (`spring.snappy` for taps, `spring.soft` for things that move into place), staggered
-  `FadeInDown` for lists and cards arriving, a gentle float on the pet. Haptics on every meaningful tap.
-- **Type**: Inter. `type.hero` for the landing greeting, `type.display` for screen titles, then the regular scale.
-- **Colour**: one accent (the user's choice) for actions and your messages; the primary button is a soft accent
-  gradient. State colours only for state.
+- **No gradients, glows, sheen or tinted icon circles.** The only gradients allowed are inside the pets and bot avatars.
+- **Surfaces**: `bg`, then `surface` for cards and grouped lists (with a `border` hairline), `surfaceSunken` for inputs,
+  search and segmented controls, `surfaceHigh` for a selected row. Floating chrome (chat header, composer, sheets) is
+  near-opaque, never a see-through tint.
+- **Ink and accent**: the strongest action on a screen is `ink` (the text colour as a fill: white in dark, black in light),
+  so is the send button. The accent (the user's choice) marks only links, toggles, progress and focus. Your own messages
+  sit in a neutral `bubble`.
+- **Icons** are plain lucide line icons in `textSecondary` (or `text` when selected); colour only for state.
+- **Shape**: radius 10–12 for controls and rows, 16 for cards and groups, 22 for sheets; pills only for filter chips.
+- **Motion**: short fades (≈180 ms) for things arriving, critically damped springs for press feedback and sheets. No
+  bobbing, pulsing or staggered cascades.
+- **Type**: Inter. `display` (28 bold) for screen titles, `hero` (26 semibold) for the landing greeting, `heading` for
+  bars and sheet titles, body 16.
 
 ## Words
 
@@ -52,15 +51,15 @@ stays one or two taps away, but nothing shouts for attention.
 
 | | |
 |---|---|
-| Dark surfaces | graphite `bg #09090B`, `surface #131316`, raised/sunken `#1A1A1F`, high `#26262D`, hairlines white 8% / 14% |
-| Light surfaces | `bg #F5F5F7`, `surface #FFFFFF`, sunken `#ECECF1` |
-| Type | Inter. largeTitle 28/34 bold, title 22/28, heading 17/22, body 16/23, callout 14.5/20, footnote 13/18, caption 12.5/16 |
-| Radius | 8 / 12 / 16 / 20 / 26 / pill |
-| Spacing | 4 / 8 / 12 / 16 / 24 / 32; page padding 16; section gap 24 |
-| Touch | 48dp minimum target |
+| Dark surfaces | `bg #0C0C0E`, `surface #161619`, raised/sunken `#1B1B1F`, high and bubble `#232327`, hairlines white 7% / 13% |
+| Light surfaces | `bg #FAFAFA`, `surface #FFFFFF`, sunken `#F1F1F3`, bubble `#EFEFF1`, hairlines black 8% / 14% |
+| Type | Inter. display 28/34 bold, hero 26/32 semibold, title 20/26, heading 16.5/22, body 16/24, callout 15/20, footnote 13/18, caption 12/16 |
+| Radius | 6 / 10 / 12 / 16 / 22 / pill |
+| Spacing | 4 / 8 / 12 / 16 / 24 / 32; page padding 16; section gap 28 |
+| Touch | 44–48dp minimum target |
 
-Primary buttons are a flat accent fill. Your message bubble is a flat accent fill with a 6dp corner on its tail.
-No decorative gradients or glows outside the pets.
+Primary buttons and the send button are a flat `ink` fill. Your message bubble is a neutral `bubble` with a 6dp corner on
+its tail. No gradients or glows outside the pets.
 
 ## Chat
 
