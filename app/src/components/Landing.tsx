@@ -56,7 +56,9 @@ export const Landing = memo(function Landing({ server, mode, focused, onPetLayou
   const recent = useMemo(() => {
     if (!rt || fresh) return [];
     const home = homeChat(rt);
-    return Object.values(rt.chats).filter((c) => c.id !== home && c.kind !== 'home' && !archived.includes(chatKey(server.id, c.id)))
+    // Untitled chats ("New chat") say nothing about what you'd pick up, so they stay in the sidebar.
+    return Object.values(rt.chats).filter((c) => c.id !== home && c.kind !== 'home' && c.title && c.title !== 'New chat'
+      && !archived.includes(chatKey(server.id, c.id)))
       .sort((a, b) => b.updated_at - a.updated_at).slice(0, 3);
   }, [rt?.chats, fresh, archived, server.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -118,7 +120,8 @@ function BotRow({ server, mode, onMode, onAddBot }: { server: Server; mode: Land
     const st = useApp.getState();
     if (st.selection.serverId !== bot.id) st.select(bot.id, homeChat(st.runtime[bot.id]));
   };
-  return <View style={s.bots}>
+  return <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.botScroll} contentContainerStyle={s.bots}
+    keyboardShouldPersistTaps="handled" accessibilityLabel="Your bots">
     <Tap feedback="selection" accessibilityLabel="Start a new chat" accessibilityState={{ selected: mode === 'new-chat' }}
       onPress={() => onMode(mode === 'new-chat' ? 'bot' : 'new-chat')} style={[s.botRing, mode === 'new-chat' && { borderColor: t.colors.accent }]}>
       <View style={[s.botPlus, { backgroundColor: mode === 'new-chat' ? t.colors.accentSoft : t.colors.card }]}>
@@ -136,7 +139,7 @@ function BotRow({ server, mode, onMode, onAddBot }: { server: Server; mode: Land
     <Tap feedback="selection" accessibilityLabel="Add a bot" onPress={onAddBot} style={s.botRing}>
       <View style={[s.botPlus, { backgroundColor: t.colors.card }]}><Plus size={18} color={t.colors.textSecondary} /></View>
     </Tap>
-  </View>;
+  </ScrollView>;
 }
 
 /** A soft disc of the bot's colour behind its pet. */
@@ -184,7 +187,8 @@ const useStyles = makeStyles((t) => ({
   cardIcon: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center', marginBottom: 2 },
   kicker: { ...t.type.caption, color: t.colors.textTertiary },
   cardTitle: { fontFamily: t.fonts.semibold, fontSize: 15, lineHeight: 20, color: t.colors.text },
-  bots: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', flexWrap: 'wrap', gap: 6, marginTop: t.space.xl, paddingHorizontal: 20 },
+  botScroll: { flexGrow: 0, width: '100%', marginTop: t.space.xl },
+  bots: { flexGrow: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingHorizontal: 20 },
   botRing: { padding: 3, borderRadius: 999, borderWidth: 2, borderColor: 'transparent' },
   botPlus: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: t.colors.cardBorder },
 }));
