@@ -2,8 +2,10 @@ import { memo, useEffect } from 'react';
 import Animated, { useAnimatedStyle, useSharedValue, withSequence, withSpring, withTiming } from 'react-native-reanimated';
 import { spring, useReducedMotion } from '../lib/motion';
 import type { Server } from '../lib/types';
-import type { DockPetFrame } from './BotCarousel';
 import { LivePet } from './LivePet';
+
+/** Where the landing's pet sits: its centre from the top of the landing, and its size. */
+export type DockPetFrame = { centerY: number; size: number };
 
 /** One selected character settles from its measured dock slot onto the message box. */
 export const ChatPet = memo(function ChatPet({ server, active, width, composerHeight, dockHeight, dockOffset = 0, frame, sent, perched = false }: {

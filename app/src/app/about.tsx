@@ -27,9 +27,12 @@ export default function AboutScreen() {
   return (
     <Screen title="About">
       <View style={s.hero}>
-        <Logo size={64} />
-        <Text style={s.app}>Winglet {appVersion}</Text>
-        <Text style={s.small}>Open source</Text>
+        <Logo size={76} />
+        <Text style={s.app}>Winglet</Text>
+        <View style={s.pills}>
+          {appVersion ? <View style={s.pill}><Text style={s.pillText}>Version {appVersion}</Text></View> : null}
+          <View style={s.pill}><Text style={s.pillText}>Open source</Text></View>
+        </View>
       </View>
       <Footnote>Not affiliated with Nous Research.</Footnote>
 
@@ -40,9 +43,9 @@ export default function AboutScreen() {
           const compat = runtime[srv.id]?.compat;
           const behind = !!info?.version && !!appVersion && compareVersions(info.version, appVersion) < 0;
           return (
-            <Card key={srv.id} style={{ gap: 10 }}>
+            <Card key={srv.id} style={{ gap: t.space.md }}>
               <View style={s.botRow}>
-                <AgentFace server={srv} size={36} still />
+                <AgentFace server={srv} size={44} still />
                 <View style={{ flex: 1, minWidth: 0 }}>
                   <Text style={s.botName}>{srv.bot.title}</Text>
                   <Text style={s.meta} numberOfLines={2}>{info ? `Plugin ${info.version || '?'}, Hermes ${info.hermes_version || 'unknown'}` : 'Connect to see versions'}</Text>
@@ -121,9 +124,14 @@ function AppUpdateCard({ appVersion }: { appVersion: string }) {
 }
 
 const useStyles = makeStyles((t) => ({
-  hero: { alignItems: 'center', gap: 6, paddingVertical: 16 },
-  app: { ...t.type.title, color: t.colors.text, marginTop: 8 },
-  small: { ...t.type.caption, color: t.colors.textSecondary, textAlign: 'center' },
+  hero: {
+    alignItems: 'center', gap: t.space.sm, marginTop: t.space.lg, paddingVertical: t.space.xl, paddingHorizontal: t.space.lg,
+    backgroundColor: t.colors.card, borderRadius: t.radius.xl, borderWidth: 1, borderColor: t.colors.cardBorder,
+  },
+  app: { ...t.type.title, color: t.colors.text, marginTop: t.space.sm },
+  pills: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: t.space.sm },
+  pill: { paddingHorizontal: t.space.md, paddingVertical: t.space.xs, borderRadius: t.radius.pill, backgroundColor: t.colors.pressed, borderWidth: 1, borderColor: t.colors.cardBorder },
+  pillText: { ...t.type.caption, color: t.colors.textSecondary },
   meta: { ...t.type.footnote, color: t.colors.textSecondary, marginTop: 2 },
   botRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   botName: { ...t.type.bodyStrong, color: t.colors.text },

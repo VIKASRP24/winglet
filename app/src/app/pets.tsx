@@ -1,7 +1,9 @@
 import { Image } from 'expo-image';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, ScrollView, Text, View } from 'react-native';
-import Animated, { FadeIn } from 'react-native-reanimated';
+import Animated, {
+  cancelAnimation, Easing, FadeIn, FadeInDown, useAnimatedStyle, useSharedValue, withRepeat, withTiming, type SharedValue,
+} from 'react-native-reanimated';
 import { BotAvatar } from '../components/BotAvatar';
 import { Check, Download, PawPrint, Search, Trash2 } from '../components/icons';
 import { JobSheet } from '../components/JobSheet';
@@ -13,12 +15,15 @@ import { Button, Card, Chip, ConfirmButton, Footnote, SearchField, ListGroup, Li
 import { api, ApiError, mediaUrl, signedApi } from '../lib/api';
 import { idempotencyKey } from '../lib/control';
 import { haptic } from '../lib/haptics';
+import { spring, useReducedMotion } from '../lib/motion';
 import { PET_STATES, type PetState } from '../lib/pets';
 import { useApp } from '../lib/store';
 import { makeStyles, useTheme } from '../lib/themeContext';
 import type { CatalogPet, InstalledPet, Job, PetList, Server } from '../lib/types';
 
-const TILE_GAP = 10;
+const TILE_GAP = 12;
+/** One slow beat every pet in the grid bobs to, each a little out of step: one animation drives them all. */
+const BOB_MS = 3600;
 
 type Picked = { pet: InstalledPet | CatalogPet; installed: boolean };
 
@@ -41,6 +46,14 @@ function PetsScreen() {
   const [busy, setBusy] = useState(false);
   const [job, setJob] = useState<Job | null>(null);
   const [width, setWidth] = useState(0);
+  const reduced = useReducedMotion();
+  const beat = useSharedValue(0);
+  useEffect(() => {
+    if (reduced) { cancelAnimation(beat); beat.value = 0; return; }
+    beat.value = withRepeat(withTiming(1, { duration: BOB_MS, easing: Easing.linear }), -1, false);
+    return () => cancelAnimation(beat);
+  }, [reduced, beat]);
+  const stageFloat = useAnimatedStyle(() => ({ transform: [{ translateY: Math.sin(beat.value * Math.PI * 2) * 5 }] }));
 
   const loadMine = useCallback(() => {
     if (!server) return;
@@ -136,14 +149,18 @@ function PetsScreen() {
     <Screen title="Pet">
       <View onLayout={(e) => setWidth(e.nativeEvent.layout.width)}>
         <Card style={s.stage}>
+          <View pointerEvents="none" style={s.halo} />
           {current ? (
-            <Animated.View entering={FadeIn} style={{ alignItems: 'center', gap: 6 }}>
-              <PetSprite sheet={current} uri={mediaUrl(server, current.sheet_url)} height={170} state={preview} />
+            <Animated.View entering={reduced ? undefined : FadeIn} style={{ alignItems: 'center', gap: 6 }}>
+              <Animated.View style={stageFloat}>
+                <PetSprite sheet={current} uri={mediaUrl(server, current.sheet_url)} height={180} state={preview} />
+              </Animated.View>
+              <View style={s.floor} />
               <Text style={s.petName}>{current.name}</Text>
             </Animated.View>
           ) : (
             <View style={{ alignItems: 'center', gap: 10 }}>
-              <BotAvatar name={server.bot.name} size={88} animated glow />
+              <BotAvatar name={server.bot.name} size={96} animated glow />
               <Text style={s.note}>{mine && installed.length ? 'Pet display is off.' : 'Pick a pet from the gallery.'}</Text>
             </View>
           )}
@@ -166,8 +183,8 @@ function PetsScreen() {
           <>
             <SectionHeader title="On your server" right={<Text style={s.credit}>{installed.length}</Text>} />
             <View style={s.grid}>
-              {installed.map((p) => (
-                <PetTile key={p.slug} server={server} name={p.name} thumb={p.thumb_url} size={tile}
+              {installed.map((p, i) => (
+                <PetTile key={p.slug} index={i} beat={beat} reduced={reduced} server={server} name={p.name} thumb={p.thumb_url} size={tile}
                   active={!!mine?.enabled && mine.active === p.slug} onPress={() => setPicked({ pet: p, installed: true })} />
               ))}
             </View>
@@ -180,13 +197,13 @@ function PetsScreen() {
         {!gallery ? (
           <View style={{ marginTop: 12, gap: 10 }}>
             <Text style={s.caption}>Loading the gallery…</Text>
-            <View style={s.grid}>{[0, 1, 2, 3, 4, 5].map((i) => <Skeleton key={i} width={tile || 96} height={(tile || 96) + 24} radius={16} />)}</View>
+            <View style={s.grid}>{[0, 1, 2, 3, 4, 5].map((i) => <Skeleton key={i} width={tile || 96} height={(tile || 96) + 28} radius={t.radius.lg} />)}</View>
           </View>
         ) : gallery.pets.length ? (
-          <Animated.View entering={FadeIn}>
+          <View>
             <View style={[s.grid, { marginTop: 12 }]}>
-              {gallery.pets.map((p) => (
-                <PetTile key={p.slug} server={server} name={p.name} thumb={p.thumb_url} size={tile} installed={p.installed}
+              {gallery.pets.map((p, i) => (
+                <PetTile key={p.slug} index={i} beat={beat} reduced={reduced} server={server} name={p.name} thumb={p.thumb_url} size={tile} installed={p.installed}
                   active={!!mine?.enabled && mine.active === p.slug} onPress={() => setPicked({ pet: p, installed: p.installed })} />
               ))}
             </View>
@@ -194,7 +211,7 @@ function PetsScreen() {
               <Button title={`Show more (${gallery.total - gallery.pets.length} left)`} variant="secondary" loading={more} style={{ marginTop: 14 }}
                 onPress={async () => { setMore(true); await loadGallery(query.trim(), gallery.pets.length); setMore(false); }} />
             ) : null}
-          </Animated.View>
+          </View>
         ) : !galleryError ? (
           <View style={s.empty}>
             <Search size={22} color={t.colors.textTertiary} />
@@ -212,23 +229,33 @@ function PetsScreen() {
   );
 }
 
-function PetTile({ server, name, thumb, size, active, installed, onPress }: {
+/** A pet in a frosted tile, bobbing gently a beat out of step with its neighbours. */
+function PetTile({ server, name, thumb, size, active, installed, onPress, index, beat, reduced }: {
   server: Server; name: string; thumb: string; size: number; active?: boolean; installed?: boolean; onPress: () => void;
+  index: number; beat: SharedValue<number>; reduced: boolean;
 }) {
   const t = useTheme();
   const s = useStyles();
+  const phase = (index % 7) / 7;
+  const bob = useAnimatedStyle(() => ({ transform: [{ translateY: Math.sin((beat.value + phase) * Math.PI * 2) * 3 }] }));
   if (!size) return null;
   return (
-    <Tap feedback="selection" onPress={onPress} accessibilityLabel={`${name}${active ? ', showing now' : installed ? ', on your server' : ''}`}
-      style={{ width: size, gap: 6 }}>
-      <View style={[s.thumb, { height: size }, active && { borderColor: t.colors.accent, borderWidth: 2 }]}>
-        <PawPrint size={size / 4} color={t.colors.textTertiary} style={{ position: 'absolute' }} />
-        <Image source={{ uri: mediaUrl(server, thumb) }} style={{ width: '82%', height: '82%' }} contentFit="contain" cachePolicy="disk"
-          transition={150} accessibilityIgnoresInvertColors />
-        {active ? <View style={s.check}><Check size={12} color={t.colors.onAccent} /></View> : null}
-      </View>
-      <Text style={s.tileName} numberOfLines={1}>{name}</Text>
-    </Tap>
+    <Animated.View entering={reduced ? undefined
+      : FadeInDown.delay(Math.min(index, 12) * 35).springify().damping(spring.soft.damping).stiffness(spring.soft.stiffness)}>
+      <Tap feedback="selection" scaleTo={0.94} onPress={onPress} accessibilityLabel={`${name}${active ? ', showing now' : installed ? ', on your server' : ''}`}
+        style={({ hovered }) => [s.tile, { width: size }, hovered && { borderColor: t.colors.borderStrong },
+          active && { borderColor: t.colors.accent, backgroundColor: t.colors.accentSoft }]}>
+        <View style={[s.tileArt, { height: size - 16 }]}>
+          <PawPrint size={size / 4} color={t.colors.border} style={{ position: 'absolute' }} />
+          <Animated.View style={[{ width: '84%', height: '84%' }, bob]}>
+            <Image source={{ uri: mediaUrl(server, thumb) }} style={{ width: '100%', height: '100%' }} contentFit="contain" cachePolicy="disk"
+              transition={150} accessibilityIgnoresInvertColors />
+          </Animated.View>
+          {active ? <View style={s.check}><Check size={12} color={t.colors.onAccent} /></View> : null}
+        </View>
+        <Text style={[s.tileName, active && { color: t.colors.onAccentSoft }]} numberOfLines={1}>{name}</Text>
+      </Tap>
+    </Animated.View>
   );
 }
 
@@ -273,16 +300,26 @@ function PetSheet({ server, picked, busy, active, onClose, onAdopt, onRemove }: 
 }
 
 const useStyles = makeStyles((t) => ({
-  stage: { marginTop: 18, gap: 14, paddingVertical: 20, alignItems: 'stretch' },
-  petName: { ...t.type.bodyStrong, color: t.colors.text },
+  stage: { marginTop: 18, gap: 14, paddingVertical: t.space.xl, alignItems: 'stretch', borderRadius: t.radius.xl, overflow: 'hidden' },
+  halo: {
+    position: 'absolute', left: '50%', marginLeft: -100, top: t.space.lg, width: 200, height: 200, borderRadius: t.radius.pill,
+    backgroundColor: t.colors.accentSoft,
+  },
+  floor: { width: 96, height: 10, borderRadius: t.radius.pill, backgroundColor: t.colors.border, marginTop: -t.space.sm },
+  petName: { ...t.type.title, color: t.colors.text },
   note: { ...t.type.callout, color: t.colors.textSecondary, textAlign: 'center' },
   caption: { ...t.type.caption, color: t.colors.textSecondary, textAlign: 'center' },
   credit: { ...t.type.caption, color: t.colors.textTertiary },
   error: { ...t.type.callout, color: t.colors.danger, marginTop: 10 },
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: TILE_GAP },
-  thumb: { borderRadius: 16, backgroundColor: t.colors.surfaceSunken, alignItems: 'center', justifyContent: 'center', overflow: 'hidden',
-    borderWidth: 2, borderColor: 'transparent' },
-  check: { position: 'absolute', top: 6, right: 6, width: 20, height: 20, borderRadius: 10, backgroundColor: t.colors.accentFill,
+  thumb: { borderRadius: t.radius.xl, backgroundColor: t.colors.card, alignItems: 'center', justifyContent: 'center', overflow: 'hidden',
+    borderWidth: 1, borderColor: t.colors.cardBorder },
+  tile: {
+    padding: t.space.sm, paddingBottom: t.space.md, gap: t.space.xs, borderRadius: t.radius.lg, backgroundColor: t.colors.card,
+    borderWidth: 1, borderColor: t.colors.cardBorder,
+  },
+  tileArt: { alignItems: 'center', justifyContent: 'center' },
+  check: { position: 'absolute', top: 0, right: 0, width: 22, height: 22, borderRadius: t.radius.pill, backgroundColor: t.colors.accentFill,
     alignItems: 'center', justifyContent: 'center' },
   tileName: { ...t.type.caption, color: t.colors.text, textAlign: 'center' },
   empty: { alignItems: 'center', gap: 8, paddingVertical: 28 },

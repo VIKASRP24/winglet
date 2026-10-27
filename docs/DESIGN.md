@@ -4,9 +4,24 @@ How every screen in the app should look and read. When a screen disagrees with t
 
 ## Character
 
-A quiet, graphite shell around lively bots. The pets and the conversation are the only things allowed to be loud;
-navigation, settings and chrome stay calm, dense and consistent. One accent colour (the user's choice) marks the thing
-you can act on and your own messages. Nothing else is coloured unless it carries state (success, warning, danger).
+Premium, playful and light on its feet, in the spirit of the newest AI apps (Meta AI, Muse): a dark graphite canvas
+lit by a soft, slowly drifting **aurora** in the bot's own colour, with **frosted glass** chrome floating over it. The
+pets, the glow and the conversation carry the personality; text and navigation stay calm and sparse. Every feature
+stays one or two taps away, but nothing shouts for attention.
+
+- **Aurora** (`components/Aurora.tsx`, colours from `useAuroraColors(server)`): behind the landing (full strength),
+  behind a chat (faint, top only) and behind every pushed screen's large title (`Screen` does this for you). Never
+  behind long text at full strength. Holds still with reduced motion.
+- **Glass** (`components/Glass.tsx`): floating chrome only — headers, the composer, sheets, toasts, floating pills.
+  Lit top sheen and a light edge (`glassBorder`). Pass a `BlurTargetView` target for a real blur on Android.
+- **Frosted cards**: `ListGroup`, `Card`, `Chip` and `SearchField` use `colors.card` / `colors.cardBorder`, a
+  translucent pane that lets the glow through. Don't hand-roll `surface` cards.
+- **Shape**: generous radii (cards 22, sheets and composer 28, pills everywhere for buttons and chips).
+- **Motion**: springs (`spring.snappy` for taps, `spring.soft` for things that move into place), staggered
+  `FadeInDown` for lists and cards arriving, a gentle float on the pet. Haptics on every meaningful tap.
+- **Type**: Inter. `type.hero` for the landing greeting, `type.display` for screen titles, then the regular scale.
+- **Colour**: one accent (the user's choice) for actions and your messages; the primary button is a soft accent
+  gradient. State colours only for state.
 
 ## Words
 

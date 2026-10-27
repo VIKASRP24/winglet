@@ -1,13 +1,14 @@
 import { router } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Text, View } from 'react-native';
-import Animated, { FadeIn } from 'react-native-reanimated';
+import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
 import { MessageSquareText, Pin, Search } from '../components/icons';
 import { Screen } from '../components/Screen';
 import { withSelectedServer } from '../components/ServerScreen';
 import { Button, ListGroup, ListRow, LoadError, SearchField, SectionHeader, Skeleton, Tap } from '../components/ui';
 import { ago } from '../lib/agent';
 import { api } from '../lib/api';
+import { spring, useReducedMotion } from '../lib/motion';
 import { markedParts, sessionTitle, sourceLabel } from '../lib/sessions';
 import { useApp } from '../lib/store';
 import { makeStyles, useTheme } from '../lib/themeContext';
@@ -21,6 +22,7 @@ export default withSelectedServer(SessionsScreen);
 function SessionsScreen() {
   const t = useTheme();
   const s = useStyles();
+  const reduced = useReducedMotion();
   const server = useApp((st) => st.servers.find((x) => x.id === st.selection.serverId) ?? st.servers[0]);
   const [rows, setRows] = useState<SessionRow[] | null>(null);
   const [total, setTotal] = useState(0);
@@ -79,16 +81,19 @@ function SessionsScreen() {
       {!list ? (
         error && !searching ? <LoadError message={error} onRetry={load} style={{ marginTop: 12 }} />
           : searching && searchError ? null
-          : <View style={{ gap: 10, marginTop: 18 }}>{[0, 1, 2, 3].map((i) => <Skeleton key={i} height={68} radius={16} />)}</View>
+          : <View style={{ gap: 10, marginTop: 18 }}>{[0, 1, 2, 3].map((i) => <Skeleton key={i} height={68} radius={t.radius.lg} />)}</View>
       ) : (
-        <Animated.View entering={FadeIn}>
+        <Animated.View entering={reduced ? undefined : FadeIn}>
           <SectionHeader title={searching ? 'Search results' : 'Conversations'} right={<Text style={s.time}>{searching ? list.length : total}</Text>} />
-          <ListGroup>{list.map((row, i) => (
-            <SessionItem key={row.id} row={row} first={i === 0} onPress={() => router.push(`/session/${encodeURIComponent(row.id)}`)} />
-          ))}</ListGroup>
+          {list.length ? <ListGroup>{list.map((row, i) => (
+            <Animated.View key={row.id} entering={reduced || i > 12 ? undefined
+              : FadeInDown.delay(i * 35).springify().damping(spring.soft.damping).stiffness(spring.soft.stiffness)}>
+              <SessionItem row={row} first={i === 0} onPress={() => router.push(`/session/${encodeURIComponent(row.id)}`)} />
+            </Animated.View>
+          ))}</ListGroup> : null}
           {!list.length ? (
             <View style={s.empty}>
-              <Search size={22} color={t.colors.textTertiary} />
+              <View style={s.emptyIcon}><Search size={24} color={t.colors.onAccentSoft} /></View>
               <Text style={s.emptyText}>{searching ? `Nothing said matches "${query.trim()}".` : 'No conversations yet.'}</Text>
             </View>
           ) : null}
@@ -133,6 +138,7 @@ const useStyles = makeStyles((t) => ({
   hit: { color: t.colors.text, fontFamily: t.fonts.semibold },
   meta: { ...t.type.caption, color: t.colors.textTertiary },
   counts: { flexDirection: 'row', gap: t.space.md, paddingHorizontal: t.space.lg, paddingBottom: t.space.md },
-  empty: { alignItems: 'center', gap: 8, paddingVertical: 32 },
+  empty: { alignItems: 'center', gap: t.space.md, paddingVertical: t.space.xxl },
+  emptyIcon: { width: 56, height: 56, borderRadius: t.radius.pill, backgroundColor: t.colors.accentSoft, alignItems: 'center', justifyContent: 'center' },
   emptyText: { ...t.type.callout, color: t.colors.textSecondary },
 }));

@@ -1,4 +1,5 @@
 import { BlurView } from 'expo-blur';
+import { LinearGradient } from 'expo-linear-gradient';
 import type { ReactNode, RefObject } from 'react';
 import { Platform, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
 import { useReducedTransparency } from '../lib/motion';
@@ -14,17 +15,20 @@ export function Glass({ children, style, target, intensity = 40, borderless }: {
 }) {
   const t = useTheme();
   const reduced = useReducedTransparency();
-  const border = borderless ? null : { borderWidth: StyleSheet.hairlineWidth * 2, borderColor: t.colors.border };
+  const border = borderless ? null : { borderWidth: StyleSheet.hairlineWidth * 2, borderColor: t.colors.glassBorder };
+  // A faint light along the top edge, as if the pane caught the light: what makes it read as glass, not grey.
+  const sheen = <LinearGradient pointerEvents="none" colors={[t.colors.glassSheen, 'transparent']} locations={[0, 0.6]}
+    style={[StyleSheet.absoluteFill, { opacity: borderless ? 0.6 : 1 }]} />;
   if (reduced) {
     return <View style={[{ backgroundColor: t.colors.glassOpaque, overflow: 'hidden' }, border, style]}>{children}</View>;
   }
   if (Platform.OS === 'web') {
     const glass = { backgroundColor: t.colors.glass, backdropFilter: 'blur(24px) saturate(170%)', WebkitBackdropFilter: 'blur(24px) saturate(170%)' };
-    return <View style={[glass as ViewStyle, { overflow: 'hidden' }, border, style]}>{children}</View>;
+    return <View style={[glass as ViewStyle, { overflow: 'hidden' }, border, style]}>{sheen}{children}</View>;
   }
   if (Platform.OS === 'android' && !target) {
     // No blur target: a near-solid tint reads cleanly over busy content.
-    return <View style={[{ backgroundColor: t.colors.glassOpaque, opacity: 1, overflow: 'hidden' }, border, style]}>{children}</View>;
+    return <View style={[{ backgroundColor: t.colors.glassOpaque, opacity: 1, overflow: 'hidden' }, border, style]}>{sheen}{children}</View>;
   }
   return (
     <View style={[{ overflow: 'hidden' }, border, style]}>
@@ -36,6 +40,7 @@ export function Glass({ children, style, target, intensity = 40, borderless }: {
         blurTarget={target}
       />
       <View style={[StyleSheet.absoluteFill, { backgroundColor: t.colors.glass }]} />
+      {sheen}
       {children}
     </View>
   );

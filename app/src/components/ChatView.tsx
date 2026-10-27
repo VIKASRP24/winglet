@@ -1,4 +1,5 @@
 import { BlurTargetView } from 'expo-blur';
+import { LinearGradient } from 'expo-linear-gradient';
 import * as Clipboard from 'expo-clipboard';
 import { router } from 'expo-router';
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
@@ -37,7 +38,7 @@ import { UserAvatar } from './BotAvatar';
 import { Composer, focusComposer } from './Composer';
 import { ChatMenu } from './ChatMenu';
 import { ChatPet } from './ChatPet';
-import type { DockPetFrame } from './BotCarousel';
+import type { DockPetFrame } from './ChatPet';
 import { SyncStatus } from '../features/event-replay/SyncStatus';
 import { ConnectionBanner } from './ConnectionBanner';
 import { FilesSheet } from './FilesSheet';
@@ -46,6 +47,7 @@ import { ContextSheet } from '../features/context-insights/ContextSheet';
 import { GoalSheet, GoalStrip, useChatGoal } from './Goal';
 import { PausedBanner } from './PausedBanner';
 import { Glass } from './Glass';
+import { Aurora, useAuroraColors } from './Aurora';
 import {
   ArrowDown, CalendarClock, Check, ChevronDown, Clock, Copy, FileText, Folder, GitBranch, MoreHorizontal, Pencil, Reply, RotateCcw, Share,
 } from './icons';
@@ -196,12 +198,15 @@ export function ChatView({ server, chatId, showBack, embedded, landing }: { serv
     : view.kind === 'recovering' ? 'Finding new address…' : view.kind === 'unreachable' ? 'Offline' : view.title;
   const topPad = embedded ? 0 : insets.top;
   const dockOffset = Math.max(0, (viewportH - headerH - composerH - 8 - dockHeight) / 2);
+  const aurora = useAuroraColors(server);
 
   return (
     <KeyboardViewport>{(keyboardVisible) => {
       const committed = !landing?.action && (inputFocused || keyboardVisible || !composing);
       return <View style={s.root} onLayout={(e) => { setWidth(e.nativeEvent.layout.width); setViewportH(e.nativeEvent.layout.height ?? 0); }}>
       <BlurTargetView ref={target} style={{ flex: 1 }}>
+        {/* Full glow on the landing; in a conversation only a faint wash at the top, behind the glass header. */}
+        <Aurora colors={aurora} strength={composing ? 1 : 0.55} top={!composing} />
         {!composing ? <Animated.View entering={landing ? FadeIn.duration(reduced ? 0 : 180) : undefined} style={{ flex: 1 }}><MessageList key={turnKey} server={server} chatId={chatId} messages={shown} loaded={!!loaded || !!messages?.length}
           typing={typing} top={headerH} bottom={composerH + (committed ? 60 : 0)} onOpen={setSelected} onReply={reply} onQuote={runtime?.info?.features?.quoted_comments ? quoteMessage : undefined} focus={focus}
           offline={view.kind !== 'online' && view.kind !== 'connecting'} /></Animated.View> : null}
@@ -213,8 +218,10 @@ export function ChatView({ server, chatId, showBack, embedded, landing }: { serv
         </View> : null}
       </BlurTargetView>
       <View style={s.headerWrap} onLayout={(e) => setHeaderH(e.nativeEvent.layout.height)} pointerEvents="box-none">
-        <Glass target={target} borderless style={[s.header, { paddingTop: topPad + 8 }]}>
+        {composing ? null : <Glass target={target} borderless style={StyleSheet.absoluteFill} />}
+        <View style={[s.header, { paddingTop: topPad + 8 }]}>
           <NavigationToggle />
+          {!composing ? <AgentFace server={server} size={34} still /> : null}
           <View style={{ flex: 1, minWidth: 0 }}>
             <Text style={s.headerTitle} numberOfLines={1} accessibilityRole="header">{title}</Text>
             <View style={s.headerIdentity}>
@@ -231,8 +238,8 @@ export function ChatView({ server, chatId, showBack, embedded, landing }: { serv
           </View>
           {!landing?.prepareChat && !landing?.action ? <IconButton label="Chat options" onPress={() => setMenu(true)}><MoreHorizontal size={22} color={t.colors.text} /></IconButton> : null}
           <InboxButton />
-        </Glass>
-        <View style={s.hairline} />
+        </View>
+        {composing ? null : <View style={s.hairline} />}
         <ConnectionBanner server={server} compact />
         <SyncStatus serverId={server.id} />
         <PausedBanner server={server} />
@@ -697,6 +704,8 @@ const MessageRow = memo(function MessageRow({ server, message, first, last, live
         {files}
         {message.text ? (
           <View style={[s.bubble, last && s.bubbleTail, files ? { marginTop: 4 } : null]}>
+            <LinearGradient pointerEvents="none" colors={[t.colors.accentFillLight, t.colors.accentFill]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+              style={StyleSheet.absoluteFill} />
             {quote(true)}
             {text(true)}
           </View>
@@ -1006,10 +1015,10 @@ const useStyles = makeStyles((t) => ({
   center: { alignItems: 'center', justifyContent: 'center', gap: 12 },
   headerWrap: { position: 'absolute', top: 0, left: 0, right: 0 },
   header: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 8, paddingBottom: 10 },
-  hairline: { height: 1, backgroundColor: t.colors.border },
+  hairline: { height: StyleSheet.hairlineWidth * 2, backgroundColor: t.colors.glassBorder },
   landingStage: { position: 'absolute', left: 0, right: 0, justifyContent: 'center' },
   headerIdentity: { flexDirection: 'row', alignItems: 'center', gap: t.space.xs, marginTop: 2 },
-  headerTitle: { ...t.type.heading, color: t.colors.text, flexShrink: 1 },
+  headerTitle: { ...t.type.heading, fontFamily: t.fonts.bold, color: t.colors.text, flexShrink: 1 },
   projectChip: { flexDirection: 'row', alignItems: 'center', gap: 4, flexShrink: 1, minWidth: 0, marginLeft: t.space.xs,
     paddingHorizontal: 7, minHeight: 20, borderRadius: t.radius.pill, backgroundColor: t.colors.accentSoft, maxWidth: '100%' },
   projectChipText: { ...t.type.caption, fontFamily: t.fonts.medium, color: t.colors.onAccentSoft, flexShrink: 1, fontSize: 11.5 },
@@ -1018,15 +1027,16 @@ const useStyles = makeStyles((t) => ({
   dayWrap: { alignItems: 'center', marginTop: t.space.lg, marginBottom: t.space.xs },
   day: {
     ...t.type.caption, color: t.colors.textTertiary, paddingHorizontal: t.space.md, paddingVertical: t.space.xs, borderRadius: t.radius.pill,
-    backgroundColor: t.colors.surface, borderWidth: 1, borderColor: t.colors.border, overflow: 'hidden',
+    backgroundColor: t.colors.card, borderWidth: 1, borderColor: t.colors.cardBorder, overflow: 'hidden',
   },
   botRow: { paddingHorizontal: 16 },
   botHead: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 },
   botName: { ...t.type.caption, fontSize: 13.5, fontFamily: t.fonts.semibold, color: t.colors.text },
   botBody: { paddingLeft: 34, paddingRight: 8 },
   userRow: { paddingHorizontal: 14, alignItems: 'flex-end' },
-  bubble: { maxWidth: '84%', borderRadius: t.radius.lg, paddingHorizontal: t.space.lg, paddingVertical: t.space.md, backgroundColor: t.colors.accentFill },
-  bubbleTail: { borderBottomRightRadius: 6 },
+  bubble: { maxWidth: '84%', borderRadius: t.radius.lg, paddingHorizontal: t.space.lg, paddingVertical: t.space.md, backgroundColor: t.colors.accentFill,
+    overflow: 'hidden' },
+  bubbleTail: { borderBottomRightRadius: 8 },
   time: { ...t.type.caption, fontSize: 11.5, color: t.colors.textTertiary },
   compact: { flexDirection: 'row', paddingHorizontal: 14, paddingRight: 18 },
   gutter: { width: 38 },
@@ -1061,7 +1071,7 @@ const useStyles = makeStyles((t) => ({
   activity: { paddingHorizontal: 16, marginTop: 8, alignItems: 'flex-start' },
   activityPill: {
     flexDirection: 'row', alignItems: 'center', gap: t.space.sm, paddingHorizontal: 14, minHeight: 38, borderRadius: t.radius.pill,
-    backgroundColor: t.colors.surface, borderWidth: 1, borderColor: t.colors.border, marginLeft: 34,
+    backgroundColor: t.colors.card, borderWidth: 1, borderColor: t.colors.cardBorder, marginLeft: 34,
   },
   activityDots: { flexDirection: 'row', alignItems: 'center', gap: 3 },
   activityDot: { width: 4, height: 4, borderRadius: 2 },
@@ -1069,7 +1079,7 @@ const useStyles = makeStyles((t) => ({
   activityList: { marginLeft: 34, marginTop: 6, paddingLeft: 10, gap: 3, borderLeftWidth: 2, borderLeftColor: t.colors.border, alignSelf: 'stretch', paddingRight: 8 },
   activityLine: { ...t.type.caption, fontFamily: t.fonts.mono, fontSize: 12, color: t.colors.textSecondary },
   typing: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, paddingTop: 14 },
-  typingBubble: { paddingHorizontal: 14, paddingVertical: 10, borderRadius: t.radius.pill, backgroundColor: t.colors.surface, borderWidth: 1, borderColor: t.colors.border },
+  typingBubble: { paddingHorizontal: 14, paddingVertical: 10, borderRadius: t.radius.pill, backgroundColor: t.colors.card, borderWidth: 1, borderColor: t.colors.cardBorder },
   emptyTitle: { ...t.type.title, color: t.colors.text, textAlign: 'center', marginTop: 8 },
   emptyText: { ...t.type.callout, color: t.colors.textSecondary, textAlign: 'center', maxWidth: 400 },
   suggestions: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 8, marginTop: 8, maxWidth: 440 },

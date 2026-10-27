@@ -1,11 +1,18 @@
+import { LinearGradient } from 'expo-linear-gradient';
 import { Platform, Text, View } from 'react-native';
 import { BotAvatar } from '../components/BotAvatar';
 import { Check, Monitor, Moon, Sun } from '../components/icons';
 import { Screen } from '../components/Screen';
 import { Card, Footnote, ListGroup, ListRow, SectionHeader, Segmented, Tap, Toggle } from '../components/ui';
 import { usePrefs, type Prefs } from '../lib/prefs';
-import { ACCENT_NAMES, ACCENTS } from '../lib/theme';
-import { makeStyles, useTheme } from '../lib/themeContext';
+import { ACCENT_NAMES, ACCENTS, type Colors } from '../lib/theme';
+import { makeStyles, themeFor, useTheme } from '../lib/themeContext';
+
+const THEMES = [
+  { value: 'system', label: 'System', icon: Monitor },
+  { value: 'light', label: 'Light', icon: Sun },
+  { value: 'dark', label: 'Dark', icon: Moon },
+] as const;
 
 /** Every change applies at once. Sidebar placement is in Settings. */
 export default function AppearanceScreen() {
@@ -14,23 +21,40 @@ export default function AppearanceScreen() {
   const prefs = usePrefs((st) => st.prefs);
   const update = usePrefs((st) => st.update);
   const set = <K extends keyof Prefs>(key: K) => (value: Prefs[K]) => update({ [key]: value } as Partial<Prefs>);
-  const icon = (I: typeof Sun) => <I size={16} color={t.colors.textSecondary} />;
+  const light = themeFor('light', prefs.accent).colors;
+  const dark = themeFor('dark', prefs.accent, prefs.pureBlack).colors;
 
   return (
     <Screen title="Appearance">
       <Preview />
 
       <SectionHeader title="Theme" />
-      <ListGroup>
-        <View style={s.control}>
-          <Segmented label="Theme" value={prefs.theme} onChange={set('theme')} options={[
-            { value: 'system', label: 'System', icon: icon(Monitor) },
-            { value: 'light', label: 'Light', icon: icon(Sun) },
-            { value: 'dark', label: 'Dark', icon: icon(Moon) },
-          ]} />
-        </View>
-        {prefs.theme !== 'light' ? <ListRow title="Pure black" right={<Toggle label="Pure black" value={prefs.pureBlack} onValueChange={set('pureBlack')} />} /> : null}
-      </ListGroup>
+      <View style={s.themes} accessibilityRole="radiogroup" accessibilityLabel="Theme">
+        {THEMES.map(({ value, label, icon: Icon }) => {
+          const on = prefs.theme === value;
+          return (
+            <Tap key={value} feedback="selection" scaleTo={0.96} accessibilityRole="radio" accessibilityState={{ selected: on }} accessibilityLabel={label}
+              onPress={() => { if (!on) set('theme')(value); }} style={s.themeCell}>
+              <View style={[s.themeFrame, on && { borderColor: t.colors.accent }]}>
+                <View style={s.themeShot}>
+                  {value === 'system' ? <>
+                    <MiniTheme colors={light} half="left" />
+                    <MiniTheme colors={dark} half="right" />
+                  </> : <MiniTheme colors={value === 'light' ? light : dark} />}
+                </View>
+                {on ? <View style={s.themeCheck}><Check size={12} color={t.colors.onAccent} strokeWidth={3.5} /></View> : null}
+              </View>
+              <View style={s.themeLabel}>
+                <Icon size={14} color={on ? t.colors.text : t.colors.textSecondary} />
+                <Text style={[s.swatchLabel, on && s.labelOn]}>{label}</Text>
+              </View>
+            </Tap>
+          );
+        })}
+      </View>
+      {prefs.theme !== 'light' ? <ListGroup style={{ marginTop: t.space.lg }}>
+        <ListRow title="Pure black" right={<Toggle label="Pure black" value={prefs.pureBlack} onValueChange={set('pureBlack')} />} />
+      </ListGroup> : null}
       {prefs.theme !== 'light' ? <Footnote>Uses a true-black background in dark mode.</Footnote> : null}
 
       <SectionHeader title="Accent" />
@@ -43,11 +67,11 @@ export default function AppearanceScreen() {
               <Tap key={name} feedback="selection" accessibilityRole="radio" accessibilityState={{ selected: on }} accessibilityLabel={a.label}
                 onPress={() => update({ accent: name })} style={s.swatchCell}>
                 <View style={[s.swatchRing, on && { borderColor: t.scheme === 'dark' ? a.dark : a.light }]}>
-                  <View style={[s.swatch, { backgroundColor: a.fill }]}>
-                    {on ? <Check size={20} color={t.colors.onAccent} strokeWidth={3} /> : null}
-                  </View>
+                  <LinearGradient colors={[a.fillLight, a.fill]} start={{ x: 0.1, y: 0 }} end={{ x: 0.9, y: 1 }} style={s.swatch}>
+                    {on ? <Check size={22} color={t.colors.onAccent} strokeWidth={3} /> : null}
+                  </LinearGradient>
                 </View>
-                <Text style={[s.swatchLabel, on && { color: t.colors.text }]}>{a.label}</Text>
+                <Text style={[s.swatchLabel, on && s.labelOn]}>{a.label}</Text>
               </Tap>
             );
           })}
@@ -87,6 +111,20 @@ export default function AppearanceScreen() {
   );
 }
 
+/** A tiny screen in one theme: a title, a reply and your message in the accent. System shows half of each. */
+function MiniTheme({ colors: c, half }: { colors: Colors; half?: 'left' | 'right' }) {
+  const s = useStyles();
+  return (
+    <View style={[s.mini, { backgroundColor: c.bg }]}>
+      <View style={[s.miniInner, half === 'left' && s.miniLeft, half === 'right' && s.miniRight]}>
+        <View style={[s.miniLine, { backgroundColor: c.borderStrong, width: '46%' }]} />
+        <View style={[s.miniBubble, { backgroundColor: c.surfaceHigh, borderColor: c.border, width: '72%' }]} />
+        <View style={[s.miniBubble, { backgroundColor: c.accentFill, borderColor: 'transparent', width: '52%', alignSelf: 'flex-end' }]} />
+      </View>
+    </View>
+  );
+}
+
 /** A live sample of the current theme, accent and layout. */
 function Preview() {
   const t = useTheme();
@@ -115,11 +153,30 @@ function Preview() {
 const useStyles = makeStyles((t) => ({
   control: { padding: t.space.lg, gap: t.space.sm },
   label: { ...t.type.body, color: t.colors.text },
-  swatches: { flexDirection: 'row', flexWrap: 'wrap', gap: t.space.sm, justifyContent: 'space-between' },
-  swatchCell: { alignItems: 'center', gap: t.space.xs, minWidth: 48, minHeight: 48 },
-  swatchRing: { padding: t.space.xs, borderRadius: t.radius.pill, borderWidth: 2, borderColor: 'transparent' },
-  swatch: { width: 36, height: 36, borderRadius: t.radius.pill, alignItems: 'center', justifyContent: 'center' },
+  swatches: { flexDirection: 'row', justifyContent: 'space-between', gap: t.space.xs },
+  swatchCell: { flex: 1, alignItems: 'center', gap: t.space.sm, minWidth: 48, minHeight: 48 },
+  swatchRing: { padding: 3, borderRadius: t.radius.pill, borderWidth: 2.5, borderColor: 'transparent' },
+  swatch: { width: 50, height: 50, borderRadius: t.radius.pill, alignItems: 'center', justifyContent: 'center' },
   swatchLabel: { ...t.type.caption, color: t.colors.textSecondary },
+  labelOn: { color: t.colors.text, fontFamily: t.fonts.semibold },
+  themes: { flexDirection: 'row', gap: t.space.md },
+  themeCell: { flex: 1, alignItems: 'center', gap: t.space.sm },
+  themeFrame: { alignSelf: 'stretch', borderRadius: t.radius.lg, borderWidth: 2.5, borderColor: 'transparent', padding: 3 },
+  themeShot: {
+    height: 104, flexDirection: 'row', borderRadius: t.radius.md, overflow: 'hidden', borderWidth: 1, borderColor: t.colors.cardBorder,
+  },
+  themeCheck: {
+    position: 'absolute', top: 9, right: 9, width: 22, height: 22, borderRadius: t.radius.pill, backgroundColor: t.colors.accentFill,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  themeLabel: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  mini: { flex: 1, overflow: 'hidden' },
+  miniInner: { flex: 1, padding: 10, paddingTop: 14, gap: 8 },
+  // Each half of System shows its side of one little screen, so the two read as a single picture.
+  miniLeft: { width: '200%' },
+  miniRight: { width: '200%', marginLeft: '-100%' },
+  miniLine: { height: 6, borderRadius: t.radius.pill },
+  miniBubble: { height: 16, borderRadius: t.radius.pill, borderWidth: 1 },
   preview: { marginTop: t.space.md, gap: t.space.md },
   previewBot: { flexDirection: 'row', alignItems: 'center', gap: t.space.md },
   previewMe: { width: 26, height: 26, borderRadius: t.radius.pill, backgroundColor: t.colors.surfaceSunken },

@@ -37,8 +37,14 @@ const base = {
     surfaceSunken: '#ECECF1',
     /** Selected segment, raised chip: one step above whatever it sits on. */
     surfaceHigh: '#FFFFFF',
-    glass: 'rgba(255,255,255,0.88)',
+    glass: 'rgba(255,255,255,0.64)',
     glassOpaque: '#FFFFFF',
+    /** The lit edge and top sheen of glass. */
+    glassBorder: 'rgba(255,255,255,0.75)',
+    glassSheen: 'rgba(255,255,255,0.55)',
+    /** Grouped lists and cards: a frosted pane that lets the screen's glow through. */
+    card: 'rgba(255,255,255,0.72)',
+    cardBorder: 'rgba(0,0,0,0.06)',
     border: 'rgba(0,0,0,0.08)',
     borderStrong: 'rgba(0,0,0,0.14)',
     text: '#0B0B0F',
@@ -66,8 +72,12 @@ const base = {
     surfaceRaised: '#1A1A1F',
     surfaceSunken: '#1A1A1F',
     surfaceHigh: '#26262D',
-    glass: 'rgba(19,19,22,0.88)',
+    glass: 'rgba(24,24,30,0.58)',
     glassOpaque: '#1A1A1F',
+    glassBorder: 'rgba(255,255,255,0.10)',
+    glassSheen: 'rgba(255,255,255,0.07)',
+    card: 'rgba(255,255,255,0.05)',
+    cardBorder: 'rgba(255,255,255,0.08)',
     border: 'rgba(255,255,255,0.08)',
     borderStrong: 'rgba(255,255,255,0.14)',
     text: '#F5F5F7',
@@ -103,6 +113,11 @@ export const FIXED = {
   onAccentFaint: 'rgba(255,255,255,0.5)',
   onAccentWash: 'rgba(0,0,0,0.22)',
 };
+
+/** The glow colours behind a screen: the bot's own colour, the accent, then the brand's blue. */
+export function auroraColors(botColor: string, accent: string): string[] {
+  return [botColor, accent, BRAND.to];
+}
 
 /** The Winglet mark's tile, the same in every theme. */
 export const BRAND = { from: '#8B6CFF', via: '#6C5CE7', to: '#3BA7FF', mark: '#FFFFFF', stroke: 'rgba(91,75,214,0.55)' };
@@ -151,7 +166,7 @@ export function alpha(hex: string, a: number): string {
 export const SOFT_ALPHA = { light: 0.1, dark: 0.16 } as const;
 
 /** Dark surfaces one step down, for OLED screens: true black behind everything. */
-const PURE_BLACK = { bg: '#000000', surface: '#0B0B0D', surfaceRaised: '#141417', surfaceSunken: '#141417', surfaceHigh: '#26262C', glass: 'rgba(16,16,20,0.86)', glassOpaque: '#141417', codeBg: '#0B0B0D' };
+const PURE_BLACK = { bg: '#000000', surface: '#0B0B0D', surfaceRaised: '#141417', surfaceSunken: '#141417', surfaceHigh: '#26262C', glass: 'rgba(16,16,20,0.6)', glassOpaque: '#141417', codeBg: '#0B0B0D' };
 
 export function buildColors(scheme: Scheme, accentName: AccentName, pureBlack = false): Colors {
   const b = scheme === 'dark' && pureBlack ? { ...base.dark, ...PURE_BLACK } : base[scheme];
@@ -186,13 +201,15 @@ export const fonts = {
   mono: Platform.select({ ios: 'Menlo', android: 'monospace', default: 'ui-monospace, SFMono-Regular, Menlo, monospace' }),
 };
 
-export const radius = { xs: 8, sm: 12, md: 16, lg: 20, xl: 26, pill: 999 };
+export const radius = { xs: 10, sm: 14, md: 18, lg: 22, xl: 28, pill: 999 };
 
 export const space = { xs: 4, sm: 8, md: 12, lg: 16, xl: 24, xxl: 32 };
 
 /** Type scale. Body stays at 16 for reading; headings get tighter tracking. */
 export const type = {
-  display: { fontFamily: fonts.bold, fontSize: 28, lineHeight: 34, letterSpacing: -0.6 },
+  /** The landing greeting. */
+  hero: { fontFamily: fonts.extrabold, fontSize: 34, lineHeight: 40, letterSpacing: -1.1 },
+  display: { fontFamily: fonts.extrabold, fontSize: 30, lineHeight: 36, letterSpacing: -0.9 },
   title: { fontFamily: fonts.bold, fontSize: 22, lineHeight: 28, letterSpacing: -0.4 },
   heading: { fontFamily: fonts.semibold, fontSize: 17, lineHeight: 22, letterSpacing: -0.2 },
   body: { fontFamily: fonts.regular, fontSize: 16, lineHeight: 23 },

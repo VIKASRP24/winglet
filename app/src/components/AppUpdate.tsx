@@ -102,6 +102,6 @@ const useStyles = makeStyles((t) => ({
   caption: { ...t.type.caption, color: t.colors.textSecondary, textAlign: 'center' },
   error: { ...t.type.callout, color: t.colors.danger },
   inlineLink: { color: t.colors.accent, textDecorationLine: 'underline' },
-  track: { height: 6, borderRadius: 3, backgroundColor: t.colors.surfaceSunken, overflow: 'hidden' },
-  fill: { height: 6, borderRadius: 3, backgroundColor: t.colors.accentFill },
+  track: { height: 8, borderRadius: t.radius.pill, backgroundColor: t.colors.surfaceSunken, overflow: 'hidden' },
+  fill: { height: 8, borderRadius: t.radius.pill, backgroundColor: t.colors.accentFill },
 }));

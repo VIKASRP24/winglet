@@ -1,12 +1,13 @@
 import { useLocalSearchParams } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { Text, View } from 'react-native';
-import Animated, { FadeIn } from 'react-native-reanimated';
+import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
 import { ChevronDown, ChevronRight, TriangleAlert, Wrench } from '../../components/icons';
 import { Markdown } from '../../components/Markdown';
 import { Screen } from '../../components/Screen';
 import { ListGroup, ListRow, SectionHeader, Skeleton, Tap } from '../../components/ui';
 import { agoText } from '../../lib/agent';
+import { spring, useReducedMotion } from '../../lib/motion';
 import { api } from '../../lib/api';
 import { sessionTitle, sourceLabel } from '../../lib/sessions';
 import { useApp } from '../../lib/store';
@@ -15,7 +16,9 @@ import type { SessionMessage, SessionTranscript } from '../../lib/types';
 
 /** One past conversation, read-only: what was asked, what the agent said, and the tools it used. */
 export default function SessionScreen() {
+  const t = useTheme();
   const s = useStyles();
+  const reduced = useReducedMotion();
   const { id, server: serverId } = useLocalSearchParams<{ id: string; server?: string }>();
   const server = useApp((st) => serverId ? st.servers.find(x => x.id === serverId) : st.servers.find((x) => x.id === st.selection.serverId) ?? st.servers[0]);
   const [data, setData] = useState<SessionTranscript | null>(null);
@@ -42,12 +45,17 @@ export default function SessionScreen() {
       </> : null}
       {error ? <Text style={s.error}>{error}</Text> : null}
       {!data && !error ? (
-        <View style={{ gap: 12, marginTop: 18 }}>{[64, 120, 64, 160].map((h, i) => <Skeleton key={i} height={h} radius={16} />)}</View>
+        <View style={{ gap: 12, marginTop: 18 }}>{[64, 120, 64, 160].map((h, i) => <Skeleton key={i} height={h} radius={t.radius.lg} />)}</View>
       ) : null}
       {data ? (
-        <Animated.View entering={FadeIn} style={{ gap: 12, marginTop: 18 }}>
+        <Animated.View entering={reduced ? undefined : FadeIn} style={{ gap: 12, marginTop: 18 }}>
           {data.truncated ? <Text style={s.note}>Showing the latest 500 messages.</Text> : null}
-          {data.messages.map((m, i) => <Turn key={`${m.id}-${i}`} message={m} />)}
+          {data.messages.map((m, i) => (
+            <Animated.View key={`${m.id}-${i}`} entering={reduced || i > 10 ? undefined
+              : FadeInDown.delay(i * 45).springify().damping(spring.soft.damping).stiffness(spring.soft.stiffness)}>
+              <Turn message={m} />
+            </Animated.View>
+          ))}
           {!data.messages.length ? <Text style={s.note}>No messages in this session.</Text> : null}
         </Animated.View>
       ) : null}
@@ -110,17 +118,19 @@ const useStyles = makeStyles((t) => ({
   error: { ...t.type.callout, color: t.colors.danger, marginTop: 10 },
   note: { ...t.type.caption, color: t.colors.textTertiary, textAlign: 'center' },
   userWrap: { alignItems: 'flex-end', gap: 4 },
-  user: { maxWidth: '88%', paddingHorizontal: 14, paddingVertical: 10, borderRadius: 18, borderBottomRightRadius: 6, backgroundColor: t.colors.accentFill },
+  user: { maxWidth: '88%', paddingHorizontal: 16, paddingVertical: 11, borderRadius: t.radius.lg, borderBottomRightRadius: 6, backgroundColor: t.colors.accentFill },
   userText: { ...t.type.body, color: t.colors.onAccent },
   time: { ...t.type.caption, color: t.colors.textTertiary },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
-  chip: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 9, paddingVertical: 4, borderRadius: t.radius.pill, backgroundColor: t.colors.surfaceSunken },
+  chip: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 5, borderRadius: t.radius.pill,
+    backgroundColor: t.colors.card, borderWidth: 1, borderColor: t.colors.cardBorder },
   chipText: { ...t.type.caption, color: t.colors.textSecondary, fontFamily: t.fonts.mono },
-  tool: { padding: 10, borderRadius: t.radius.md, backgroundColor: t.colors.surfaceSunken, gap: 8 },
+  tool: { paddingHorizontal: 14, paddingVertical: 12, minHeight: 44, borderRadius: t.radius.lg, backgroundColor: t.colors.card,
+    borderWidth: 1, borderColor: t.colors.cardBorder, gap: 8, justifyContent: 'center' },
   toolHead: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   toolLabel: { ...t.type.caption, color: t.colors.textSecondary, fontFamily: t.fonts.mono },
   toolText: { ...t.type.footnote, fontFamily: t.fonts.mono, color: t.colors.text },
-  failed: { padding: 12, borderRadius: t.radius.md, backgroundColor: t.colors.warningSoft, gap: 6 },
+  failed: { padding: 14, borderRadius: t.radius.lg, backgroundColor: t.colors.warningSoft, gap: 6 },
   failedHead: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   failedLabel: { ...t.type.caption, color: t.colors.text, fontFamily: t.fonts.semibold },
 }));

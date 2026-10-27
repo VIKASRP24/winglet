@@ -6,7 +6,7 @@ import { AgentFace } from '../components/AgentFace';
 import { NavigationToggle } from '../components/AppNavigation';
 import { Bell, ChevronRight, Fingerprint, Info, Palette, Plus, Smartphone } from '../components/icons';
 import { Screen } from '../components/Screen';
-import { Card, Footnote, ListGroup, ListRow, SectionHeader, Segmented, Toggle } from '../components/ui';
+import { Footnote, ListGroup, ListRow, SectionHeader, Segmented, Tap, Toggle } from '../components/ui';
 import { lockAvailable, unlock } from '../lib/appLock';
 import { useAppUpdate } from '../lib/appUpdateCheck';
 import { connectionView } from '../lib/connection';
@@ -36,17 +36,21 @@ export default function SettingsScreen() {
   const themeLabel = prefs.theme === 'system' ? 'System' : prefs.theme === 'dark' ? 'Dark' : 'Light';
 
   return <Screen title="Settings" right={width >= WIDE_BREAKPOINT ? <NavigationToggle /> : undefined}>
-    {server ? <Card style={s.botCard} onPress={() => router.push('/agent')} accessibilityLabel={`Manage ${server.bot.title}`}>
-      <AgentFace server={server} size={44} still />
-      <View style={{ flex: 1, minWidth: 0, gap: t.space.xs }}>
+    {server ? <Tap feedback="selection" scaleTo={0.98} onPress={() => router.push('/agent')} accessibilityLabel={`Manage ${server.bot.title}`}
+      style={({ hovered }) => [s.botCard, hovered && { borderColor: t.colors.borderStrong }]}>
+      <AgentFace server={server} size={60} still />
+      <View style={s.botText}>
         <Text style={s.botName} numberOfLines={1}>{server.bot.title}</Text>
         <View style={s.status}>
           <View style={[s.dot, { backgroundColor: view.tone === 'ok' ? t.colors.success : view.tone === 'error' ? t.colors.danger : t.colors.warning }]} />
           <Text style={s.statusText} numberOfLines={1}>{view.kind === 'online' ? 'Online' : view.title}</Text>
         </View>
       </View>
-      <ChevronRight size={18} color={t.colors.textTertiary} />
-    </Card> : null}
+      <View style={s.manage}>
+        <Text style={s.manageText}>Manage</Text>
+        <ChevronRight size={16} color={t.colors.onAccentSoft} />
+      </View>
+    </Tap> : null}
 
     <SectionHeader title="App" />
     <ListGroup>
@@ -93,8 +97,17 @@ export default function SettingsScreen() {
 }
 
 const useStyles = makeStyles((t) => ({
-  botCard: { flexDirection: 'row', alignItems: 'center', gap: t.space.md, marginTop: t.space.md },
-  botName: { ...t.type.bodyStrong, color: t.colors.text },
+  botCard: {
+    flexDirection: 'row', alignItems: 'center', gap: t.space.lg, marginTop: t.space.lg, padding: t.space.lg,
+    backgroundColor: t.colors.card, borderRadius: t.radius.xl, borderWidth: 1, borderColor: t.colors.cardBorder,
+  },
+  botText: { flex: 1, minWidth: 0, gap: t.space.xs },
+  botName: { ...t.type.title, color: t.colors.text },
+  manage: {
+    flexDirection: 'row', alignItems: 'center', gap: 2, minHeight: 34, paddingLeft: t.space.md, paddingRight: t.space.sm,
+    borderRadius: t.radius.pill, backgroundColor: t.colors.accentSoft,
+  },
+  manageText: { ...t.type.caption, fontFamily: t.fonts.semibold, color: t.colors.onAccentSoft },
   status: { flexDirection: 'row', alignItems: 'center', gap: t.space.sm },
   statusText: { ...t.type.footnote, color: t.colors.textSecondary, flexShrink: 1 },
   dot: { width: 8, height: 8, borderRadius: t.radius.pill },

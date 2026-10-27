@@ -2,9 +2,10 @@ import { Redirect, router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
 import { Platform, ScrollView, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import Animated, { FadeIn, LinearTransition } from 'react-native-reanimated';
+import Animated, { FadeInDown, LinearTransition } from 'react-native-reanimated';
 import { useContentWidth } from '../../../components/AppNavigation';
 import { AgentFace } from '../../../components/AgentFace';
+import { Aurora, useAuroraColors } from '../../../components/Aurora';
 import { ChatMenu } from '../../../components/ChatMenu';
 import { ChatView } from '../../../components/ChatView';
 import { ConnectionBanner } from '../../../components/ConnectionBanner';
@@ -19,7 +20,7 @@ import { useActivityClock } from '../../../lib/useActivityClock';
 import { chatActivity, chatActivityLabel, draftPreview } from '../../../lib/chatActivity';
 import { homeChat, useApp } from '../../../lib/store';
 import { WIDE_BREAKPOINT } from '../../../lib/theme';
-import { easeOut, useReducedMotion } from '../../../lib/motion';
+import { easeOut, spring, useReducedMotion } from '../../../lib/motion';
 import { makeStyles, useTheme } from '../../../lib/themeContext';
 import type { Chat, SearchResult, Server } from '../../../lib/types';
 import { matchesProjectSearch, projectChats, projectCountLabel, projectTitle } from '../../../features/projects/logic';
@@ -42,6 +43,9 @@ function ProjectView({ server, projectId, wide }: { server: Server; projectId: s
   const s = useStyles();
   const reduced = useReducedMotion();
   const insets = useSafeAreaInsets();
+  const aurora = useAuroraColors(server);
+  // The bot's glow behind the title, as on every pushed screen.
+  const glow = <View pointerEvents="none" style={s.glow}><Aurora colors={aurora} strength={0.7} /></View>;
   const snapshot = useApp((st) => st.runtime[server.id]?.projects);
   const chats = useApp((st) => st.runtime[server.id]?.chats);
   const runtime = useApp((st) => st.runtime[server.id] ?? undefined);
@@ -102,6 +106,7 @@ function ProjectView({ server, projectId, wide }: { server: Server; projectId: s
   if (!feature && runtime?.info) {
     return (
       <View style={[s.root, { paddingTop: insets.top + 8 }]}>
+        {glow}
         <PageHeader onBack={back} title="Project" />
         <View style={s.notice}>
           <CircleAlert size={21} color={t.colors.warning} />
@@ -113,12 +118,13 @@ function ProjectView({ server, projectId, wide }: { server: Server; projectId: s
   if (!snapshot) {
     return (
       <View style={[s.root, { paddingTop: insets.top + 8 }]}>
+        {glow}
         <PageHeader onBack={back} title="Project" />
         {online ? (
           <View style={s.loading}>
-            <Skeleton height={72} radius={20} />
-            <Skeleton height={64} radius={16} />
-            <Skeleton height={64} radius={16} />
+            <Skeleton height={72} radius={t.radius.lg} />
+            <Skeleton height={64} radius={t.radius.lg} />
+            <Skeleton height={64} radius={t.radius.lg} />
           </View>
         ) : (
           <View style={s.empty}>
@@ -133,6 +139,7 @@ function ProjectView({ server, projectId, wide }: { server: Server; projectId: s
   if (!project) {
     return (
       <View style={[s.root, { paddingTop: insets.top + 8 }]}>
+        {glow}
         <PageHeader onBack={back} title="Project" />
         <View style={s.empty}>
           <Text style={s.emptyText}>Project deleted. Its chats and drafts are still in All chats.</Text>
@@ -144,6 +151,7 @@ function ProjectView({ server, projectId, wide }: { server: Server; projectId: s
 
   const listPane = (
     <View style={[s.listPane, wide && s.listPaneWide, { paddingTop: wide ? 14 : insets.top + 6 }]}>
+      {glow}
       <PageHeader onBack={back} title={project.name} onMenu={() => setMenu(true)} wide={wide} />
       <ScrollView contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: Math.max(insets.bottom, 20) + 12 }}
         keyboardShouldPersistTaps="handled">
@@ -170,17 +178,22 @@ function ProjectView({ server, projectId, wide }: { server: Server; projectId: s
             accessibilityLabel={showArchived ? 'Hide chats archived on this device' : `Show ${hiddenArchived} chats archived on this device`}
             onPress={() => setShowArchived((v) => !v)} />
         ) : null}
-        {visible.map((chat, index) => (
-          <Animated.View key={chat.id} entering={reduced ? undefined : FadeIn.duration(160)}
-            layout={reduced ? undefined : LinearTransition.duration(180).easing(easeOut)}>
-            <ProjectChatRow server={server} chat={chat} active={wide && activeId === chat.id} first={index === 0}
-              pinned={pinnedChats.includes(chatKey(server.id, chat.id))}
-              subtitle={draftOf(chat) ?? chatActivityLabel(chatActivity(runtime, chat.id, now)) ?? undefined}
-              subtitleColor={draftOf(chat) ? t.colors.textSecondary : t.colors.accent}
-              pending={!!chatActivity(runtime, chat.id, now).pending}
-              onPress={() => openChat(chat)} onMenu={() => setChatMenu(chat)} />
-          </Animated.View>
-        ))}
+        {visible.length ? (
+          <View style={s.list}>
+            {visible.map((chat, index) => (
+              <Animated.View key={chat.id} entering={reduced ? undefined
+                : FadeInDown.delay(Math.min(index, 10) * 35).springify().damping(spring.soft.damping).stiffness(spring.soft.stiffness)}
+                layout={reduced ? undefined : LinearTransition.duration(180).easing(easeOut)}>
+                <ProjectChatRow server={server} chat={chat} active={wide && activeId === chat.id} first={index === 0}
+                  pinned={pinnedChats.includes(chatKey(server.id, chat.id))}
+                  subtitle={draftOf(chat) ?? chatActivityLabel(chatActivity(runtime, chat.id, now)) ?? undefined}
+                  subtitleColor={draftOf(chat) ? t.colors.textSecondary : t.colors.accent}
+                  pending={!!chatActivity(runtime, chat.id, now).pending}
+                  onPress={() => openChat(chat)} onMenu={() => setChatMenu(chat)} />
+              </Animated.View>
+            ))}
+          </View>
+        ) : null}
         {q && !visible.length && !results.length && !found.busy ? (
           <View style={s.empty}>
             <Text style={s.emptyTitle}>Nothing in {project.name} matches “{q}”</Text>
@@ -198,11 +211,13 @@ function ProjectView({ server, projectId, wide }: { server: Server; projectId: s
         {results.length ? (
           <>
             <SectionHeader title="In messages" />
-            {results.map((result) => {
-              const chat = chats?.[result.chat.id];
-              return chat ? <ResultRow key={result.message.id} result={result}
-                onPress={() => { requestFocus(server.id, chat.id, result.message.id); openChat(chat); }} /> : null;
-            })}
+            <View style={s.list}>
+              {results.map((result) => {
+                const chat = chats?.[result.chat.id];
+                return chat ? <ResultRow key={result.message.id} result={result}
+                  onPress={() => { requestFocus(server.id, chat.id, result.message.id); openChat(chat); }} /> : null;
+              })}
+            </View>
           </>
         ) : null}
         {q && found.busy ? <Text style={s.searching}>Searching this project…</Text> : null}
@@ -281,7 +296,7 @@ function ResultRow({ result, onPress }: { result: SearchResult; onPress: () => v
   return (
     <Tap feedback="selection" scaleTo={0.99} onPress={onPress} accessibilityLabel={`Message in ${result.chat.title}: ${result.snippet}. Open`}
       style={({ pressed, hovered }) => [s.row, (pressed || hovered) && { backgroundColor: t.colors.pressed }]}>
-      <View style={[s.rowIcon, { backgroundColor: t.colors.surfaceSunken }]}><Search size={16} color={t.colors.textSecondary} /></View>
+      <View style={s.resultIcon}><Search size={15} color={t.colors.onAccentSoft} /></View>
       <View style={{ flex: 1, minWidth: 0 }}>
         <Text style={s.rowTitle} numberOfLines={1}>{result.chat.title}</Text>
         <Text style={s.sub} numberOfLines={2}>{result.snippet}</Text>
@@ -318,11 +333,16 @@ const useStyles = makeStyles((t) => ({
   header: { flexDirection: 'row', alignItems: 'center', gap: 6, minHeight: 48, paddingHorizontal: 8 },
   headerTitle: { ...t.type.heading, color: t.colors.text, flex: 1, minWidth: 0 },
   heroTitle: { ...t.type.display, color: t.colors.text, marginTop: t.space.xs },
-  archive: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 12, padding: 12, borderRadius: t.radius.md, backgroundColor: t.colors.warningSoft },
+  archive: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 12, padding: 14, borderRadius: t.radius.lg, backgroundColor: t.colors.warningSoft },
   archiveText: { ...t.type.callout, color: t.colors.textSecondary, flex: 1 },
   searchRow: { flexDirection: 'row', gap: 8, alignItems: 'center', marginTop: 14 },
   row: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: t.space.md, paddingVertical: 7, borderRadius: t.radius.sm, minHeight: 50 },
-  rowIcon: { width: 22, alignItems: 'center', justifyContent: 'center' },
+  glow: { position: 'absolute', top: 0, left: 0, right: 0, height: 380 },
+  list: {
+    backgroundColor: t.colors.card, borderRadius: t.radius.lg, borderWidth: 1, borderColor: t.colors.cardBorder, padding: t.space.xs,
+    overflow: 'hidden',
+  },
+  resultIcon: { width: 30, height: 30, borderRadius: t.radius.pill, backgroundColor: t.colors.accentSoft, alignItems: 'center', justifyContent: 'center' },
   rowHead: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   rowTitle: { ...t.type.callout, color: t.colors.text, flex: 1, minWidth: 0 },
   sub: { ...t.type.caption, color: t.colors.textSecondary, marginTop: 2 },
@@ -331,7 +351,7 @@ const useStyles = makeStyles((t) => ({
   emptyIcon: { width: 62, height: 62, borderRadius: 20, alignItems: 'center', justifyContent: 'center', backgroundColor: t.colors.accentSoft },
   emptyTitle: { ...t.type.callout, color: t.colors.text, textAlign: 'center' },
   emptyText: { ...t.type.callout, color: t.colors.textSecondary, textAlign: 'center', maxWidth: 420 },
-  notice: { flexDirection: 'row', gap: 10, alignItems: 'flex-start', margin: 16, padding: 14, borderRadius: t.radius.md, backgroundColor: t.colors.warningSoft },
+  notice: { flexDirection: 'row', gap: 10, alignItems: 'flex-start', margin: 16, padding: 16, borderRadius: t.radius.lg, backgroundColor: t.colors.warningSoft },
   noticeText: { ...t.type.callout, color: t.colors.textSecondary, flex: 1 },
   searching: { ...t.type.caption, color: t.colors.textTertiary, paddingVertical: 10 },
 }));

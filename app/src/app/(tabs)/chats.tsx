@@ -1,8 +1,10 @@
 import { Redirect, router } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
 import { Platform, ScrollView, Text, View } from 'react-native';
-import Animated, { FadeIn, LinearTransition } from 'react-native-reanimated';
+import { LinearGradient } from 'expo-linear-gradient';
+import Animated, { FadeInDown, LinearTransition } from 'react-native-reanimated';
 import { AgentFace } from '../../components/AgentFace';
+import { Aurora, useAuroraColors } from '../../components/Aurora';
 import { NavigationHeader, useContentWidth } from '../../components/AppNavigation';
 import { ChatView } from '../../components/ChatView';
 import { ChatMenu } from '../../components/ChatMenu';
@@ -21,10 +23,10 @@ import { chatActivity, chatActivityLabel, draftPreview, matchesChatFilter, type 
 import { useActivityClock } from '../../lib/useActivityClock';
 import { usePrefs } from '../../lib/prefs';
 import { homeChat, useApp, useServerState } from '../../lib/store';
-import { WIDE_BREAKPOINT } from '../../lib/theme';
+import { alpha, WIDE_BREAKPOINT } from '../../lib/theme';
 import { makeStyles, useTheme } from '../../lib/themeContext';
 import type { Chat, SearchResult, Server } from '../../lib/types';
-import { easeOut } from '../../lib/motion';
+import { easeOut, spring, useReducedMotion } from '../../lib/motion';
 
 /** The main chat, the Updates feed, and side chats for separate topics. Wide screens show the chat alongside. */
 export default function ChatsTab() {
@@ -57,6 +59,8 @@ function ChatList({ server, activeChatId }: { server: Server; activeChatId?: str
   const [menu, setMenu] = useState<Chat | null>(null);
   const [filter, setFilter] = useState<ChatFilter | 'archived'>('all');
   const [projectId, setProjectId] = useState<string | null>(null);
+  const reduced = useReducedMotion();
+  const aurora = useAuroraColors(server);
   const archived = filter === 'archived';
   const activeFilter = filter === 'running' || filter === 'needs-you';
   const now = useActivityClock({ [server.id]: rt?.typing ?? {} });
@@ -110,9 +114,17 @@ function ChatList({ server, activeChatId }: { server: Server; activeChatId?: str
       useApp.getState().toast({ serverId: server.id, title: "Couldn't start a chat", body: (e as Error).message });
     }
   };
-  const row = (c: Chat, pinned = false) => (
-    <Animated.View key={c.id} entering={FadeIn.duration(200)} layout={LinearTransition.duration(220).easing(easeOut)}>
-      <ChatRow server={server} showFace={multiBot} pinned={pinned} title={c.id === mainId ? server.bot.title : c.title}
+  // Rows arrive one after another (the first dozen or so), then the rest at once.
+  let order = 0;
+  const entering = () => {
+    const index = order++;
+    return reduced || index > 12 ? undefined
+      : FadeInDown.delay(index * 30).springify().damping(spring.soft.damping).stiffness(spring.soft.stiffness);
+  };
+  const layout = reduced ? undefined : LinearTransition.duration(220).easing(easeOut);
+  const row = (c: Chat, pinned = false, hero = false) => (
+    <Animated.View key={c.id} entering={entering()} layout={layout}>
+      <ChatRow server={server} showFace={multiBot || hero} hero={hero} pinned={pinned} title={c.id === mainId ? server.bot.title : c.title}
         subtitle={draftOf(c) ?? chatActivityLabel(chatActivity(rt, c.id, now)) ?? undefined} time={c.updated_at}
         subtitleColor={draftOf(c) ? t.colors.textSecondary : states.get(c.id)?.pending ? t.colors.warning : t.colors.accent}
         active={activeChatId === c.id} onPress={() => open(c.id)} onMenu={() => setMenu(c)} />
@@ -121,11 +133,15 @@ function ChatList({ server, activeChatId }: { server: Server; activeChatId?: str
 
   return (
     <View style={s.root}>
+      <View pointerEvents="none" style={s.glow}>
+        <Aurora colors={aurora} strength={0.5} />
+        <LinearGradient pointerEvents="none" colors={[alpha(t.colors.bg, 0), t.colors.bg]} style={s.glowFade} />
+      </View>
       <NavigationHeader title={archived ? 'Archived chats' : 'All chats'} right={<>
         {rt?.info?.features?.projects ? <IconButton label="Projects" onPress={() => router.push('/projects')}>
           <Folder size={21} color={t.colors.text} /></IconButton> : null}
-        <IconButton label={project ? `New chat in ${project.name}` : 'New chat'} onPress={newChat}>
-          <MessageSquarePlus size={20} color={t.colors.text} /></IconButton>
+        <IconButton label={project ? `New chat in ${project.name}` : 'New chat'} onPress={newChat} variant="tonal" style={{ marginLeft: t.space.xs }}>
+          <MessageSquarePlus size={19} color={t.colors.onAccentSoft} /></IconButton>
       </>} />
       <ScrollView contentContainerStyle={{ paddingBottom: wide ? 24 : tabSpace + 8, paddingHorizontal: 16 }} keyboardShouldPersistTaps="handled">
         <SearchField value={query} onChangeText={setQuery} placeholder="Search chats" style={{ marginBottom: t.space.md }} />
@@ -145,23 +161,24 @@ function ChatList({ server, activeChatId }: { server: Server; activeChatId?: str
           <Text style={s.filterText} numberOfLines={1}>{archived ? 'On this device' : activeFilter ? `${filtered.length} ${filtered.length === 1 ? 'chat' : 'chats'}` : project ? `Project · ${project.name}` : `${actionable.length} chats`}</Text>
           <View style={{ flex: 1 }} />
           {updates ? <Tap accessibilityLabel="Open updates" onPress={() => open('home')} feedback="selection" style={s.updates}>
-            <Sparkles size={16} color={t.colors.textSecondary} /><Text style={s.updateLabel} numberOfLines={1}>Updates</Text>
+            <View style={s.updatesPill}><Sparkles size={14} color={t.colors.accent} /><Text style={s.updateLabel} numberOfLines={1}>Updates</Text></View>
           </Tap> : null}
         </View>
 
         {loading ? (
           <View style={{ gap: 12, marginTop: 16 }}>
-            {[0, 1, 2].map((i) => <Skeleton key={i} height={72} radius={20} />)}
+            {[0, 1, 2].map((i) => <Skeleton key={i} height={64} radius={t.radius.lg} />)}
           </View>
         ) : (
           <>
             {!archived && !activeFilter && pinned.some(match) ? <><SectionHeader title="Pinned" style={s.section} />{pinned.filter(match).map((c) => row(c, true))}</> : null}
-            {!archived && !activeFilter && resume && match(resume) ? <><SectionHeader title="Continue" style={s.section} />{row(resume)}</> : null}
+            {!archived && !activeFilter && resume && match(resume) ? <><SectionHeader title="Continue" style={s.section} />{row(resume, false, true)}</> : null}
             {(archived || activeFilter ? side : recents.slice(1)).some(match) ? <SectionHeader title={archived ? 'Archived chats' : filter === 'running' ? 'Running' : filter === 'needs-you' ? 'Needs you' : 'Recent'} style={s.section} /> : null}
             {(archived || activeFilter ? side : recents.slice(1)).filter(match).map((c) => row(c))}
             {q && !archived && !activeFilter && updates && match(updates) ? <ChatRow server={server} showFace={multiBot} title="Updates" time={updates.updated_at} onPress={() => open('home')} /> : null}
             {!(archived || activeFilter ? side.length : recents.length || pinned.length) && !q ? (
               <View style={s.empty}>
+                <AgentFace server={server} size={64} />
                 <Text style={s.emptyText}>{archived ? 'No archived chats' : filter === 'running' ? 'No tasks running.' : filter === 'needs-you' ? 'Nothing waiting on you.'
                   : project ? `No chats in ${project.name} yet` : 'No chats yet'}</Text>
                 {!archived && !activeFilter ? <Button title={project ? 'New chat here' : 'New chat'} variant="tonal" icon={<Hash size={16} color={t.colors.onAccentSoft} />} onPress={newChat} /> : null}
@@ -189,30 +206,35 @@ function ChatList({ server, activeChatId }: { server: Server; activeChatId?: str
   );
 }
 
-function ChatRow({ server, showFace, pinned, title, subtitle, time, subtitleColor, active, onPress, onMenu }: {
-  server: Server; showFace: boolean; pinned?: boolean; title: string; subtitle?: string; time: number; subtitleColor?: string; active?: boolean;
+function ChatRow({ server, showFace, hero, pinned, title, subtitle, time, subtitleColor, active, onPress, onMenu }: {
+  server: Server; showFace: boolean; hero?: boolean; pinned?: boolean; title: string; subtitle?: string; time: number; subtitleColor?: string; active?: boolean;
   onPress: () => void; onMenu?: () => void;
 }) {
   const t = useTheme();
   const s = useStyles();
   const mouse = Platform.OS === 'web' && typeof window !== 'undefined' && window.matchMedia?.('(hover: hover) and (pointer: fine)').matches;
+  const [hover, setHover] = useState(false);
+  const menu = onMenu && mouse;
+  // With a mouse the options button stays in place (and reachable) but only shows under the pointer, where the time was.
   return (
-    <Tap feedback="selection" scaleTo={0.99} accessibilityLabel={`${title}${pinned ? ', pinned' : ''}${subtitle ? `. ${subtitle}` : ''}`}
-      accessibilityHint={onMenu ? 'Long-press for chat options' : undefined} accessibilityState={{ selected: !!active }}
-      onPress={onPress} onLongPress={onMenu} delayLongPress={350}
-      style={({ pressed, hovered }) => [s.row, (active || pressed || hovered) && s.active]}>
-      {showFace ? <AgentFace server={server} size={26} still /> : null}
-      <View style={{ flex: 1, minWidth: 0 }}>
-        <View style={s.rowHead}>
-          {pinned ? <Pin size={13} color={t.colors.textTertiary} /> : null}
-          <Text style={s.rowTitle} numberOfLines={1}>{title}</Text>
-          <Text style={s.time}>{ago(time)}</Text>
+    <View {...(menu ? { onPointerEnter: () => setHover(true), onPointerLeave: () => setHover(false) } : {})}>
+      <Tap feedback="selection" scaleTo={0.98} accessibilityLabel={`${title}${pinned ? ', pinned' : ''}${subtitle ? `. ${subtitle}` : ''}`}
+        accessibilityHint={onMenu ? 'Long-press for chat options' : undefined} accessibilityState={{ selected: !!active }}
+        onPress={onPress} onLongPress={onMenu} delayLongPress={350}
+        style={({ pressed, hovered }) => [s.row, hero && s.hero, active ? s.active : (pressed || hovered) && s.hover]}>
+        {showFace ? <AgentFace server={server} size={hero ? 40 : 28} still /> : null}
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <View style={s.rowHead}>
+            {pinned ? <Pin size={12} color={active ? t.colors.onAccentSoft : t.colors.textTertiary} /> : null}
+            <Text style={[s.rowTitle, hero && s.heroTitle, active && s.activeTitle]} numberOfLines={1}>{title}</Text>
+            <Text style={[s.time, menu && hover && { opacity: 0 }]}>{ago(time)}</Text>
+          </View>
+          {subtitle ? <Text style={[s.preview, { color: subtitleColor ?? t.colors.textSecondary }]} numberOfLines={1}>{subtitle}</Text> : null}
         </View>
-        {subtitle ? <Text style={[s.preview, { color: subtitleColor ?? t.colors.textSecondary }]} numberOfLines={1}>{subtitle}</Text> : null}
-      </View>
-      {onMenu && mouse ? <IconButton label={`Options for ${title}`} size={32} onPress={(e) => { e.stopPropagation(); onMenu(); }}>
-        <MoreHorizontal size={16} color={t.colors.textTertiary} /></IconButton> : null}
-    </Tap>
+        {menu ? <IconButton label={`Options for ${title}`} size={32} style={[s.rowMore, { opacity: hover ? 1 : 0 }]} onPress={(e) => { e.stopPropagation(); onMenu(); }}>
+          <MoreHorizontal size={16} color={t.colors.textSecondary} /></IconButton> : null}
+      </Tap>
+    </View>
   );
 }
 
@@ -244,8 +266,8 @@ function ResultRow({ server, result, query, onPress }: { server: Server; result:
   const parts = splitMatch(result.snippet, query);
   return (
     <Tap feedback="selection" scaleTo={0.99} onPress={onPress} accessibilityLabel={`${who} in ${where}: ${result.snippet}. Open`}
-      style={({ pressed, hovered }) => [s.row, (pressed || hovered) && { backgroundColor: t.colors.pressed }]}>
-      <View style={[s.rowIcon, { backgroundColor: t.colors.surfaceSunken }]}><Search size={17} color={t.colors.textSecondary} /></View>
+      style={({ pressed, hovered }) => [s.row, (pressed || hovered) && s.hover]}>
+      <View style={[s.rowIcon, { backgroundColor: t.colors.accentSoft }]}><Search size={16} color={t.colors.accent} /></View>
       <View style={{ flex: 1, minWidth: 0 }}>
         <View style={s.rowHead}>
           <Text style={s.rowTitle} numberOfLines={1}>{where}</Text>
@@ -286,22 +308,32 @@ function splitMatch(text: string, query: string): { text: string; hit: boolean }
 const useStyles = makeStyles((t) => ({
   split: { flex: 1, flexDirection: 'row', backgroundColor: t.colors.bg },
   listPane: { width: 360, borderRightWidth: 1, borderRightColor: t.colors.border },
-  root: { flex: 1, backgroundColor: t.colors.bg },
-  section: { paddingTop: 12, paddingBottom: 4 },
-  chipScroll: { marginTop: 10, marginHorizontal: -16 },
+  root: { flex: 1, backgroundColor: t.colors.bg, overflow: 'hidden' },
+  glow: { position: 'absolute', top: 0, left: 0, right: 0, height: 300 },
+  glowFade: { position: 'absolute', left: 0, right: 0, bottom: 0, height: 150 },
+  section: { paddingTop: 14, paddingBottom: 6 },
+  chipScroll: { marginTop: 6, marginHorizontal: -16 },
   chipRow: { flexDirection: 'row', gap: 8, paddingHorizontal: 16, paddingBottom: 2 },
-  filters: { flexDirection: 'row', alignItems: 'center', gap: 14, marginTop: 6, marginBottom: 4, borderBottomWidth: 1, borderBottomColor: t.colors.border },
-  filterText: { ...t.type.callout, fontFamily: t.fonts.medium, color: t.colors.textSecondary },
-  updates: { flexDirection: 'row', gap: 5, alignItems: 'center', minHeight: 44, flexShrink: 1 },
-  updateLabel: { ...t.type.caption, fontFamily: t.fonts.medium, color: t.colors.textSecondary, flexShrink: 1 },
-  active: { backgroundColor: t.colors.pressed },
-  row: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: t.space.md, paddingVertical: 7, borderRadius: t.radius.sm, minHeight: 50 },
-  rowIcon: { width: 32, height: 32, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+  filters: { flexDirection: 'row', alignItems: 'center', gap: 14, marginTop: 4, marginBottom: 2, paddingHorizontal: 4 },
+  filterText: { ...t.type.footnote, fontFamily: t.fonts.medium, color: t.colors.textTertiary },
+  updates: { minHeight: 44, justifyContent: 'center', flexShrink: 1 },
+  updatesPill: { flexDirection: 'row', gap: 6, alignItems: 'center', minHeight: 32, paddingHorizontal: 12, borderRadius: t.radius.pill,
+    backgroundColor: t.colors.card, borderWidth: 1, borderColor: t.colors.cardBorder },
+  updateLabel: { ...t.type.caption, fontFamily: t.fonts.semibold, color: t.colors.text, flexShrink: 1 },
+  hover: { backgroundColor: t.colors.pressed },
+  active: { backgroundColor: t.colors.accentSoft, borderColor: 'transparent' },
+  activeTitle: { fontFamily: t.fonts.semibold, color: t.colors.onAccentSoft },
+  row: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 14, paddingVertical: 8, borderRadius: t.radius.lg, minHeight: 54 },
+  // The chat to pick up where you left off: a frosted card with the bot's face.
+  hero: { paddingVertical: 14, minHeight: 72, backgroundColor: t.colors.card, borderWidth: 1, borderColor: t.colors.cardBorder },
+  heroTitle: { ...t.type.heading },
+  rowMore: { position: 'absolute', right: 8, top: '50%', marginTop: -16 },
+  rowIcon: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
   rowHead: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  rowTitle: { ...t.type.callout, color: t.colors.text, flex: 1, minWidth: 0 },
+  rowTitle: { ...t.type.callout, fontFamily: t.fonts.medium, color: t.colors.text, flex: 1, minWidth: 0 },
   preview: { ...t.type.caption, color: t.colors.textSecondary, marginTop: 2 },
   time: { ...t.type.caption, fontFamily: t.fonts.regular, color: t.colors.textTertiary },
-  empty: { alignItems: 'center', gap: 14, paddingVertical: 24, paddingHorizontal: 12 },
+  empty: { alignItems: 'center', gap: 14, paddingVertical: 32, paddingHorizontal: 12 },
   emptyText: { ...t.type.callout, color: t.colors.textSecondary, textAlign: 'center' },
   hit: { fontFamily: t.fonts.semibold, color: t.colors.text, backgroundColor: t.colors.accentSoft },
 }));

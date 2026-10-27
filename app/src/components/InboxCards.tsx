@@ -13,10 +13,20 @@ import { Button, Card, Field, ListGroup, ListRow } from './ui';
 
 const CHOICE_ORDER = ['once', 'session', 'always', 'deny'];
 
-export function InboxCard({ serverId, item, compact, embedded }: { serverId: string; item: InboxItem; compact?: boolean; embedded?: boolean }) {
-  if (item.kind === 'approval') return <ApprovalCard serverId={serverId} item={item} compact={compact} embedded={embedded} />;
-  if (item.kind === 'question') return <QuestionCard serverId={serverId} item={item} embedded={embedded} />;
-  return <ResultCard serverId={serverId} item={item} compact={compact} embedded={embedded} />;
+/**
+ * One thing from the agent that needs (or needed) you. `embedded` sits inside a chat; `bare` drops the card's own
+ * frame because the Inbox wraps it in a notification card of its own.
+ */
+export function InboxCard({ serverId, item, compact, embedded, bare }: { serverId: string; item: InboxItem; compact?: boolean; embedded?: boolean; bare?: boolean }) {
+  if (item.kind === 'approval') return <ApprovalCard serverId={serverId} item={item} compact={compact} embedded={embedded} bare={bare} />;
+  if (item.kind === 'question') return <QuestionCard serverId={serverId} item={item} embedded={embedded} bare={bare} />;
+  return <ResultCard serverId={serverId} item={item} compact={compact} embedded={embedded} bare={bare} />;
+}
+
+/** What kind of card this is, as an icon in a soft tinted circle. */
+function KindIcon({ icon: Icon, color, soft, small }: { icon: typeof ShieldAlert; color: string; soft: string; small?: boolean }) {
+  const s = useStyles();
+  return <View style={[s.kind, small && s.kindSmall, { backgroundColor: soft }]}><Icon size={small ? 14 : 17} color={color} /></View>;
 }
 
 function StatusLine({ item }: { item: InboxItem }) {
@@ -43,7 +53,7 @@ function StatusLine({ item }: { item: InboxItem }) {
  * A request to run something risky. Hermes's own choices are offered as plain buttons: nothing is
  * approved by a gesture, and "Always" needs a second, explicit confirmation.
  */
-function ApprovalCard({ serverId, item, compact, embedded }: { serverId: string; item: InboxItem; compact?: boolean; embedded?: boolean }) {
+function ApprovalCard({ serverId, item, compact, embedded, bare }: { serverId: string; item: InboxItem; compact?: boolean; embedded?: boolean; bare?: boolean }) {
   const t = useTheme();
   const s = useStyles();
   const respond = useApp((st) => st.respond);
@@ -69,9 +79,9 @@ function ApprovalCard({ serverId, item, compact, embedded }: { serverId: string;
     } finally { acting.current = false; setBusy(null); }
   };
   return (
-    <Card style={[s.card, embedded && s.embedded, compact && s.compactCard]} accessibilityLabel="Approval request">
+    <Card style={[s.card, embedded && s.embedded, compact && s.compactCard, bare && s.bare]} accessibilityLabel="Approval request">
       <View style={s.header}>
-        <ShieldAlert size={18} color={t.colors.warning} />
+        <KindIcon icon={ShieldAlert} color={t.colors.warning} soft={t.colors.warningSoft} small={embedded} />
         <View style={{ flex: 1, minWidth: 0 }}>
           <Text style={s.title}>{item.payload.description || (pending ? 'Run this command?' : 'Command request')}</Text>
           {embedded ? <Text style={s.subtitle}>{agoText(item.created_at)}</Text> : null}
@@ -95,6 +105,7 @@ function ApprovalCard({ serverId, item, compact, embedded }: { serverId: string;
             <Button
               key={choice}
               size="sm"
+              style={s.action}
               title={label(choice)}
               variant={choice === 'deny' ? 'danger' : choice === 'once' ? 'primary' : 'secondary'}
               loading={busy === choice}
@@ -121,7 +132,7 @@ function ApprovalCard({ serverId, item, compact, embedded }: { serverId: string;
   );
 }
 
-function QuestionCard({ serverId, item, embedded }: { serverId: string; item: InboxItem; embedded?: boolean }) {
+function QuestionCard({ serverId, item, embedded, bare }: { serverId: string; item: InboxItem; embedded?: boolean; bare?: boolean }) {
   const t = useTheme();
   const s = useStyles();
   const respond = useApp((st) => st.respond);
@@ -143,9 +154,9 @@ function QuestionCard({ serverId, item, embedded }: { serverId: string; item: In
     setPicked((p) => (p.includes(label) ? p.filter((x) => x !== label) : [...p, label]));
   };
   return (
-    <Card style={[s.card, embedded && s.embedded]} accessibilityLabel="Question from the agent">
+    <Card style={[s.card, embedded && s.embedded, bare && s.bare]} accessibilityLabel="Question from the agent">
       <View style={s.header}>
-        <CircleHelp size={18} color={t.colors.textSecondary} />
+        <KindIcon icon={CircleHelp} color={t.colors.onAccentSoft} soft={t.colors.accentSoft} small={embedded} />
         <Text style={[s.title, { flex: 1 }]}>{item.payload.question || item.body}</Text>
       </View>
       {pending ? (
@@ -193,20 +204,20 @@ function QuestionCard({ serverId, item, embedded }: { serverId: string; item: In
   );
 }
 
-function ResultCard({ serverId, item, compact, embedded }: { serverId: string; item: InboxItem; compact?: boolean; embedded?: boolean }) {
+function ResultCard({ serverId, item, compact, embedded, bare }: { serverId: string; item: InboxItem; compact?: boolean; embedded?: boolean; bare?: boolean }) {
   const t = useTheme();
   const s = useStyles();
   const history = useApp(st => st.runtime[serverId]?.info?.features?.routine_history === true && isOwner(st.runtime[serverId]));
   const routineId = item.payload.routine_id || item.payload.job_id;
   const limit = compact ? 400 : 1200;
   return (
-    <Card style={[s.card, embedded && s.embedded]}>
+    <Card style={[s.card, embedded && s.embedded, bare && s.bare]}>
       <View style={s.header}>
-        <Sparkles size={18} color={t.colors.success} />
+        <KindIcon icon={Sparkles} color={t.colors.success} soft={t.colors.successSoft} small={embedded} />
         <Text style={[s.title, { flex: 1 }]}>{item.title}</Text>
       </View>
       <Markdown text={item.body.length > limit ? `${item.body.slice(0, limit)}…` : item.body} compact={compact} />
-      {history && typeof routineId === 'string' ? <Button size="sm" variant="ghost" title={item.payload.run_id ? 'View recorded run' : 'View routine history'}
+      {history && typeof routineId === 'string' ? <Button size="sm" variant="tonal" style={s.pill} title={item.payload.run_id ? 'View recorded run' : 'View routine history'}
         onPress={() => router.push(`/routine/${encodeURIComponent(serverId)}/${encodeURIComponent(routineId)}${item.payload.run_id ? `/run/${encodeURIComponent(item.payload.run_id)}` : ''}` as any)} /> : null}
     </Card>
   );
@@ -215,20 +226,25 @@ function ResultCard({ serverId, item, compact, embedded }: { serverId: string; i
 const useStyles = makeStyles((t) => ({
   waiting: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   waitingText: { ...t.type.callout, color: t.colors.textSecondary, flex: 1 },
-  card: { padding: t.space.md, gap: t.space.md, width: '100%' },
-  embedded: { maxWidth: undefined, borderRadius: 14, padding: 10, gap: 7 },
-  compactCard: { gap: 6, padding: 9, borderRadius: 12 },
-  header: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  card: { padding: t.space.lg, gap: t.space.md, width: '100%' },
+  embedded: { maxWidth: undefined, borderRadius: t.radius.md, padding: 10, gap: 7 },
+  compactCard: { gap: 6, padding: 9, borderRadius: t.radius.sm },
+  bare: { backgroundColor: 'transparent', borderWidth: 0, borderRadius: 0, padding: 0 },
+  header: { flexDirection: 'row', alignItems: 'center', gap: t.space.md },
+  kind: { width: 34, height: 34, borderRadius: t.radius.pill, alignItems: 'center', justifyContent: 'center' },
+  kindSmall: { width: 26, height: 26 },
+  action: { flexGrow: 1 },
+  pill: { alignSelf: 'flex-start' },
   title: { ...t.type.bodyStrong, color: t.colors.text },
   subtitle: { ...t.type.caption, color: t.colors.textSecondary },
-  command: { backgroundColor: t.colors.codeBg, borderRadius: t.radius.sm, paddingHorizontal: 10, paddingVertical: 8, borderWidth: 1, borderColor: t.colors.border },
+  command: { backgroundColor: t.colors.codeBg, borderRadius: t.radius.md, paddingHorizontal: t.space.md, paddingVertical: 10, borderWidth: 1, borderColor: t.colors.border, gap: 2 },
   commandText: { ...t.type.footnote, fontFamily: t.fonts.mono, color: t.colors.codeText },
-  actions: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+  actions: { flexDirection: 'row', flexWrap: 'wrap', gap: t.space.sm },
   status: { flexDirection: 'row', alignItems: 'center', gap: 7 },
   statusText: { ...t.type.caption, flexShrink: 1 },
   sheetText: { ...t.type.callout, color: t.colors.textSecondary, textAlign: 'center' },
   choice: {
-    flexDirection: 'row', alignItems: 'center', minHeight: 48, backgroundColor: t.colors.surface,
+    flexDirection: 'row', alignItems: 'center', minHeight: 48, backgroundColor: 'transparent',
     paddingHorizontal: t.space.lg, borderWidth: 1, borderColor: 'transparent',
   },
   choiceText: { ...t.type.callout, fontFamily: t.fonts.medium, color: t.colors.text },

@@ -1,11 +1,16 @@
-import { useEffect, useState } from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
+import { useEffect, useState, type ReactNode } from 'react';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
+import Animated, { FadeInDown } from 'react-native-reanimated';
+import { Coins, MessagesSquare, Zap } from '../components/icons';
 import { shortModel } from '../components/PickerCard';
 import { Screen } from '../components/Screen';
 import { withSelectedServer } from '../components/ServerScreen';
 import { Card, Footnote, ListGroup, ListRow, LoadError, SectionHeader, Segmented, Skeleton } from '../components/ui';
 import { api } from '../lib/api';
+import { spring, useReducedMotion } from '../lib/motion';
 import { useApp } from '../lib/store';
+import { alpha } from '../lib/theme';
 import { makeStyles, useTheme } from '../lib/themeContext';
 
 type Row = { input_tokens?: number; output_tokens?: number; estimated_cost?: number; sessions?: number };
@@ -19,12 +24,16 @@ type Usage = {
 const compact = (n: number) => n >= 1e9 ? `${(n / 1e9).toFixed(1)}B` : n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}k` : String(Math.round(n));
 const money = (n: number) => n === 0 ? '$0' : n < 0.01 ? '<$0.01' : `$${n.toFixed(2)}`;
 const tokens = (r: Row) => (r.input_tokens ?? 0) + (r.output_tokens ?? 0);
+const rise = (reduced: boolean, i: number) => (reduced ? undefined
+  : FadeInDown.delay(i * 70).springify().damping(spring.soft.damping).stiffness(spring.soft.stiffness));
 
 /** Tokens and estimated cost, per day and per model, from Hermes's own session records. */
 export default withSelectedServer(UsageScreen);
 
 function UsageScreen() {
+  const t = useTheme();
   const s = useStyles();
+  const reduced = useReducedMotion();
   const server = useApp((st) => st.servers.find((x) => x.id === st.selection.serverId) ?? st.servers[0]);
   const [days, setDays] = useState<'7' | '30' | '90'>('30');
   // Each period's figures, kept: switching back shows them at once while they refresh.
@@ -49,22 +58,42 @@ function UsageScreen() {
         options={[{ value: '7', label: '7 days' }, { value: '30', label: '30 days' }, { value: '90', label: '90 days' }]} />
       {error && data ? <Text style={s.error}>{error}</Text> : null}
       {!data ? (error ? <LoadError message={error} onRetry={load} />
-        : <View style={{ gap: 12, marginTop: 16 }}><Skeleton height={88} radius={20} /><Skeleton height={200} radius={20} /></View>) : (
+        : <View style={{ gap: 12, marginTop: 16 }}><Skeleton height={140} radius={t.radius.lg} /><Skeleton height={220} radius={t.radius.lg} /></View>) : (
         <>
-          <SectionHeader title="Total" />
-          <ListGroup>
-            <ListRow title="Tokens" value={compact(totalTokens)} />
-            <ListRow title="Estimated cost" value={money(cost)} />
-            <ListRow title="Sessions" value={String(data.totals.total_sessions ?? 0)} />
-          </ListGroup>
+          <Animated.View entering={rise(reduced, 0)} style={s.tiles}>
+            <Stat wide label="Tokens" value={compact(totalTokens)} icon={<Zap size={18} color={t.colors.onAccentSoft} />} />
+            <View style={s.tileRow}>
+              <Stat label="Estimated cost" value={money(cost)} icon={<Coins size={18} color={t.colors.onAccentSoft} />} />
+              <Stat label="Sessions" value={String(data.totals.total_sessions ?? 0)} icon={<MessagesSquare size={18} color={t.colors.onAccentSoft} />} />
+            </View>
+          </Animated.View>
           <Footnote>Costs use public prices and may differ from your bill.</Footnote>
-          <SectionHeader title="Tokens per day" />
-          <DailyBars rows={data.daily} />
-          <SectionHeader title="By model" />
-          <Models rows={data.by_model} />
+          <Animated.View entering={rise(reduced, 1)}>
+            <SectionHeader title="Tokens per day" />
+            <DailyBars rows={data.daily} />
+          </Animated.View>
+          <Animated.View entering={rise(reduced, 2)}>
+            <SectionHeader title="By model" />
+            <Models rows={data.by_model} />
+          </Animated.View>
         </>
       )}
     </Screen>
+  );
+}
+
+/** One number, big, in a frosted tile. */
+function Stat({ label, value, icon, wide }: { label: string; value: string; icon: ReactNode; wide?: boolean }) {
+  const t = useTheme();
+  const s = useStyles();
+  return (
+    <View style={[s.tile, wide ? s.tileWide : { flex: 1 }]} accessible accessibilityLabel={`${label}: ${value}`}>
+      {wide ? <LinearGradient pointerEvents="none" colors={[t.colors.accentSoft, alpha(t.colors.accent, 0)]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+        style={StyleSheet.absoluteFill} /> : null}
+      <View style={s.tileIcon}>{icon}</View>
+      <Text style={wide ? s.tileValueBig : s.tileValue} numberOfLines={1} adjustsFontSizeToFit>{value}</Text>
+      <Text style={s.tileLabel} numberOfLines={1}>{label}</Text>
+    </View>
   );
 }
 
@@ -82,8 +111,9 @@ export function DailyBars({ rows }: { rows: Usage['daily'] }) {
   const picked = chosen ? rows.indexOf(chosen) : null;
   const shown = chosen ?? rows[rows.length - 1];
   const label = (day: string) => new Date(`${day}T12:00:00`).toLocaleDateString([], { month: 'short', day: 'numeric' });
+  const faded = alpha(t.colors.accent, 0.4);
   return (
-    <Card style={{ gap: 12 }}>
+    <Card style={{ gap: 14 }}>
       <View style={s.readout} accessibilityLiveRegion="polite">
         <Text style={s.readoutDay}>{label(shown.day)}{picked === null ? ' (latest)' : ''}</Text>
         <View style={s.modelHead}>
@@ -100,7 +130,9 @@ export function DailyBars({ rows }: { rows: Usage['daily'] }) {
             return (
               <Pressable key={r.day} onPress={() => setDay(on ? null : r.day)} style={s.hit} hitSlop={4}
                 accessibilityRole="button" accessibilityLabel={`${label(r.day)}: ${compact(tokens(r))} tokens, ${money(r.estimated_cost ?? 0)}`}>
-                <View style={[s.bar, { height: h, backgroundColor: t.colors.accent, opacity: picked === null || on ? 1 : 0.35 }]} />
+                <View style={[s.bar, { height: h, opacity: picked === null || on ? 1 : 0.3 }]}>
+                  <LinearGradient pointerEvents="none" colors={[t.colors.accent, faded]} style={s.fill} />
+                </View>
               </Pressable>
             );
           })}
@@ -129,16 +161,31 @@ function Models({ rows }: { rows: Usage['by_model'] }) {
 const useStyles = makeStyles((t) => ({
   error: { ...t.type.callout, color: t.colors.danger, marginTop: 10 },
   empty: { ...t.type.callout, color: t.colors.textSecondary },
+  tiles: { gap: t.space.md, marginTop: t.space.xl },
+  tileRow: { flexDirection: 'row', gap: t.space.md },
+  tile: {
+    backgroundColor: t.colors.card, borderColor: t.colors.cardBorder, borderWidth: 1, borderRadius: t.radius.lg, padding: t.space.lg,
+    gap: t.space.xs, overflow: 'hidden', minWidth: 0,
+  },
+  tileWide: { paddingVertical: t.space.xl },
+  tileIcon: {
+    width: 36, height: 36, borderRadius: t.radius.pill, backgroundColor: t.colors.accentSoft, alignItems: 'center', justifyContent: 'center',
+    marginBottom: t.space.sm,
+  },
+  tileValueBig: { ...t.type.hero, fontSize: 44, lineHeight: 50, color: t.colors.text },
+  tileValue: { ...t.type.title, color: t.colors.text },
+  tileLabel: { ...t.type.footnote, color: t.colors.textSecondary },
   readout: { gap: 2 },
   readoutDay: { ...t.type.caption, color: t.colors.textSecondary },
-  readoutValue: { ...t.type.bodyStrong, color: t.colors.text },
+  readoutValue: { ...t.type.title, color: t.colors.text },
   plot: { height: 148, justifyContent: 'flex-end' },
-  grid: { position: 'absolute', left: 0, right: 0, bottom: 0, height: 1, backgroundColor: t.colors.border },
-  bars: { flexDirection: 'row', alignItems: 'flex-end', gap: 2, height: 148 },
+  grid: { position: 'absolute', left: 0, right: 0, bottom: 0, height: StyleSheet.hairlineWidth * 2, backgroundColor: t.colors.border },
+  bars: { flexDirection: 'row', alignItems: 'flex-end', gap: 3, height: 148 },
   hit: { flex: 1, height: 148, justifyContent: 'flex-end', alignItems: 'center' },
-  bar: { width: '100%', maxWidth: 18, borderTopLeftRadius: 4, borderTopRightRadius: 4 },
+  fill: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
+  bar: { width: '100%', maxWidth: 14, minWidth: 2, borderRadius: t.radius.pill, overflow: 'hidden' },
   axis: { flexDirection: 'row', justifyContent: 'space-between' },
   axisText: { ...t.type.caption, color: t.colors.textTertiary },
-  modelHead: { flexDirection: 'row', justifyContent: 'space-between', gap: 12 },
+  modelHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', gap: 12 },
   modelValue: { ...t.type.callout, color: t.colors.textSecondary },
 }));

@@ -83,7 +83,7 @@ export function VerifyNotice({ server }: { server: Server }) {
 }
 
 const useStyles = makeStyles((t) => ({
-  badge: { width: 48, height: 48, borderRadius: 16, backgroundColor: t.colors.warningSoft, alignItems: 'center', justifyContent: 'center', alignSelf: 'center' },
+  badge: { width: 56, height: 56, borderRadius: t.radius.pill, backgroundColor: t.colors.warningSoft, alignItems: 'center', justifyContent: 'center', alignSelf: 'center' },
   lead: { ...t.type.bodyStrong, color: t.colors.text },
   body: { ...t.type.callout, color: t.colors.textSecondary },
   mono: { fontFamily: t.fonts.mono, color: t.colors.text },

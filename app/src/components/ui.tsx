@@ -6,6 +6,7 @@ import {
 import Animated, {
   cancelAnimation, useAnimatedStyle, useSharedValue, withRepeat, withSequence, withSpring, withTiming,
 } from 'react-native-reanimated';
+import { LinearGradient } from 'expo-linear-gradient';
 import { haptic } from '../lib/haptics';
 import { FIXED } from '../lib/theme';
 import { spring, useReducedMotion } from '../lib/motion';
@@ -92,6 +93,8 @@ export function Button({ title, onPress, variant = 'primary', size = 'md', icon,
       disabled={disabled || loading}
       style={[s.buttonShell, { minHeight: height, opacity: disabled ? 0.45 : 1, backgroundColor: bg }, style]}
     >
+      {variant === 'primary' ? <LinearGradient pointerEvents="none" colors={[c.accentFillLight, c.accentFill]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+        style={StyleSheet.absoluteFill} /> : null}
       <View style={[s.buttonInner, { minHeight: height }, size === 'sm' && { paddingHorizontal: 14 }]}>{inner}</View>
     </Tap>
   );
@@ -375,7 +378,7 @@ const useStyles = makeStyles((t) => ({
   loadErrorText: { ...t.type.callout, color: t.colors.textSecondary, textAlign: 'center', maxWidth: 360 },
   search: {
     flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 14, height: 46, borderRadius: t.radius.pill,
-    backgroundColor: t.colors.surface, borderWidth: 1, borderColor: t.colors.border,
+    backgroundColor: t.colors.card, borderWidth: 1, borderColor: t.colors.cardBorder,
   },
   searchInput: { flex: 1, minWidth: 0, ...t.type.body, color: t.colors.text, ...({ outlineStyle: 'none' } as object) },
   searchClear: { width: 20, height: 20, borderRadius: 10, backgroundColor: t.colors.textTertiary, alignItems: 'center', justifyContent: 'center' },
@@ -392,7 +395,7 @@ const useStyles = makeStyles((t) => ({
   sectionText: { ...t.type.label, color: t.colors.textSecondary },
   footnote: { paddingHorizontal: 16, paddingTop: 8 },
   footnoteText: { ...t.type.footnote, color: t.colors.textTertiary },
-  group: { backgroundColor: t.colors.surface, borderRadius: t.radius.lg, borderWidth: 1, borderColor: t.colors.border, overflow: 'hidden' },
+  group: { backgroundColor: t.colors.card, borderRadius: t.radius.lg, borderWidth: 1, borderColor: t.colors.cardBorder, overflow: 'hidden' },
   hairline: { height: StyleSheet.hairlineWidth * 2, backgroundColor: t.colors.border, marginLeft: 16 },
   row: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 16, paddingVertical: 12, minHeight: 52 },
   rowIcon: { width: 22, alignItems: 'center', justifyContent: 'center' },
@@ -409,7 +412,7 @@ const useStyles = makeStyles((t) => ({
   segmentText: { fontFamily: t.fonts.semibold, fontSize: 14 },
   chip: {
     flexDirection: 'row', alignItems: 'center', gap: 6, minHeight: 38, paddingHorizontal: 14, borderRadius: t.radius.pill,
-    borderWidth: 1, borderColor: t.colors.border, backgroundColor: t.colors.surface, maxWidth: '100%',
+    borderWidth: 1, borderColor: t.colors.cardBorder, backgroundColor: t.colors.card, maxWidth: '100%',
   },
   chipText: { fontFamily: t.fonts.medium, fontSize: 14, flexShrink: 1 },
   fieldLabel: { ...t.type.label, color: t.colors.textSecondary },
@@ -419,5 +422,5 @@ const useStyles = makeStyles((t) => ({
     paddingHorizontal: 16, paddingVertical: 14, borderWidth: 1, borderColor: 'transparent',
     ...(Platform.OS === 'web' ? ({ outlineStyle: 'none' } as object) : {}),
   },
-  card: { backgroundColor: t.colors.surface, borderRadius: t.radius.lg, borderWidth: 1, borderColor: t.colors.border, padding: 16 },
+  card: { backgroundColor: t.colors.card, borderRadius: t.radius.lg, borderWidth: 1, borderColor: t.colors.cardBorder, padding: 16 },
 }));

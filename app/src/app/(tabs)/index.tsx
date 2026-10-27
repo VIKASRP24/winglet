@@ -1,12 +1,11 @@
 import { Redirect } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Keyboard, Platform, View } from 'react-native';
-import { BotCarousel, type DeckPage } from '../../components/BotCarousel';
+import { Platform, View } from 'react-native';
 import { useAddBot } from '../../components/AddBot';
 import { useAppNavigation } from '../../components/AppNavigation';
 import { ChatView } from '../../components/ChatView';
 import { focusComposer } from '../../components/Composer';
-import { Button } from '../../components/ui';
+import { Landing, type LandingMode } from '../../components/Landing';
 import { NEW_CHAT_DRAFT, newChatTarget } from '../../lib/landingChat';
 import { useMainBot } from '../../lib/mainBot';
 import { homeChat, useApp } from '../../lib/store';
@@ -42,37 +41,39 @@ export default function Home() {
 function HomeFor({ server }: { server: Server }) {
   const s = useStyles();
   const chatId = useApp((st) => homeChat(st.runtime[server.id]));
-  const [dockPage, setDockPage] = useState<DeckPage>('bot');
+  const [mode, setMode] = useState<LandingMode>('bot');
   const [newChatId, setNewChatId] = useState<string>();
   const [generation, setGeneration] = useState(0);
   const currentGeneration = useRef(0);
   const main = useMainBot();
   const mainBot = main ?? server;
   const addBot = useAddBot();
-  const pageChanged = useCallback((page: DeckPage) => {
-    setDockPage(page);
-    if (page === 'add-bot') Keyboard.dismiss();
-    if (page === 'new-chat') {
+  const changeMode = useCallback((next: LandingMode) => {
+    setMode(next);
+    if (next === 'new-chat') {
       currentGeneration.current++;
       setGeneration(currentGeneration.current);
       setNewChatId(undefined);
     }
   }, []);
+  // A bot picked elsewhere (the sidebar) brings the landing back to that bot.
+  const previous = useRef(server.id);
+  useEffect(() => { if (previous.current !== server.id) { previous.current = server.id; setMode('bot'); } }, [server.id]);
   const prepareChat = useMemo(() => newChatTarget(mainBot.id, (id) => {
     if (currentGeneration.current === generation) setNewChatId(id);
   }), [mainBot.id, generation]);
-  const dockAction = useCallback((page: 'new-chat' | 'add-bot') => {
-    if (page === 'add-bot') addBot.open();
-    else focusComposer(mainBot.id, newChatId ?? NEW_CHAT_DRAFT);
-  }, [addBot.open, mainBot.id, newChatId]);
+  const fresh = mode === 'new-chat';
+  const target = fresh ? mainBot : server;
+  const targetChat = fresh ? newChatId ?? NEW_CHAT_DRAFT : chatId;
+  const suggest = useCallback((text: string) => {
+    useApp.getState().setDraft(target.id, targetChat, text);
+    focusComposer(target.id, targetChat);
+  }, [target.id, targetChat]);
   return <View style={s.root}>
-    <ChatView server={dockPage === 'new-chat' ? mainBot : server}
-      chatId={dockPage === 'new-chat' ? newChatId ?? NEW_CHAT_DRAFT : chatId}
-      landing={{ title: dockPage === 'new-chat' ? 'New chat' : dockPage === 'add-bot' ? 'Add a bot' : server.bot.title,
-        dock: (props) => <BotCarousel selectedId={server.id} compact activePage={dockPage} {...props} onPageChange={pageChanged}
-          onAction={dockAction} />,
-        action: dockPage === 'add-bot' ? <Button title="Add a bot" onPress={addBot.open} /> : undefined,
-        prepareChat: dockPage === 'new-chat' && !newChatId ? prepareChat : undefined }} />
+    <ChatView server={target} chatId={targetChat}
+      landing={{ title: fresh ? 'New chat' : server.bot.title,
+        dock: (props) => <Landing server={target} mode={mode} onMode={changeMode} onSuggest={suggest} onAddBot={addBot.open} {...props} />,
+        prepareChat: fresh && !newChatId ? prepareChat : undefined }} />
     {addBot.sheet}
   </View>;
 }

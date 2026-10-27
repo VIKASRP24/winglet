@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, ScrollView, Text, useWindowDimensions, View } from 'react-native';
-import Animated, { FadeIn } from 'react-native-reanimated';
+import Animated, { FadeInDown } from 'react-native-reanimated';
 import { JobSheet } from '../components/JobSheet';
 import { Download, Search, Trash2 } from '../components/icons';
 import { Markdown } from '../components/Markdown';
@@ -12,17 +12,21 @@ import { byCategory, categoryLabel, matches } from '../lib/abilities';
 import { api, ApiError, signedApi } from '../lib/api';
 import { idempotencyKey } from '../lib/control';
 import { haptic } from '../lib/haptics';
+import { spring, useReducedMotion } from '../lib/motion';
 import { useApp } from '../lib/store';
 import { makeStyles, useTheme } from '../lib/themeContext';
 import type { CatalogSkill, Job, Server, Skill } from '../lib/types';
 
 const ORIGIN: Record<Skill['provenance'], string> = { bundled: 'Comes with Hermes', hub: 'Installed', agent: 'Agent or you' };
+const rise = (reduced: boolean, i: number) => (reduced || i > 8 ? undefined
+  : FadeInDown.delay(i * 50).springify().damping(spring.soft.damping).stiffness(spring.soft.stiffness));
 
 /** What your agent knows how to do: turn skills on and off, read them, and add Hermes's official ones. */
 export default withSelectedServer(SkillsScreen);
 
 function SkillsScreen() {
   const s = useStyles();
+  const reduced = useReducedMotion();
   const server = useApp((st) => st.servers.find((x) => x.id === st.selection.serverId) ?? st.servers[0]);
   const [tab, setTab] = useState<'installed' | 'add'>('installed');
   const [skills, setSkills] = useState<Skill[] | null>(null);
@@ -83,10 +87,10 @@ function SkillsScreen() {
 
       {tab === 'installed' ? (
         !skills ? (error ? <LoadError message={error} onRetry={load} /> : <Loading />) : (
-          <Animated.View entering={FadeIn}>
+          <View>
             <Footnote>{enabled} of {skills.length} enabled for new chats.</Footnote>
-            {installedGroups.map((g) => (
-              <View key={g.title}>
+            {installedGroups.map((g, gi) => (
+              <Animated.View key={g.title} entering={rise(reduced, gi)}>
                 <SectionHeader title={g.title} />
                 <ListGroup>
                   {g.items.map((x) => (
@@ -94,16 +98,16 @@ function SkillsScreen() {
                       right={<Toggle label={`${x.name} skill`} value={x.enabled} onValueChange={(on) => toggle(x, on)} />} />
                   ))}
                 </ListGroup>
-              </View>
+              </Animated.View>
             ))}
             {!installedGroups.length ? <NoMatch query={query} /> : null}
-          </Animated.View>
+          </View>
         )
       ) : !catalog ? <Loading /> : (
-        <Animated.View entering={FadeIn}>
+        <View>
           <Footnote>Official skills from Hermes.</Footnote>
-          {catalogGroups.map((g) => (
-            <View key={g.title}>
+          {catalogGroups.map((g, gi) => (
+            <Animated.View key={g.title} entering={rise(reduced, gi)}>
               <SectionHeader title={g.title} />
               <ListGroup>
                 {g.items.map((x) => (
@@ -112,10 +116,10 @@ function SkillsScreen() {
                       : <Button size="sm" variant="tonal" title="Install" onPress={() => start('POST', '/api/skills/install', { identifier: x.identifier })} />} />
                 ))}
               </ListGroup>
-            </View>
+            </Animated.View>
           ))}
           {!catalogGroups.length ? <NoMatch query={query} /> : null}
-        </Animated.View>
+        </View>
       )}
 
       {/* The open skill as the list has it now, so a toggle that fails and rolls back shows in the sheet too. */}
@@ -129,7 +133,8 @@ function SkillsScreen() {
 }
 
 function Loading() {
-  return <View style={{ gap: 10, marginTop: 20 }}>{[0, 1, 2].map((i) => <Skeleton key={i} height={64} radius={16} />)}</View>;
+  const t = useTheme();
+  return <View style={{ gap: 10, marginTop: 20 }}>{[0, 1, 2].map((i) => <Skeleton key={i} height={64} radius={t.radius.lg} />)}</View>;
 }
 
 function NoMatch({ query }: { query: string }) {
@@ -137,7 +142,7 @@ function NoMatch({ query }: { query: string }) {
   const s = useStyles();
   return (
     <View style={s.empty}>
-      <Search size={22} color={t.colors.textTertiary} />
+      <View style={s.emptyIcon}><Search size={24} color={t.colors.onAccentSoft} /></View>
       <Text style={s.emptyText}>{query ? `Nothing matches "${query}".` : 'Nothing here yet.'}</Text>
     </View>
   );
@@ -206,9 +211,10 @@ function SkillSheet({ server, item, onClose, onToggle, onInstall, onRemove }: {
 const useStyles = makeStyles((t) => ({
   error: { ...t.type.callout, color: t.colors.danger, marginTop: 10 },
   installed: { ...t.type.caption, color: t.colors.textTertiary },
-  empty: { alignItems: 'center', gap: 8, paddingVertical: 32 },
+  empty: { alignItems: 'center', gap: t.space.md, paddingVertical: t.space.xxl },
+  emptyIcon: { width: 56, height: 56, borderRadius: t.radius.pill, backgroundColor: t.colors.accentSoft, alignItems: 'center', justifyContent: 'center' },
   emptyText: { ...t.type.callout, color: t.colors.textSecondary },
   metaText: { ...t.type.caption, color: t.colors.textSecondary },
   description: { ...t.type.callout, color: t.colors.text },
-  doc: { borderRadius: t.radius.md, backgroundColor: t.colors.surfaceSunken },
+  doc: { borderRadius: t.radius.lg, backgroundColor: t.colors.card, borderWidth: 1, borderColor: t.colors.cardBorder },
 }));

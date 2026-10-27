@@ -1,29 +1,69 @@
 import { router } from 'expo-router';
 import { useState } from 'react';
-import { View } from 'react-native';
+import { ScrollView, View } from 'react-native';
+import { useShallow } from 'zustand/react/shallow';
 import { mainFirst } from '../lib/bots';
 import { connectionView } from '../lib/connection';
 import { usePrefs } from '../lib/prefs';
 import { homeChat, useApp } from '../lib/store';
-import { useTheme } from '../lib/themeContext';
+import { makeStyles, useTheme } from '../lib/themeContext';
+import type { Server } from '../lib/types';
 import { useAddBot } from './AddBot';
 import { AgentFace } from './AgentFace';
-import { Check, Plus, Settings } from './icons';
+import { Check, ChevronsUpDown, Plus, Settings } from './icons';
 import { Sheet } from './Sheet';
-import { Badge, Chip, ListGroup, ListRow } from './ui';
+import { Badge, Chip, ListGroup, ListRow, Tap } from './ui';
+
+/** The "Your bots" sheet (switch, add, manage), shared by the chip and the sidebar's row of faces. */
+function useBotSheet(server: Server | undefined) {
+  const t = useTheme();
+  const [open, setOpen] = useState(false);
+  const addBot = useAddBot();
+  const sheet = server ? <>
+    <Sheet visible={open} onClose={() => setOpen(false)} title="Your bots" scrollable>
+      <BotList server={server} onDone={() => setOpen(false)} />
+      <ListGroup style={{ marginTop: t.space.md }}>
+        <ListRow icon={<Plus />} title="Add a bot" onPress={() => { setOpen(false); addBot.open(); }} />
+        <ListRow icon={<Settings />} title="Manage bots" onPress={() => { setOpen(false); router.push('/bots'); }} />
+      </ListGroup>
+    </Sheet>
+    {addBot.sheet}
+  </> : null;
+  return { open: () => setOpen(true), sheet };
+}
+
+function BotList({ server, onDone }: { server: Server; onDone: () => void }) {
+  const t = useTheme();
+  const servers = useApp((st) => st.servers);
+  const runtime = useApp((st) => st.runtime);
+  const network = useApp((st) => st.network);
+  const select = useApp((st) => st.select);
+  const chosen = usePrefs((st) => st.prefs.mainBot);
+  return <ListGroup>
+    {mainFirst(servers, chosen).map((x, i) => {
+      const rt = runtime[x.id];
+      const view = connectionView(network, rt, x.bot.title);
+      const on = x.id === server.id;
+      return <ListRow key={x.id} title={x.bot.title} value={i === 0 ? 'Main' : undefined}
+        icon={<View><AgentFace server={x} size={28} still /></View>}
+        subtitle={view.kind === 'online' ? 'Online' : view.title} chevron={false}
+        right={<View style={{ flexDirection: 'row', alignItems: 'center', gap: t.space.sm }}>
+          {rt?.pending ? <Badge count={rt.pending} /> : null}
+          {on ? <Check size={20} color={t.colors.accent} accessibilityLabel="Current bot" /> : null}
+        </View>}
+        onPress={() => { if (!on) select(x.id, homeChat(useApp.getState().runtime[x.id])); onDone(); }} />;
+    })}
+  </ListGroup>;
+}
 
 /** Switch bots, or add and manage them, from the same picker everywhere. */
 export function BotSwitcher() {
   const t = useTheme();
   const servers = useApp((st) => st.servers);
   const runtime = useApp((st) => st.runtime);
-  const network = useApp((st) => st.network);
   const selection = useApp((st) => st.selection);
-  const select = useApp((st) => st.select);
-  const chosen = usePrefs((st) => st.prefs.mainBot);
-  const [open, setOpen] = useState(false);
-  const addBot = useAddBot();
   const server = servers.find((x) => x.id === selection.serverId) ?? servers[0];
+  const picker = useBotSheet(server);
   if (!server) return null;
   const others = servers.filter((x) => x.id !== server.id).reduce((n, x) => n + (runtime[x.id]?.pending ?? 0), 0);
 
@@ -31,31 +71,53 @@ export function BotSwitcher() {
     <>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: t.space.xs, maxWidth: 240 }}>
         <Chip label={server.bot.title} icon={<AgentFace server={server} size={28} still />}
-          accessibilityLabel={`${server.bot.title}. Switch bot`} onPress={() => setOpen(true)} />
+          accessibilityLabel={`${server.bot.title}. Switch bot`} onPress={picker.open} />
         {others ? <Badge count={others} dot /> : null}
       </View>
-      <Sheet visible={open} onClose={() => setOpen(false)} title="Your bots" scrollable>
-        <ListGroup>
-          {mainFirst(servers, chosen).map((x, i) => {
-            const rt = runtime[x.id];
-            const view = connectionView(network, rt, x.bot.title);
-            const on = x.id === server.id;
-            return <ListRow key={x.id} title={x.bot.title} value={i === 0 ? 'Main' : undefined}
-              icon={<View><AgentFace server={x} size={28} still /></View>}
-              subtitle={view.kind === 'online' ? 'Online' : view.title} chevron={false}
-              right={<View style={{ flexDirection: 'row', alignItems: 'center', gap: t.space.sm }}>
-                {rt?.pending ? <Badge count={rt.pending} /> : null}
-                {on ? <Check size={20} color={t.colors.accent} accessibilityLabel="Current bot" /> : null}
-              </View>}
-              onPress={() => { if (!on) select(x.id, homeChat(useApp.getState().runtime[x.id])); setOpen(false); }} />;
-          })}
-        </ListGroup>
-        <ListGroup style={{ marginTop: t.space.md }}>
-          <ListRow icon={<Plus />} title="Add a bot" onPress={() => { setOpen(false); addBot.open(); }} />
-          <ListRow icon={<Settings />} title="Manage bots" onPress={() => { setOpen(false); router.push('/bots'); }} />
-        </ListGroup>
-      </Sheet>
-      {addBot.sheet}
+      {picker.sheet}
     </>
   );
 }
+
+/**
+ * A quick row of every bot's face for the sidebar: tap one to switch to it, the last button opens the full
+ * picker (add and manage). The current bot wears an accent ring; a dot means another bot is waiting on you.
+ */
+export function BotFaces({ server }: { server: Server }) {
+  const t = useTheme();
+  const s = useStyles();
+  const servers = useApp((st) => st.servers);
+  const pending = useApp(useShallow((st) => Object.fromEntries(st.servers.map((x) => [x.id, st.runtime[x.id]?.pending ?? 0]))));
+  const chosen = usePrefs((st) => st.prefs.mainBot);
+  const picker = useBotSheet(server);
+  return <>
+    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.row} style={s.scroll}
+      accessibilityLabel="Your bots" keyboardShouldPersistTaps="handled">
+      {mainFirst(servers, chosen).map((x) => {
+        const on = x.id === server.id;
+        const waiting = pending[x.id] ?? 0;
+        return <Tap key={x.id} feedback="selection" scaleTo={0.9} accessibilityLabel={`${x.bot.title}${waiting ? `, ${waiting} waiting` : ''}${on ? ', current bot' : '. Switch bot'}`}
+          accessibilityState={{ selected: on }}
+          onPress={() => { if (!on) useApp.getState().select(x.id, homeChat(useApp.getState().runtime[x.id])); }}
+          style={({ hovered }) => [s.face, on ? s.faceOn : hovered && { backgroundColor: t.colors.pressed }]}>
+          <AgentFace server={x} size={30} still />
+          {waiting && !on ? <Badge count={waiting} dot style={s.dot} /> : null}
+        </Tap>;
+      })}
+      <Tap feedback="selection" scaleTo={0.9} accessibilityLabel="Your bots. Add or manage bots" onPress={picker.open}
+        style={({ hovered, pressed }) => [s.face, s.more, (hovered || pressed) && { backgroundColor: t.colors.pressed }]}>
+        <ChevronsUpDown size={16} color={t.colors.textSecondary} />
+      </Tap>
+    </ScrollView>
+    {picker.sheet}
+  </>;
+}
+
+const useStyles = makeStyles((t) => ({
+  scroll: { flexGrow: 0, flexShrink: 0 },
+  row: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 2 },
+  face: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: 'transparent' },
+  faceOn: { borderColor: t.colors.accent, backgroundColor: t.colors.accentSoft },
+  more: { backgroundColor: t.colors.card, borderColor: t.colors.cardBorder, borderWidth: 1 },
+  dot: { position: 'absolute', top: 2, right: 2, borderWidth: 2, borderColor: t.colors.surface },
+}));

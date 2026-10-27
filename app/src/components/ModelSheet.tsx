@@ -9,7 +9,7 @@ import { useModelSheet } from '../lib/modelSheet';
 import { isOwner, useApp } from '../lib/store';
 import { makeStyles, useTheme } from '../lib/themeContext';
 import type { AgentInfo, Message, Server } from '../lib/types';
-import { Brain, ChevronDown, ChevronLeft } from './icons';
+import { Brain, ChevronDown, ChevronLeft, Cpu } from './icons';
 import { PickerCard } from './PickerCard';
 import { Sheet } from './Sheet';
 import { Button, Chip, Skeleton, Tap } from './ui';
@@ -180,15 +180,21 @@ function ModelSheet({ server, chatId, visible, onClose, onDismiss, model, info, 
   return (
     <Sheet visible={visible} onClose={onClose} onDismiss={onDismiss} title={showThinking ? 'Thinking' : 'Choose model'}>
       <ScrollView style={[s.scroll, { maxHeight: Math.min(560, windowHeight * 0.68) }]} contentContainerStyle={s.body} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">
-        <View style={s.controls}>
-          {showThinking ? <Button title="Models" size="sm" variant="ghost" icon={<ChevronLeft size={16} color={t.colors.accent} />} onPress={() => setAsked(false)} /> : (
-            <>
-              <Text style={[s.nowSub, { flex: 1 }]} numberOfLines={1}>{activeModel(info).provider || 'This chat'}</Text>
-              {!cardDone && !confirmed ? <Chip label="Thinking" icon={<Brain size={16} color={t.colors.textSecondary} />} onPress={askReasoning} /> : null}
-            </>
-          )}
-        </View>
-        {reasoningFailed ? <Text style={s.nowSub}>Thinking options unavailable. Tap Thinking to retry.</Text> : null}
+        {showThinking ? (
+          <View style={s.controls}>
+            <Button title="Models" size="sm" variant="ghost" icon={<ChevronLeft size={16} color={t.colors.accent} />} onPress={() => setAsked(false)} />
+          </View>
+        ) : (
+          <View style={s.now}>
+            <View style={s.nowIcon}><Cpu size={20} color={t.colors.onAccentSoft} /></View>
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <Text style={s.nowName} numberOfLines={1}>{model ? modelName(model) : 'Choose a model'}</Text>
+              <Text style={s.nowSub} numberOfLines={1}>{activeModel(info).provider || 'This chat'}</Text>
+            </View>
+            {!cardDone && !confirmed ? <Chip label="Thinking" icon={<Brain size={16} color={t.colors.textSecondary} />} onPress={askReasoning} /> : null}
+          </View>
+        )}
+        {reasoningFailed ? <Text style={[s.nowSub, s.inset]}>Thinking options unavailable. Tap Thinking to retry.</Text> : null}
         {showThinking ? reasoning && pickerOf(reasoning) ? (
           <PickerCard key={reasoning.id} server={server} message={reasoning} presentation="sheet" onChosen={chosen} />
         ) : <ModelSkeleton label="Loading thinking options" /> : card ? (
@@ -219,14 +225,24 @@ const useStyles = makeStyles((t) => ({
   buttonText: { ...t.type.callout, fontFamily: t.fonts.medium, color: t.colors.text, flexShrink: 1 },
   headerButton: { backgroundColor: 'transparent', paddingHorizontal: 0, paddingRight: 8, minHeight: 28, maxWidth: '100%', alignSelf: 'flex-start' },
   headerButtonText: { ...t.type.caption, fontFamily: t.fonts.medium, color: t.colors.textSecondary },
-  composerButton: { backgroundColor: t.colors.surface, borderWidth: 1, borderColor: t.colors.border,
+  composerButton: { backgroundColor: t.colors.card, borderWidth: 1, borderColor: t.colors.cardBorder,
     paddingHorizontal: 14, minHeight: 38, maxWidth: '65%', flexShrink: 1 },
   composerButtonText: { ...t.type.callout, fontFamily: t.fonts.medium, color: t.colors.text },
   scroll: { flexShrink: 1 },
-  body: { gap: t.space.sm, paddingHorizontal: 2, paddingBottom: t.space.xs },
-  controls: { flexDirection: 'row', alignItems: 'center', gap: t.space.sm, minHeight: 44, paddingHorizontal: t.space.sm },
+  body: { gap: t.space.md, paddingHorizontal: 2, paddingBottom: t.space.xs },
+  controls: { flexDirection: 'row', alignItems: 'center', gap: t.space.sm, minHeight: 44 },
+  now: {
+    flexDirection: 'row', alignItems: 'center', gap: t.space.md, padding: t.space.md, borderRadius: t.radius.lg,
+    backgroundColor: t.colors.card, borderWidth: 1, borderColor: t.colors.cardBorder,
+  },
+  nowIcon: { width: 44, height: 44, borderRadius: t.radius.pill, alignItems: 'center', justifyContent: 'center', backgroundColor: t.colors.accentSoft },
+  nowName: { ...t.type.heading, color: t.colors.text },
   nowSub: { ...t.type.footnote, color: t.colors.textSecondary },
-  skeleton: { paddingHorizontal: t.space.md },
-  skeletonRow: { minHeight: 60, justifyContent: 'center', gap: t.space.sm },
+  inset: { paddingHorizontal: t.space.sm },
+  skeleton: { gap: t.space.sm },
+  skeletonRow: {
+    minHeight: 60, justifyContent: 'center', gap: t.space.sm, paddingHorizontal: t.space.lg, borderRadius: t.radius.lg,
+    backgroundColor: t.colors.card, borderWidth: 1, borderColor: t.colors.cardBorder,
+  },
   wait: { alignItems: 'center', gap: t.space.md, paddingVertical: t.space.lg },
 }));

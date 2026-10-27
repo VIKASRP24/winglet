@@ -3,16 +3,17 @@ import { routineHref } from '../features/routine-history/model';
 import { router } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Text, View } from 'react-native';
-import Animated, { FadeIn, LinearTransition } from 'react-native-reanimated';
-import { CalendarClock, CircleAlert, CirclePause, Pause, Play, Plus } from '../components/icons';
+import Animated, { FadeInDown, LinearTransition } from 'react-native-reanimated';
+import { CalendarClock, CheckCircle2, ChevronRight, CircleAlert, CirclePause, Pause, Play, Plus } from '../components/icons';
 import { Screen } from '../components/Screen';
 import { withSelectedServer } from '../components/ServerScreen';
 import { Sheet } from '../components/Sheet';
-import { Button, Card, Chip, ConfirmButton, Field, IconButton, ListGroup, ListRow, LoadError, SectionHeader, Skeleton } from '../components/ui';
+import { Button, Chip, ConfirmButton, Field, IconButton, ListGroup, ListRow, LoadError, SectionHeader, Skeleton, Tap } from '../components/ui';
 import { agoText } from '../lib/agent';
 import { api, signedApi } from '../lib/api';
 import { firstLine, whenNext } from '../lib/control';
 import { haptic } from '../lib/haptics';
+import { spring, useReducedMotion } from '../lib/motion';
 import { useApp } from '../lib/store';
 import { makeStyles, useTheme } from '../lib/themeContext';
 import type { Routine, Server } from '../lib/types';
@@ -25,12 +26,16 @@ const IDEAS = [
 ];
 export type Draft = { id?: string; name: string; prompt: string; schedule: string };
 
+const rise = (reduced: boolean, i: number) => (reduced ? undefined
+  : FadeInDown.delay(Math.min(i, 8) * 60).springify().damping(spring.soft.damping).stiffness(spring.soft.stiffness));
+
 /** Prompts your agent runs on its own schedule. Results arrive in the Updates chat. */
 export default withSelectedServer(ScheduleScreen);
 
 function ScheduleScreen() {
   const t = useTheme();
   const s = useStyles();
+  const reduced = useReducedMotion();
   const server = useApp((st) => st.servers.find((x) => x.id === st.selection.serverId) ?? st.servers[0]);
   const history = useApp(st => !!server && st.runtime[server.id]?.info?.features?.routine_history === true);
   const [routines, setRoutines] = useState<Routine[] | null>(null);
@@ -73,7 +78,7 @@ function ScheduleScreen() {
       </IconButton>} onRefresh={load}>
       {error && routines ? <Text style={s.error}>{error}</Text> : null}
       {!routines ? (error ? <LoadError message={error} onRetry={load} /> : (
-        <View style={{ gap: 12, marginTop: 16 }}>{[0, 1].map((i) => <Skeleton key={i} height={132} radius={20} />)}</View>
+        <View style={{ gap: 12, marginTop: 16 }}>{[0, 1].map((i) => <Skeleton key={i} height={132} radius={t.radius.lg} />)}</View>
       )) : !routines.length ? (
         <Empty onPick={(idea) => setDraft(idea ?? { name: '', prompt: '', schedule: '' })} />
       ) : (
@@ -81,12 +86,12 @@ function ScheduleScreen() {
           {([{ title: 'Routines', rows: active }, { title: 'Done', rows: finished }]).map((group) => group.rows.length ? (
             <View key={group.title}>
               <SectionHeader title={group.title} />
-              <ListGroup>
-                {group.rows.map((r) => (
-                  <RoutineCard key={r.id} routine={r} busy={busy} onAction={(a) => act(r, a)}
-                    history={history} onEdit={() => history ? router.push(routineHref(server.id, r.id) as any) : setDraft({ id: r.id, name: r.name ?? '', prompt: r.prompt, schedule: r.schedule_display ?? '' })} />
-                ))}
-              </ListGroup>
+              {group.rows.map((r, i) => (
+                <Animated.View key={r.id} entering={rise(reduced, i)} layout={reduced ? undefined : LinearTransition.duration(180)}>
+                  <RoutineCard routine={r} busy={busy} onAction={(a) => act(r, a)} last={i === group.rows.length - 1}
+                    onEdit={() => history ? router.push(routineHref(server.id, r.id) as any) : setDraft({ id: r.id, name: r.name ?? '', prompt: r.prompt, schedule: r.schedule_display ?? '' })} />
+                </Animated.View>
+              ))}
             </View>
           ) : null)}
           <Button title="Open Updates" style={{ marginTop: t.space.md }} variant="secondary" onPress={() => router.push(`/chat/${server.id}/home`)} />
@@ -101,22 +106,27 @@ function ScheduleScreen() {
 function Empty({ onPick }: { onPick: (d?: Draft) => void }) {
   const t = useTheme();
   const s = useStyles();
+  const reduced = useReducedMotion();
   return (
-    <Animated.View entering={FadeIn}>
-      <Card style={{ gap: t.space.md, marginTop: t.space.lg }}>
+    <View>
+      <Animated.View entering={rise(reduced, 0)} style={s.emptyHero}>
+        <View style={s.emptyIcon}><CalendarClock size={30} color={t.colors.onAccentSoft} /></View>
         <Text style={s.emptyBody}>No routines scheduled.</Text>
-        <Button title="New routine" icon={<Plus size={16} color={t.colors.onAccent} />} onPress={() => onPick()} />
-      </Card>
-      <SectionHeader title="Ideas" />
-      <ListGroup>
-        {IDEAS.map((idea) => <ListRow key={idea.name} title={idea.name} value={idea.schedule} onPress={() => onPick(idea)} />)}
-      </ListGroup>
-    </Animated.View>
+        <Button title="New routine" icon={<Plus size={16} color={t.colors.onAccent} />} onPress={() => onPick()} style={{ alignSelf: 'stretch' }} />
+      </Animated.View>
+      <Animated.View entering={rise(reduced, 1)}>
+        <SectionHeader title="Ideas" />
+        <ListGroup>
+          {IDEAS.map((idea) => <ListRow key={idea.name} title={idea.name} value={idea.schedule} onPress={() => onPick(idea)} />)}
+        </ListGroup>
+      </Animated.View>
+    </View>
   );
 }
 
-function RoutineCard({ routine: r, busy, onAction, onEdit, history }: {
-  routine: Routine; busy: string | null; history?: boolean; onAction: (a: 'pause' | 'resume' | 'run') => void; onEdit: () => void;
+/** One routine on the timeline: a dot on the rail for its state, then a frosted card saying when it runs next. */
+function RoutineCard({ routine: r, busy, onAction, onEdit, last }: {
+  routine: Routine; busy: string | null; last?: boolean; onAction: (a: 'pause' | 'resume' | 'run') => void; onEdit: () => void;
 }) {
   const t = useTheme();
   const s = useStyles();
@@ -128,20 +138,36 @@ function RoutineCard({ routine: r, busy, onAction, onEdit, history }: {
   const status = failed ? `Last run failed: ${r.last_error || r.last_status}`
     : paused ? r.paused_reason || 'Paused' : done ? 'Completed'
     : r.last_run_at ? `Last ran ${agoText(Date.parse(r.last_run_at) / 1000)}` : undefined;
+  const tone = failed ? t.colors.danger : paused ? t.colors.warning : done ? t.colors.textTertiary : t.colors.onAccentSoft;
+  const toneBg = failed ? t.colors.dangerSoft : paused ? t.colors.warningSoft : done ? t.colors.card : t.colors.accentSoft;
+  const whenColor = failed ? t.colors.danger : paused ? t.colors.warning : done ? t.colors.textTertiary : t.colors.accent;
+  const when = next ? `Next ${next}` : paused ? 'Paused' : done ? 'Done' : undefined;
+  const Icon = failed ? CircleAlert : paused ? CirclePause : done ? CheckCircle2 : CalendarClock;
   return (
-    <Animated.View layout={LinearTransition.duration(180)} style={done ? { opacity: 0.7 } : undefined}>
-      <ListRow title={r.name || r.prompt} subtitle={r.schedule_display ?? undefined} value={next ? `Next ${next}` : paused ? 'Paused' : done ? 'Done' : undefined}
-        icon={failed ? <CircleAlert /> : paused ? <CirclePause /> : <CalendarClock />}
-        iconColor={failed ? t.colors.danger : paused ? t.colors.warning : undefined} onPress={onEdit} />
-      {status ? <Text style={[s.last, failed && { color: t.colors.danger }]}>{status}</Text> : null}
-      {!done ? <View style={s.actions}>
+    <View style={[s.item, done && { opacity: 0.7 }]}>
+      <View style={s.rail}>
+        <View style={[s.dot, { backgroundColor: toneBg }]}><Icon size={16} color={tone} /></View>
+        {!last ? <View style={s.line} /> : null}
+      </View>
+      <View style={s.card}>
+        <Tap feedback="selection" scaleTo={0.98} onPress={onEdit} accessibilityLabel={r.name || r.prompt} style={s.cardHead}>
+          <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
+            {when ? <Text style={[s.when, { color: whenColor }]}>{when}</Text> : null}
+            <Text style={s.cardTitle} numberOfLines={2}>{r.name || r.prompt}</Text>
+            {r.schedule_display ? <Text style={s.cardSub} numberOfLines={1}>{r.schedule_display}</Text> : null}
+          </View>
+          <ChevronRight size={18} color={t.colors.textTertiary} />
+        </Tap>
+        {status ? <Text style={[s.last, failed && { color: t.colors.danger }]}>{status}</Text> : null}
+        {!done ? <View style={s.actions}>
         <Button size="sm" variant="tonal" title="Run now" loading={spin('run')} disabled={!!busy}
           icon={<Play size={14} color={t.colors.onAccentSoft} />} onPress={() => onAction('run')} />
         <Button size="sm" variant="secondary" title={paused ? 'Resume' : 'Pause'} loading={spin(paused ? 'resume' : 'pause')} disabled={!!busy}
           icon={paused ? <Play size={14} color={t.colors.text} /> : <Pause size={14} color={t.colors.text} />}
           onPress={() => onAction(paused ? 'resume' : 'pause')} />
-      </View> : null}
-    </Animated.View>
+        </View> : null}
+      </View>
+    </View>
   );
 }
 
@@ -234,9 +260,26 @@ export function EditSheet({ server, draft, onClose, onSaved }: { server: Server;
 
 const useStyles = makeStyles((t) => ({
   error: { ...t.type.callout, color: t.colors.danger, marginTop: 10 },
-  last: { ...t.type.footnote, color: t.colors.textTertiary, paddingHorizontal: t.space.lg, paddingBottom: t.space.sm },
-  actions: { flexDirection: 'row', gap: t.space.sm, paddingHorizontal: t.space.lg, paddingBottom: t.space.md },
-  emptyBody: { ...t.type.callout, color: t.colors.textSecondary },
+  item: { flexDirection: 'row', gap: t.space.md },
+  rail: { width: 32, alignItems: 'center' },
+  dot: {
+    width: 32, height: 32, borderRadius: t.radius.pill, alignItems: 'center', justifyContent: 'center', marginTop: t.space.lg,
+    borderWidth: 1, borderColor: t.colors.cardBorder,
+  },
+  line: { flex: 1, width: 2, borderRadius: 1, backgroundColor: t.colors.border, marginTop: t.space.xs },
+  card: {
+    flex: 1, minWidth: 0, marginBottom: t.space.md, backgroundColor: t.colors.card, borderRadius: t.radius.lg, borderWidth: 1,
+    borderColor: t.colors.cardBorder, overflow: 'hidden',
+  },
+  cardHead: { flexDirection: 'row', alignItems: 'center', gap: t.space.md, padding: t.space.lg, minHeight: 56 },
+  when: { ...t.type.label },
+  cardTitle: { ...t.type.heading, color: t.colors.text },
+  cardSub: { ...t.type.footnote, color: t.colors.textSecondary },
+  last: { ...t.type.footnote, color: t.colors.textTertiary, paddingHorizontal: t.space.lg, marginTop: -t.space.sm, paddingBottom: t.space.md },
+  actions: { flexDirection: 'row', gap: t.space.sm, paddingHorizontal: t.space.lg, paddingBottom: t.space.lg },
+  emptyHero: { alignItems: 'center', gap: t.space.md, marginTop: t.space.xl, paddingVertical: t.space.lg },
+  emptyIcon: { width: 72, height: 72, borderRadius: t.radius.pill, backgroundColor: t.colors.accentSoft, alignItems: 'center', justifyContent: 'center' },
+  emptyBody: { ...t.type.heading, color: t.colors.text },
   presets: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   preview: {
     flexDirection: 'row', alignItems: 'center', gap: 8, padding: 12, borderRadius: t.radius.md, backgroundColor: t.colors.surfaceSunken,

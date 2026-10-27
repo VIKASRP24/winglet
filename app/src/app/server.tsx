@@ -1,6 +1,7 @@
 import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Text, View } from 'react-native';
+import Animated, { FadeInDown } from 'react-native-reanimated';
 import { JobSheet } from '../components/JobSheet';
 import {
   CalendarClock, Check, CircleAlert, CircleArrowUp, CirclePause, CircleHelp, RefreshCw, RotateCw, ScrollText, ShieldCheck,
@@ -8,12 +9,13 @@ import {
 import { Screen } from '../components/Screen';
 import { withSelectedServer } from '../components/ServerScreen';
 import { Sheet } from '../components/Sheet';
-import { Button, ListGroup, ListRow, SectionHeader, Skeleton, Toggle } from '../components/ui';
+import { Button, Card, ListGroup, ListRow, SectionHeader, Skeleton, Toggle } from '../components/ui';
 import { VerifyNotice } from '../components/VerifyPhone';
 import { agoText } from '../lib/agent';
 import { api, ApiError, signedApi } from '../lib/api';
 import { bytes, duration, idempotencyKey } from '../lib/control';
 import { haptic } from '../lib/haptics';
+import { spring, useReducedMotion } from '../lib/motion';
 import { useApp, useServerState } from '../lib/store';
 import { makeStyles, useTheme } from '../lib/themeContext';
 import type { Job, PauseState, SystemInfo, UpdatesInfo } from '../lib/types';
@@ -31,6 +33,7 @@ export default withSelectedServer(ServerScreen);
 function ServerScreen() {
   const t = useTheme();
   const s = useStyles();
+  const reduced = useReducedMotion();
   const server = useApp((st) => st.servers.find((x) => x.id === st.selection.serverId) ?? st.servers[0]);
   const rt = useServerState(server?.id);
   const [info, setInfo] = useState<SystemInfo | null>(null);
@@ -104,17 +107,25 @@ function ServerScreen() {
       <StatusCard info={info} paused={paused} online={online} />
 
       <SectionHeader title="Health" />
-      {!host ? <Skeleton height={150} radius={20} /> : (
-        <ListGroup>
-          {host.cpu_percent !== undefined ? <Meter label="Processor" percent={host.cpu_percent}
-            detail={host.cpu_count ? `${host.cpu_count} cores` : ''} /> : null}
-          {host.memory ? <Meter label="Memory" percent={host.memory.percent} detail={`${bytes(host.memory.used)} / ${bytes(host.memory.total)}`} /> : null}
-          {host.disk ? <Meter label="Disk" percent={host.disk.percent} detail={`${bytes(host.disk.used)} / ${bytes(host.disk.total)}`} /> : null}
-          {!host.memory && host.load_avg ? <ListRow title="Load" value={host.load_avg.map((n) => n.toFixed(2)).join(' / ')} /> : null}
-          {host.system ? <ListRow title="System" value={host.system} /> : null}
-          {host.arch ? <ListRow title="Architecture" value={host.arch} /> : null}
-          {host.uptime_seconds ? <ListRow title="Machine uptime" value={duration(host.uptime_seconds)} /> : null}
-        </ListGroup>
+      {!host ? <Skeleton height={150} radius={t.radius.lg} /> : (
+        <Animated.View entering={reduced ? undefined : FadeInDown.springify().damping(spring.soft.damping).stiffness(spring.soft.stiffness)} style={{ gap: t.space.md }}>
+          {host.cpu_percent !== undefined || host.memory || host.disk ? (
+            <View style={s.meters}>
+              {host.cpu_percent !== undefined ? <Meter label="Processor" percent={host.cpu_percent}
+                detail={host.cpu_count ? `${host.cpu_count} cores` : ''} /> : null}
+              {host.memory ? <Meter label="Memory" percent={host.memory.percent} detail={`${bytes(host.memory.used)} / ${bytes(host.memory.total)}`} /> : null}
+              {host.disk ? <Meter label="Disk" percent={host.disk.percent} detail={`${bytes(host.disk.used)} / ${bytes(host.disk.total)}`} /> : null}
+            </View>
+          ) : null}
+          {(!host.memory && host.load_avg) || host.system || host.arch || host.uptime_seconds ? (
+            <ListGroup>
+              {!host.memory && host.load_avg ? <ListRow title="Load" value={host.load_avg.map((n) => n.toFixed(2)).join(' / ')} /> : null}
+              {host.system ? <ListRow title="System" value={host.system} /> : null}
+              {host.arch ? <ListRow title="Architecture" value={host.arch} /> : null}
+              {host.uptime_seconds ? <ListRow title="Machine uptime" value={duration(host.uptime_seconds)} /> : null}
+            </ListGroup>
+          ) : null}
+        </Animated.View>
       )}
 
       <SectionHeader title="Controls" />
@@ -193,27 +204,64 @@ function wingletUpdate(u: UpdatesInfo | null): { status: string; available: bool
   return { status: w.reason || "Couldn't tell", available: false };
 }
 
+/** How the server is doing, at a glance: its state, big, then the versions and phones as small figures. */
 function StatusCard({ info, paused, online }: { info: SystemInfo | null; paused: PauseState; online: boolean }) {
   const t = useTheme();
+  const s = useStyles();
+  const reduced = useReducedMotion();
   const tone = !online ? t.colors.textTertiary : paused ? t.colors.warning : t.colors.success;
+  const toneSoft = !online ? t.colors.card : paused ? t.colors.warningSoft : t.colors.successSoft;
   const label = !online ? 'Offline' : paused ? 'Paused' : 'Running';
-  if (!info) return <Skeleton height={112} radius={t.radius.lg} style={{ marginTop: t.space.lg }} />;
-  return <>
-    <SectionHeader title="Status" />
-    <ListGroup>
-      <ListRow title={label} icon={<View style={{ width: 8, height: 8, borderRadius: t.radius.pill, backgroundColor: tone }} />}
-        value={`Up ${duration(info.uptime_seconds)}`}
-        subtitle={paused ? `${paused.reason || 'New work is on hold.'}${paused.engaged_at ? ` Since ${new Date(paused.engaged_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : ''}` : undefined} />
-      <ListRow title="Hermes" value={info.hermes_version || '—'} />
-      <ListRow title="Winglet" value={info.version} />
-      <ListRow title="Phones" value={String(info.devices)} />
-    </ListGroup>
-  </>;
+  if (!info) return <Skeleton height={168} radius={t.radius.lg} style={{ marginTop: t.space.xl }} />;
+  const why = paused ? `${paused.reason || 'New work is on hold.'}${paused.engaged_at ? ` Since ${new Date(paused.engaged_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : ''}` : '';
+  return (
+    <Animated.View entering={reduced ? undefined : FadeInDown.springify().damping(spring.soft.damping).stiffness(spring.soft.stiffness)}>
+      <SectionHeader title="Status" />
+      <Card style={s.status}>
+        <View style={s.statusHead} accessible accessibilityLabel={`${label}, up ${duration(info.uptime_seconds)}${why ? `. ${why}` : ''}`}>
+          <View style={[s.statusRing, { backgroundColor: toneSoft }]}><View style={[s.statusDot, { backgroundColor: tone }]} /></View>
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text style={s.statusLabel}>{label}</Text>
+            <Text style={s.statusUp}>Up {duration(info.uptime_seconds)}</Text>
+          </View>
+        </View>
+        {why ? <Text style={s.statusWhy}>{why}</Text> : null}
+        <View style={s.figures}>
+          <Figure label="Hermes" value={info.hermes_version || '—'} />
+          <Figure label="Winglet" value={info.version} />
+          <Figure label="Phones" value={String(info.devices)} />
+        </View>
+      </Card>
+    </Animated.View>
+  );
 }
 
+function Figure({ label, value }: { label: string; value: string }) {
+  const s = useStyles();
+  return (
+    <View style={s.figure} accessible accessibilityLabel={`${label}: ${value}`}>
+      <Text style={s.figureValue} numberOfLines={1}>{value}</Text>
+      <Text style={s.figureLabel} numberOfLines={1}>{label}</Text>
+    </View>
+  );
+}
+
+/** A frosted tile: the percentage big, a bar that fills, and what it's out of. */
 function Meter({ label, percent, detail }: { label: string; percent: number; detail: string }) {
-  return <ListRow title={label} value={`${Math.round(percent)}%`}
-    subtitle={[detail, percent >= 90 ? 'Nearly full' : ''].filter(Boolean).join(' — ')} />;
+  const t = useTheme();
+  const s = useStyles();
+  const full = percent >= 90;
+  const sub = [detail, full ? 'Nearly full' : ''].filter(Boolean).join(' — ');
+  return (
+    <View style={s.meter} accessible accessibilityLabel={`${label}: ${Math.round(percent)}%${sub ? `, ${sub}` : ''}`}>
+      <Text style={s.figureLabel} numberOfLines={1}>{label}</Text>
+      <Text style={s.meterValue}>{Math.round(percent)}%</Text>
+      <View style={s.track}>
+        <View style={[s.fill, { width: `${Math.max(2, Math.min(100, percent))}%`, backgroundColor: full ? t.colors.warning : t.colors.accent }]} />
+      </View>
+      {sub ? <Text style={[s.meterDetail, full && { color: t.colors.warning }]} numberOfLines={2}>{sub}</Text> : null}
+    </View>
+  );
 }
 
 function UpdateRow({ name, version, status, available, onUpdate }: {
@@ -252,5 +300,25 @@ function ConfirmSheet({ what, bot, onCancel, onConfirm }: { what: Confirm | null
 const useStyles = makeStyles((t) => ({
   error: { ...t.type.callout, color: t.colors.danger, marginTop: 10 },
   note: { ...t.type.caption, color: t.colors.textSecondary },
+  status: { gap: t.space.lg, padding: t.space.xl },
+  statusHead: { flexDirection: 'row', alignItems: 'center', gap: t.space.lg },
+  statusRing: { width: 48, height: 48, borderRadius: t.radius.pill, alignItems: 'center', justifyContent: 'center' },
+  statusDot: { width: 14, height: 14, borderRadius: t.radius.pill },
+  statusLabel: { ...t.type.display, color: t.colors.text },
+  statusUp: { ...t.type.callout, color: t.colors.textSecondary },
+  statusWhy: { ...t.type.callout, color: t.colors.textSecondary },
+  figures: { flexDirection: 'row', gap: t.space.sm, borderTopWidth: 1, borderTopColor: t.colors.border, paddingTop: t.space.lg },
+  figure: { flex: 1, minWidth: 0, gap: 2 },
+  figureValue: { ...t.type.heading, color: t.colors.text },
+  figureLabel: { ...t.type.caption, color: t.colors.textSecondary },
+  meters: { flexDirection: 'row', flexWrap: 'wrap', gap: t.space.md },
+  meter: {
+    flexGrow: 1, flexBasis: 140, minWidth: 0, gap: t.space.xs, padding: t.space.lg, borderRadius: t.radius.lg,
+    backgroundColor: t.colors.card, borderWidth: 1, borderColor: t.colors.cardBorder,
+  },
+  meterValue: { ...t.type.display, color: t.colors.text },
+  track: { height: 6, borderRadius: t.radius.pill, backgroundColor: t.colors.border, overflow: 'hidden', marginTop: t.space.xs },
+  fill: { height: 6, borderRadius: t.radius.pill },
+  meterDetail: { ...t.type.caption, color: t.colors.textTertiary, marginTop: t.space.xs },
   confirmBody: { ...t.type.body, color: t.colors.textSecondary },
 }));

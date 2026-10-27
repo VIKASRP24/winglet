@@ -1,18 +1,21 @@
 import { router } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { Text, View } from 'react-native';
-import Animated, { FadeIn } from 'react-native-reanimated';
+import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
 import { withSelectedServer } from '../components/ServerScreen';
 import { Screen } from '../components/Screen';
 import { ChevronDown, ChevronRight, CircleAlert, Folder, MoreHorizontal, Plus, Search } from '../components/icons';
 import { Button, Footnote, IconButton, ListGroup, ListRow, SearchField, SectionHeader, Skeleton, Tap } from '../components/ui';
 import { ConnectionBanner } from '../components/ConnectionBanner';
 import { useApp } from '../lib/store';
-import { useReducedMotion } from '../lib/motion';
+import { spring, useReducedMotion } from '../lib/motion';
 import { makeStyles, useTheme } from '../lib/themeContext';
 import type { Project } from '../lib/types';
 import { ProjectCreateSheet, ProjectMenuSheet } from '../features/projects/ProjectSheets';
 import { projectCountLabel } from '../features/projects/logic';
+
+const rise = (reduced: boolean, i: number) => (reduced ? undefined
+  : FadeInDown.delay(i * 70).springify().damping(spring.soft.damping).stiffness(spring.soft.stiffness));
 
 /** Every project on the selected bot: shared ones, a member's private ones, and archived ones. */
 export default withSelectedServer(ProjectsScreen);
@@ -58,7 +61,7 @@ function ProjectsScreen() {
           <Text style={s.noticeText}>Update Winglet on the server to use projects.</Text>
         </View>
       ) : !snapshot && waiting ? (
-        <View style={{ gap: 10, marginTop: 18 }}>{[0, 1, 2, 3].map((i) => <Skeleton key={i} height={62} radius={16} />)}</View>
+        <View style={{ gap: 10, marginTop: 18 }}>{[0, 1, 2, 3].map((i) => <Skeleton key={i} height={62} radius={t.radius.lg} />)}</View>
       ) : !snapshot ? (
         <View style={s.empty}>
           <CircleAlert size={26} color={t.colors.warning} />
@@ -71,10 +74,10 @@ function ProjectsScreen() {
             <SearchField value={query} onChangeText={setQuery} placeholder="Search projects" />
           </View>
           {active.length ? (
-            <Animated.View entering={reduced ? undefined : FadeIn.duration(180)}>
-              {shared.length ? <><SectionHeader title="Shared projects" /><ListGroup>{shared.map(row)}</ListGroup></> : null}
-              {mine.length ? <><SectionHeader title="Only you" /><ListGroup>{mine.map(row)}</ListGroup></> : null}
-            </Animated.View>
+            <View>
+              {shared.length ? <Animated.View entering={rise(reduced, 0)}><SectionHeader title="Shared projects" /><ListGroup>{shared.map(row)}</ListGroup></Animated.View> : null}
+              {mine.length ? <Animated.View entering={rise(reduced, 1)}><SectionHeader title="Only you" /><ListGroup>{mine.map(row)}</ListGroup></Animated.View> : null}
+            </View>
           ) : q && !archived.length ? (
             <View style={s.empty}>
               <Search size={24} color={t.colors.textTertiary} />
@@ -82,10 +85,11 @@ function ProjectsScreen() {
               <Button title="Clear search" variant="secondary" onPress={() => setQuery('')} />
             </View>
           ) : !q && !snapshot.projects.length ? (
-            <View style={s.empty}>
+            <Animated.View entering={rise(reduced, 0)} style={s.empty}>
+              <View style={s.emptyIcon}><Folder size={28} color={t.colors.onAccentSoft} /></View>
               <Text style={s.emptyText}>No projects yet.</Text>
               {feature && runtime?.status === 'online' ? <Button title="Create a project" icon={<Plus size={17} color={t.colors.onAccent} />} onPress={() => setCreating(true)} /> : null}
-            </View>
+            </Animated.View>
           ) : null}
           {archived.length ? (
             <View style={{ marginTop: 16 }}>
@@ -125,10 +129,11 @@ function ProjectRow({ project, onOpen, onMenu }: {
 }
 
 const useStyles = makeStyles((t) => ({
-  notice: { flexDirection: 'row', gap: 10, alignItems: 'flex-start', marginTop: 18, padding: 14, borderRadius: t.radius.md,
+  notice: { flexDirection: 'row', gap: 10, alignItems: 'flex-start', marginTop: 18, padding: t.space.lg, borderRadius: t.radius.lg,
     backgroundColor: t.colors.warningSoft },
   noticeText: { ...t.type.callout, color: t.colors.textSecondary, flex: 1 },
   empty: { alignItems: 'center', gap: 12, paddingVertical: 34, paddingHorizontal: 18 },
+  emptyIcon: { width: 64, height: 64, borderRadius: t.radius.pill, backgroundColor: t.colors.accentSoft, alignItems: 'center', justifyContent: 'center' },
   emptyTitle: { ...t.type.callout, color: t.colors.text, textAlign: 'center' },
   emptyText: { ...t.type.callout, color: t.colors.textSecondary, textAlign: 'center', maxWidth: 440 },
   archiveHead: { flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 48, paddingHorizontal: 4 },
