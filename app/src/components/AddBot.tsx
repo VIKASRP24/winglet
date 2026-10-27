@@ -28,10 +28,10 @@ export function PairRows({ onPick }: { onPick?: () => void }) {
   return (
     <ListGroup>
       {Platform.OS !== 'web' ? (
-        <ListRow icon={<QrCode size={18} color={t.colors.onAccentSoft} />} title="Scan a QR code"
+        <ListRow icon={<QrCode size={18} color={t.colors.textSecondary} />} title="Scan a QR code"
           onPress={go('/scan')} />
       ) : null}
-      <ListRow icon={<Smartphone size={18} color={t.colors.onAccentSoft} />} title="Pair with a code"
+      <ListRow icon={<Smartphone size={18} color={t.colors.textSecondary} />} title="Pair with a code"
         onPress={go('/pair')} />
     </ListGroup>
   );

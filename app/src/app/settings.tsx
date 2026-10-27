@@ -1,6 +1,6 @@
 import { router } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { Platform, Text, useWindowDimensions, View } from 'react-native';
+import { Platform, Text, useWindowDimensions, View, StyleSheet } from 'react-native';
 import { useAddBot } from '../components/AddBot';
 import { AgentFace } from '../components/AgentFace';
 import { NavigationToggle } from '../components/AppNavigation';
@@ -38,7 +38,7 @@ export default function SettingsScreen() {
   return <Screen title="Settings" right={width >= WIDE_BREAKPOINT ? <NavigationToggle /> : undefined}>
     {server ? <Tap feedback="selection" scaleTo={0.98} onPress={() => router.push('/agent')} accessibilityLabel={`Manage ${server.bot.title}`}
       style={({ hovered }) => [s.botCard, hovered && { borderColor: t.colors.borderStrong }]}>
-      <AgentFace server={server} size={60} still />
+      <AgentFace server={server} size={44} still />
       <View style={s.botText}>
         <Text style={s.botName} numberOfLines={1}>{server.bot.title}</Text>
         <View style={s.status}>
@@ -46,10 +46,7 @@ export default function SettingsScreen() {
           <Text style={s.statusText} numberOfLines={1}>{view.kind === 'online' ? 'Online' : view.title}</Text>
         </View>
       </View>
-      <View style={s.manage}>
-        <Text style={s.manageText}>Manage</Text>
-        <ChevronRight size={16} color={t.colors.onAccentSoft} />
-      </View>
+      <ChevronRight size={18} color={t.colors.textTertiary} />
     </Tap> : null}
 
     <SectionHeader title="App" />
@@ -98,19 +95,14 @@ export default function SettingsScreen() {
 
 const useStyles = makeStyles((t) => ({
   botCard: {
-    flexDirection: 'row', alignItems: 'center', gap: t.space.lg, marginTop: t.space.lg, padding: t.space.lg,
-    backgroundColor: t.colors.card, borderRadius: t.radius.xl, borderWidth: 1, borderColor: t.colors.cardBorder,
+    flexDirection: 'row', alignItems: 'center', gap: t.space.md, marginTop: t.space.lg, paddingHorizontal: t.space.lg, paddingVertical: t.space.md,
+    backgroundColor: t.colors.surface, borderRadius: t.radius.lg, borderWidth: StyleSheet.hairlineWidth * 2, borderColor: t.colors.border,
   },
-  botText: { flex: 1, minWidth: 0, gap: t.space.xs },
-  botName: { ...t.type.title, color: t.colors.text },
-  manage: {
-    flexDirection: 'row', alignItems: 'center', gap: 2, minHeight: 34, paddingLeft: t.space.md, paddingRight: t.space.sm,
-    borderRadius: t.radius.pill, backgroundColor: t.colors.accentSoft,
-  },
-  manageText: { ...t.type.caption, fontFamily: t.fonts.semibold, color: t.colors.onAccentSoft },
+  botText: { flex: 1, minWidth: 0, gap: 2 },
+  botName: { ...t.type.heading, color: t.colors.text },
   status: { flexDirection: 'row', alignItems: 'center', gap: t.space.sm },
   statusText: { ...t.type.footnote, color: t.colors.textSecondary, flexShrink: 1 },
-  dot: { width: 8, height: 8, borderRadius: t.radius.pill },
+  dot: { width: 7, height: 7, borderRadius: t.radius.pill },
   sidebar: { gap: t.space.sm, padding: t.space.lg },
-  label: { ...t.type.body, color: t.colors.text },
+  label: { ...t.type.body, fontSize: 15.5, color: t.colors.text },
 }));

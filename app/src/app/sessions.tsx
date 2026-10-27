@@ -1,7 +1,7 @@
 import { router } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Text, View } from 'react-native';
-import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
+import Animated, { FadeIn } from 'react-native-reanimated';
 import { MessageSquareText, Pin, Search } from '../components/icons';
 import { Screen } from '../components/Screen';
 import { withSelectedServer } from '../components/ServerScreen';
@@ -87,13 +87,13 @@ function SessionsScreen() {
           <SectionHeader title={searching ? 'Search results' : 'Conversations'} right={<Text style={s.time}>{searching ? list.length : total}</Text>} />
           {list.length ? <ListGroup>{list.map((row, i) => (
             <Animated.View key={row.id} entering={reduced || i > 12 ? undefined
-              : FadeInDown.delay(i * 35).springify().damping(spring.soft.damping).stiffness(spring.soft.stiffness)}>
+              : FadeIn.duration(180)}>
               <SessionItem row={row} first={i === 0} onPress={() => router.push(`/session/${encodeURIComponent(row.id)}`)} />
             </Animated.View>
           ))}</ListGroup> : null}
           {!list.length ? (
             <View style={s.empty}>
-              <View style={s.emptyIcon}><Search size={24} color={t.colors.onAccentSoft} /></View>
+              <View style={s.emptyIcon}><Search size={24} color={t.colors.textSecondary} /></View>
               <Text style={s.emptyText}>{searching ? `Nothing said matches "${query.trim()}".` : 'No conversations yet.'}</Text>
             </View>
           ) : null}
@@ -139,6 +139,6 @@ const useStyles = makeStyles((t) => ({
   meta: { ...t.type.caption, color: t.colors.textTertiary },
   counts: { flexDirection: 'row', gap: t.space.md, paddingHorizontal: t.space.lg, paddingBottom: t.space.md },
   empty: { alignItems: 'center', gap: t.space.md, paddingVertical: t.space.xxl },
-  emptyIcon: { width: 56, height: 56, borderRadius: t.radius.pill, backgroundColor: t.colors.accentSoft, alignItems: 'center', justifyContent: 'center' },
+  emptyIcon: { width: 56, height: 56, borderRadius: t.radius.pill, backgroundColor: t.colors.surfaceSunken, alignItems: 'center', justifyContent: 'center' },
   emptyText: { ...t.type.callout, color: t.colors.textSecondary },
 }));

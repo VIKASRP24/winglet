@@ -215,7 +215,7 @@ const useStyles = makeStyles((t) => ({
     flexDirection: 'row', alignItems: 'center', gap: 12, padding: 14, borderRadius: t.radius.lg,
     backgroundColor: t.colors.surface, borderWidth: 1, borderColor: t.colors.border, marginBottom: 6,
   },
-  scopeTile: { width: 34, height: 34, borderRadius: 11, alignItems: 'center', justifyContent: 'center', backgroundColor: t.colors.accentSoft },
+  scopeTile: { width: 34, height: 34, borderRadius: 11, alignItems: 'center', justifyContent: 'center', backgroundColor: t.colors.surfaceSunken },
   scopeLabel: { ...t.type.label, color: t.colors.textSecondary },
   scopePath: { ...t.type.caption, fontFamily: t.fonts.mono, color: t.colors.text, marginTop: 3 },
   scopeCount: { ...t.type.caption, color: t.colors.textTertiary },

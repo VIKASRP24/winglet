@@ -58,7 +58,7 @@ function ProvidersScreen() {
               <SectionHeader title="Add with an API key" />
               <ListGroup>
                 {keyed.map((p) => (
-                  <ListRow key={p.slug} icon={<Key size={18} color={t.colors.onAccentSoft} />} title={p.name} value={p.key_env} onPress={() => setEditing(p)} />
+                  <ListRow key={p.slug} icon={<Key size={18} color={t.colors.textSecondary} />} title={p.name} value={p.key_env} onPress={() => setEditing(p)} />
                 ))}
               </ListGroup>
             </>

@@ -186,7 +186,7 @@ function ModelSheet({ server, chatId, visible, onClose, onDismiss, model, info, 
           </View>
         ) : (
           <View style={s.now}>
-            <View style={s.nowIcon}><Cpu size={20} color={t.colors.onAccentSoft} /></View>
+            <View style={s.nowIcon}><Cpu size={20} color={t.colors.textSecondary} /></View>
             <View style={{ flex: 1, minWidth: 0 }}>
               <Text style={s.nowName} numberOfLines={1}>{model ? modelName(model) : 'Choose a model'}</Text>
               <Text style={s.nowSub} numberOfLines={1}>{activeModel(info).provider || 'This chat'}</Text>
@@ -225,24 +225,23 @@ const useStyles = makeStyles((t) => ({
   buttonText: { ...t.type.callout, fontFamily: t.fonts.medium, color: t.colors.text, flexShrink: 1 },
   headerButton: { backgroundColor: 'transparent', paddingHorizontal: 0, paddingRight: 8, minHeight: 28, maxWidth: '100%', alignSelf: 'flex-start' },
   headerButtonText: { ...t.type.caption, fontFamily: t.fonts.medium, color: t.colors.textSecondary },
-  composerButton: { backgroundColor: t.colors.card, borderWidth: 1, borderColor: t.colors.cardBorder,
-    paddingHorizontal: 14, minHeight: 38, maxWidth: '65%', flexShrink: 1 },
-  composerButtonText: { ...t.type.callout, fontFamily: t.fonts.medium, color: t.colors.text },
+  composerButton: { backgroundColor: 'transparent', paddingHorizontal: 10, minHeight: 36, maxWidth: '65%', flexShrink: 1 },
+  composerButtonText: { ...t.type.footnote, fontSize: 13.5, fontFamily: t.fonts.medium, color: t.colors.textSecondary },
   scroll: { flexShrink: 1 },
   body: { gap: t.space.md, paddingHorizontal: 2, paddingBottom: t.space.xs },
   controls: { flexDirection: 'row', alignItems: 'center', gap: t.space.sm, minHeight: 44 },
   now: {
     flexDirection: 'row', alignItems: 'center', gap: t.space.md, padding: t.space.md, borderRadius: t.radius.lg,
-    backgroundColor: t.colors.card, borderWidth: 1, borderColor: t.colors.cardBorder,
+    backgroundColor: t.colors.surface, borderWidth: 1, borderColor: t.colors.border,
   },
-  nowIcon: { width: 44, height: 44, borderRadius: t.radius.pill, alignItems: 'center', justifyContent: 'center', backgroundColor: t.colors.accentSoft },
+  nowIcon: { width: 44, height: 44, borderRadius: t.radius.pill, alignItems: 'center', justifyContent: 'center', backgroundColor: t.colors.surfaceSunken },
   nowName: { ...t.type.heading, color: t.colors.text },
   nowSub: { ...t.type.footnote, color: t.colors.textSecondary },
   inset: { paddingHorizontal: t.space.sm },
   skeleton: { gap: t.space.sm },
   skeletonRow: {
     minHeight: 60, justifyContent: 'center', gap: t.space.sm, paddingHorizontal: t.space.lg, borderRadius: t.radius.lg,
-    backgroundColor: t.colors.card, borderWidth: 1, borderColor: t.colors.cardBorder,
+    backgroundColor: t.colors.surface, borderWidth: 1, borderColor: t.colors.border,
   },
   wait: { alignItems: 'center', gap: t.space.md, paddingVertical: t.space.lg },
 }));

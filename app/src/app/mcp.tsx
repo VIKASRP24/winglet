@@ -83,7 +83,7 @@ function McpScreen() {
         <Animated.View entering={FadeIn}>
           {info.needs_reload ? (
             <Card style={s.banner}>
-              <RefreshCw size={18} color={t.colors.onAccentSoft} />
+              <RefreshCw size={18} color={t.colors.textSecondary} />
               <Text style={s.bannerText}>
                 {info.can_reload ? 'Reconnect to put your changes to work.' : 'Restart the server to put your changes to work.'}
               </Text>
@@ -95,7 +95,7 @@ function McpScreen() {
           {info.servers.length ? (
             <ListGroup>
               {info.servers.map((x) => (
-                <ListRow key={x.name} icon={<Plug size={18} color={x.enabled ? t.colors.onAccentSoft : t.colors.textTertiary} />}
+                <ListRow key={x.name} icon={<Plug size={18} color={x.enabled ? t.colors.textSecondary : t.colors.textTertiary} />}
                   title={prettyName(x.name)} value={serverPlace(x)} subtitle={x.source === 'plugin' ? `From ${x.plugin}` : undefined}
                   onPress={() => setOpen(x)} chevron={false}
                   right={x.source === 'plugin' ? undefined

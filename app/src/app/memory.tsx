@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Text, View } from 'react-native';
-import Animated, { FadeInDown } from 'react-native-reanimated';
+import Animated, { FadeIn } from 'react-native-reanimated';
 import { BookUser, NotebookPen, Plus } from '../components/icons';
 import { Screen } from '../components/Screen';
 import { withSelectedServer } from '../components/ServerScreen';
@@ -58,7 +58,7 @@ function Section({ target, store, onEdit, index }: { target: Target; store: Stor
   const nearlyFull = !!store.limit && store.used / store.limit > 0.9;
   return (
     <Animated.View entering={reduced ? undefined
-      : FadeInDown.delay(index * 80).springify().damping(spring.soft.damping).stiffness(spring.soft.stiffness)}>
+      : FadeIn.duration(180)}>
       <SectionHeader title={TITLES[target].title} />
       <ListGroup>
         {store.limit ? (

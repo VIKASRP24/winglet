@@ -1,5 +1,4 @@
 import { BlurTargetView } from 'expo-blur';
-import { LinearGradient } from 'expo-linear-gradient';
 import * as Clipboard from 'expo-clipboard';
 import { router } from 'expo-router';
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
@@ -47,7 +46,6 @@ import { ContextSheet } from '../features/context-insights/ContextSheet';
 import { GoalSheet, GoalStrip, useChatGoal } from './Goal';
 import { PausedBanner } from './PausedBanner';
 import { Glass } from './Glass';
-import { Aurora, useAuroraColors } from './Aurora';
 import {
   ArrowDown, CalendarClock, Check, ChevronDown, Clock, Copy, FileText, Folder, GitBranch, MoreHorizontal, Pencil, Reply, RotateCcw, Share,
 } from './icons';
@@ -86,7 +84,11 @@ type Actions = {
 };
 
 type Landing = { dock: (props: { focused: boolean; onPetLayout: (frame: DockPetFrame) => void }) => ReactNode;
-  title: string; prepareChat?: () => Promise<string | null>; action?: ReactNode };
+  title: string; prepareChat?: () => Promise<string | null>; action?: ReactNode;
+  /** Makes the header title a button (the bot picker), with a chevron. */
+  onTitlePress?: () => void;
+  /** Extra header buttons, before the inbox. */
+  actions?: ReactNode };
 
 export function ChatView({ server, chatId, showBack, embedded, landing }: { server: Server; chatId: string; showBack?: boolean; embedded?: boolean; landing?: Landing }) {
   const t = useTheme();
@@ -198,21 +200,18 @@ export function ChatView({ server, chatId, showBack, embedded, landing }: { serv
     : view.kind === 'recovering' ? 'Finding new address…' : view.kind === 'unreachable' ? 'Offline' : view.title;
   const topPad = embedded ? 0 : insets.top;
   const dockOffset = Math.max(0, (viewportH - headerH - composerH - 8 - dockHeight) / 2);
-  const aurora = useAuroraColors(server);
 
   return (
     <KeyboardViewport>{(keyboardVisible) => {
       const committed = !landing?.action && (inputFocused || keyboardVisible || !composing);
       return <View style={s.root} onLayout={(e) => { setWidth(e.nativeEvent.layout.width); setViewportH(e.nativeEvent.layout.height ?? 0); }}>
       <BlurTargetView ref={target} style={{ flex: 1 }}>
-        {/* Full glow on the landing; in a conversation only a faint wash at the top, behind the glass header. */}
-        <Aurora colors={aurora} strength={composing ? 1 : 0.55} top={!composing} />
         {!composing ? <Animated.View entering={landing ? FadeIn.duration(reduced ? 0 : 180) : undefined} style={{ flex: 1 }}><MessageList key={turnKey} server={server} chatId={chatId} messages={shown} loaded={!!loaded || !!messages?.length}
           typing={typing} top={headerH} bottom={composerH + (committed ? 60 : 0)} onOpen={setSelected} onReply={reply} onQuote={runtime?.info?.features?.quoted_comments ? quoteMessage : undefined} focus={focus}
           offline={view.kind !== 'online' && view.kind !== 'connecting'} /></Animated.View> : null}
         {landing && composing ? <View pointerEvents={committed ? 'none' : 'box-none'}
           style={[s.landingStage, { top: headerH, bottom: composerH + 8, display: committed ? 'none' : 'flex' }]}>
-          <View onLayout={(e) => { if (e.nativeEvent.layout.height > 0) setDockHeight(e.nativeEvent.layout.height); }}>
+          <View style={{ flex: 1 }} onLayout={(e) => { if (e.nativeEvent.layout.height > 0) setDockHeight(e.nativeEvent.layout.height); }}>
             {landing.dock({ focused: committed, onPetLayout: petLayout })}
           </View>
         </View> : null}
@@ -221,22 +220,34 @@ export function ChatView({ server, chatId, showBack, embedded, landing }: { serv
         {composing ? null : <Glass target={target} borderless style={StyleSheet.absoluteFill} />}
         <View style={[s.header, { paddingTop: topPad + 8 }]}>
           <NavigationToggle />
-          {!composing ? <AgentFace server={server} size={34} still /> : null}
-          <View style={{ flex: 1, minWidth: 0 }}>
-            <Text style={s.headerTitle} numberOfLines={1} accessibilityRole="header">{title}</Text>
-            <View style={s.headerIdentity}>
-              <View style={[s.statusDot, { backgroundColor: view.kind !== 'online' ? t.colors.warning : typing ? t.colors.accent : t.colors.success }]} />
-              <Text style={[s.headerSub, { flexShrink: 0 }]} numberOfLines={1}>{status}</Text>
-              {!composing && project ? (
-                <Tap feedback="selection" accessibilityLabel={`In project ${project.name}. Open project`} hitSlop={8}
-                  onPress={() => router.push(`/project/${server.id}/${project.id}`)} style={s.projectChip}>
-                  <Folder size={11} color={t.colors.onAccentSoft} />
-                  <Text style={s.projectChipText} numberOfLines={1}>{project.name}</Text>
-                </Tap>
-              ) : null}
+          {composing && landing?.onTitlePress ? (
+            <View style={s.headerFill}>
+              <Tap feedback="selection" scaleTo={0.98} onPress={landing.onTitlePress} accessibilityLabel={`${title}, ${status}. Switch bot`}
+                style={({ pressed, hovered }) => [s.titleButton, (pressed || hovered) && { backgroundColor: t.colors.pressed }]}>
+                <View style={[s.statusDot, { backgroundColor: view.kind !== 'online' ? t.colors.warning : t.colors.success }]} />
+                <Text style={s.headerTitle} numberOfLines={1} accessibilityRole="header">{title}</Text>
+                <ChevronDown size={16} color={t.colors.textSecondary} />
+              </Tap>
             </View>
-          </View>
-          {!landing?.prepareChat && !landing?.action ? <IconButton label="Chat options" onPress={() => setMenu(true)}><MoreHorizontal size={22} color={t.colors.text} /></IconButton> : null}
+          ) : <>
+            {!composing ? <AgentFace server={server} size={30} still /> : null}
+            <View style={s.headerFill}>
+              <Text style={s.headerTitle} numberOfLines={1} accessibilityRole="header">{title}</Text>
+              <View style={s.headerIdentity}>
+                <View style={[s.statusDot, { backgroundColor: view.kind !== 'online' ? t.colors.warning : typing ? t.colors.accent : t.colors.success }]} />
+                <Text style={[s.headerSub, { flexShrink: 0 }]} numberOfLines={1}>{status}</Text>
+                {!composing && project ? (
+                  <Tap feedback="selection" accessibilityLabel={`In project ${project.name}. Open project`} hitSlop={8}
+                    onPress={() => router.push(`/project/${server.id}/${project.id}`)} style={s.projectChip}>
+                    <Folder size={11} color={t.colors.textSecondary} />
+                    <Text style={s.projectChipText} numberOfLines={1}>{project.name}</Text>
+                  </Tap>
+                ) : null}
+              </View>
+            </View>
+          </>}
+          {composing ? landing?.actions : null}
+          {!landing?.prepareChat && !landing?.action && !composing ? <IconButton label="Chat options" onPress={() => setMenu(true)}><MoreHorizontal size={22} color={t.colors.text} /></IconButton> : null}
           <InboxButton />
         </View>
         {composing ? null : <View style={s.hairline} />}
@@ -642,7 +653,7 @@ const MessageRow = memo(function MessageRow({ server, message, first, last, live
       {routine ? (
         <Tap style={s.routine} disabled={!history || !routineId} accessibilityLabel={`From the routine ${routine}${history && routineId ? ", open history" : ""}`}
           onPress={() => router.push(routineHref(server.id, routineId, runId) as any)}>
-          <CalendarClock size={13} color={t.colors.onAccentSoft} />
+          <CalendarClock size={13} color={t.colors.textSecondary} />
           <Text style={s.routineText} numberOfLines={1}>{routine}</Text>
         </Tap>
       ) : null}
@@ -704,10 +715,8 @@ const MessageRow = memo(function MessageRow({ server, message, first, last, live
         {files}
         {message.text ? (
           <View style={[s.bubble, last && s.bubbleTail, files ? { marginTop: 4 } : null]}>
-            <LinearGradient pointerEvents="none" colors={[t.colors.accentFillLight, t.colors.accentFill]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
-              style={StyleSheet.absoluteFill} />
-            {quote(true)}
-            {text(true)}
+            {quote(false)}
+            {text(false)}
           </View>
         ) : null}
         {last && sendable ? <Text style={[s.time, { marginTop: 4, marginRight: 6 }]}>{timeOf(message.created_at)}</Text> : null}
@@ -1014,29 +1023,31 @@ const useStyles = makeStyles((t) => ({
   lane: { width: '100%', maxWidth: 880, alignSelf: 'center' },
   center: { alignItems: 'center', justifyContent: 'center', gap: 12 },
   headerWrap: { position: 'absolute', top: 0, left: 0, right: 0 },
-  header: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 8, paddingBottom: 10 },
-  hairline: { height: StyleSheet.hairlineWidth * 2, backgroundColor: t.colors.glassBorder },
+  header: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 6, paddingBottom: 8, minHeight: 52 },
+  headerFill: { flex: 1, minWidth: 0, marginLeft: 4 },
+  titleButton: { flexDirection: 'row', alignItems: 'center', gap: 6, alignSelf: 'flex-start', maxWidth: '100%', minHeight: 40,
+    paddingHorizontal: 8, marginLeft: -8, borderRadius: t.radius.md },
+  hairline: { height: StyleSheet.hairlineWidth * 2, backgroundColor: t.colors.border },
   landingStage: { position: 'absolute', left: 0, right: 0, justifyContent: 'center' },
   headerIdentity: { flexDirection: 'row', alignItems: 'center', gap: t.space.xs, marginTop: 2 },
-  headerTitle: { ...t.type.heading, fontFamily: t.fonts.bold, color: t.colors.text, flexShrink: 1 },
+  headerTitle: { ...t.type.heading, color: t.colors.text, flexShrink: 1 },
   projectChip: { flexDirection: 'row', alignItems: 'center', gap: 4, flexShrink: 1, minWidth: 0, marginLeft: t.space.xs,
-    paddingHorizontal: 7, minHeight: 20, borderRadius: t.radius.pill, backgroundColor: t.colors.accentSoft, maxWidth: '100%' },
-  projectChipText: { ...t.type.caption, fontFamily: t.fonts.medium, color: t.colors.onAccentSoft, flexShrink: 1, fontSize: 11.5 },
+    paddingHorizontal: 6, minHeight: 18, borderRadius: t.radius.xs, backgroundColor: t.colors.surfaceSunken, maxWidth: '100%' },
+  projectChipText: { ...t.type.caption, color: t.colors.textSecondary, flexShrink: 1, fontSize: 11.5 },
   headerSub: { ...t.type.caption, color: t.colors.textSecondary, flexShrink: 1 },
   statusDot: { width: 7, height: 7, borderRadius: 4 },
   dayWrap: { alignItems: 'center', marginTop: t.space.lg, marginBottom: t.space.xs },
   day: {
     ...t.type.caption, color: t.colors.textTertiary, paddingHorizontal: t.space.md, paddingVertical: t.space.xs, borderRadius: t.radius.pill,
-    backgroundColor: t.colors.card, borderWidth: 1, borderColor: t.colors.cardBorder, overflow: 'hidden',
+    backgroundColor: t.colors.surface, borderWidth: StyleSheet.hairlineWidth * 2, borderColor: t.colors.border, overflow: 'hidden',
   },
   botRow: { paddingHorizontal: 16 },
   botHead: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 },
   botName: { ...t.type.caption, fontSize: 13.5, fontFamily: t.fonts.semibold, color: t.colors.text },
   botBody: { paddingLeft: 34, paddingRight: 8 },
   userRow: { paddingHorizontal: 14, alignItems: 'flex-end' },
-  bubble: { maxWidth: '84%', borderRadius: t.radius.lg, paddingHorizontal: t.space.lg, paddingVertical: t.space.md, backgroundColor: t.colors.accentFill,
-    overflow: 'hidden' },
-  bubbleTail: { borderBottomRightRadius: 8 },
+  bubble: { maxWidth: '84%', borderRadius: 20, paddingHorizontal: 16, paddingVertical: 10, backgroundColor: t.colors.bubble },
+  bubbleTail: { borderBottomRightRadius: 6 },
   time: { ...t.type.caption, fontSize: 11.5, color: t.colors.textTertiary },
   compact: { flexDirection: 'row', paddingHorizontal: 14, paddingRight: 18 },
   gutter: { width: 38 },
@@ -1044,9 +1055,9 @@ const useStyles = makeStyles((t) => ({
   author: { fontFamily: t.fonts.semibold, fontSize: 14 },
   routine: {
     flexDirection: 'row', alignItems: 'center', gap: 6, alignSelf: 'flex-start', paddingHorizontal: 10, paddingVertical: 4,
-    borderRadius: t.radius.pill, backgroundColor: t.colors.accentSoft, marginBottom: 6,
+    borderRadius: t.radius.xs, backgroundColor: t.colors.surfaceSunken, marginBottom: 6,
   },
-  routineText: { ...t.type.caption, fontFamily: t.fonts.semibold, color: t.colors.onAccentSoft },
+  routineText: { ...t.type.caption, color: t.colors.textSecondary },
   systemCard: { marginTop: 8 },
   responseActions: { flexDirection: 'row', alignItems: 'center', gap: 2, marginTop: 2, alignSelf: 'flex-start' },
   statusNotice: { paddingLeft: 50, paddingRight: t.space.xl, paddingVertical: t.space.sm },
@@ -1071,7 +1082,7 @@ const useStyles = makeStyles((t) => ({
   activity: { paddingHorizontal: 16, marginTop: 8, alignItems: 'flex-start' },
   activityPill: {
     flexDirection: 'row', alignItems: 'center', gap: t.space.sm, paddingHorizontal: 14, minHeight: 38, borderRadius: t.radius.pill,
-    backgroundColor: t.colors.card, borderWidth: 1, borderColor: t.colors.cardBorder, marginLeft: 34,
+    backgroundColor: t.colors.surface, borderWidth: StyleSheet.hairlineWidth * 2, borderColor: t.colors.border, marginLeft: 34,
   },
   activityDots: { flexDirection: 'row', alignItems: 'center', gap: 3 },
   activityDot: { width: 4, height: 4, borderRadius: 2 },
@@ -1079,7 +1090,7 @@ const useStyles = makeStyles((t) => ({
   activityList: { marginLeft: 34, marginTop: 6, paddingLeft: 10, gap: 3, borderLeftWidth: 2, borderLeftColor: t.colors.border, alignSelf: 'stretch', paddingRight: 8 },
   activityLine: { ...t.type.caption, fontFamily: t.fonts.mono, fontSize: 12, color: t.colors.textSecondary },
   typing: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, paddingTop: 14 },
-  typingBubble: { paddingHorizontal: 14, paddingVertical: 10, borderRadius: t.radius.pill, backgroundColor: t.colors.card, borderWidth: 1, borderColor: t.colors.cardBorder },
+  typingBubble: { paddingHorizontal: 14, paddingVertical: 10, borderRadius: t.radius.pill, backgroundColor: t.colors.surface, borderWidth: StyleSheet.hairlineWidth * 2, borderColor: t.colors.border },
   emptyTitle: { ...t.type.title, color: t.colors.text, textAlign: 'center', marginTop: 8 },
   emptyText: { ...t.type.callout, color: t.colors.textSecondary, textAlign: 'center', maxWidth: 400 },
   suggestions: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 8, marginTop: 8, maxWidth: 440 },

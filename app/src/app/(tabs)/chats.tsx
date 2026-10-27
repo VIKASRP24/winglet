@@ -1,16 +1,14 @@
 import { Redirect, router } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
-import { Platform, ScrollView, Text, View } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
-import Animated, { FadeInDown, LinearTransition } from 'react-native-reanimated';
+import { Platform, ScrollView, Text, View, StyleSheet } from 'react-native';
+import Animated, { FadeIn, LinearTransition } from 'react-native-reanimated';
 import { AgentFace } from '../../components/AgentFace';
-import { Aurora, useAuroraColors } from '../../components/Aurora';
 import { NavigationHeader, useContentWidth } from '../../components/AppNavigation';
 import { ChatView } from '../../components/ChatView';
 import { ChatMenu } from '../../components/ChatMenu';
 import { ChatFilters } from '../../components/ChatFilters';
 import { ConnectionBanner } from '../../components/ConnectionBanner';
-import { Folder, Hash, MessageSquarePlus, MoreHorizontal, Pin, Search, Sparkles } from '../../components/icons';
+import { Folder, Hash, MessageSquarePlus, MoreHorizontal, Pin, Search, Sparkles, SquarePen } from '../../components/icons';
 import { useTabBarSpace } from '../../components/TabBar';
 import { Button, Chip, IconButton, SearchField, SectionHeader, Skeleton, Tap } from '../../components/ui';
 import { projectChatIds } from '../../features/projects/logic';
@@ -60,7 +58,6 @@ function ChatList({ server, activeChatId }: { server: Server; activeChatId?: str
   const [filter, setFilter] = useState<ChatFilter | 'archived'>('all');
   const [projectId, setProjectId] = useState<string | null>(null);
   const reduced = useReducedMotion();
-  const aurora = useAuroraColors(server);
   const archived = filter === 'archived';
   const activeFilter = filter === 'running' || filter === 'needs-you';
   const now = useActivityClock({ [server.id]: rt?.typing ?? {} });
@@ -119,7 +116,7 @@ function ChatList({ server, activeChatId }: { server: Server; activeChatId?: str
   const entering = () => {
     const index = order++;
     return reduced || index > 12 ? undefined
-      : FadeInDown.delay(index * 30).springify().damping(spring.soft.damping).stiffness(spring.soft.stiffness);
+      : FadeIn.duration(180);
   };
   const layout = reduced ? undefined : LinearTransition.duration(220).easing(easeOut);
   const row = (c: Chat, pinned = false, hero = false) => (
@@ -133,15 +130,11 @@ function ChatList({ server, activeChatId }: { server: Server; activeChatId?: str
 
   return (
     <View style={s.root}>
-      <View pointerEvents="none" style={s.glow}>
-        <Aurora colors={aurora} strength={0.5} />
-        <LinearGradient pointerEvents="none" colors={[alpha(t.colors.bg, 0), t.colors.bg]} style={s.glowFade} />
-      </View>
       <NavigationHeader title={archived ? 'Archived chats' : 'All chats'} right={<>
         {rt?.info?.features?.projects ? <IconButton label="Projects" onPress={() => router.push('/projects')}>
           <Folder size={21} color={t.colors.text} /></IconButton> : null}
-        <IconButton label={project ? `New chat in ${project.name}` : 'New chat'} onPress={newChat} variant="tonal" style={{ marginLeft: t.space.xs }}>
-          <MessageSquarePlus size={19} color={t.colors.onAccentSoft} /></IconButton>
+        <IconButton label={project ? `New chat in ${project.name}` : 'New chat'} onPress={newChat}>
+          <SquarePen size={21} color={t.colors.text} /></IconButton>
       </>} />
       <ScrollView contentContainerStyle={{ paddingBottom: wide ? 24 : tabSpace + 8, paddingHorizontal: 16 }} keyboardShouldPersistTaps="handled">
         <SearchField value={query} onChangeText={setQuery} placeholder="Search chats" style={{ marginBottom: t.space.md }} />
@@ -151,7 +144,7 @@ function ChatList({ server, activeChatId }: { server: Server; activeChatId?: str
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.chipRow} style={s.chipScroll} accessibilityLabel="Filter by project">
             <Chip label="All chats" selected={!projectId} onPress={() => setProjectId(null)} />
             {projectChips.map((p) => (
-              <Chip key={p.id} label={p.name} selected={projectId === p.id} icon={<Folder size={14} color={projectId === p.id ? t.colors.onAccentSoft : t.colors.textSecondary} />}
+              <Chip key={p.id} label={p.name} selected={projectId === p.id} icon={<Folder size={14} color={projectId === p.id ? t.colors.onInk : t.colors.textSecondary} />}
                 accessibilityLabel={`${p.name} project, ${p.chat_count} ${p.chat_count === 1 ? 'chat' : 'chats'}`}
                 onPress={() => setProjectId(projectId === p.id ? null : p.id)} />
             ))}
@@ -161,7 +154,7 @@ function ChatList({ server, activeChatId }: { server: Server; activeChatId?: str
           <Text style={s.filterText} numberOfLines={1}>{archived ? 'On this device' : activeFilter ? `${filtered.length} ${filtered.length === 1 ? 'chat' : 'chats'}` : project ? `Project · ${project.name}` : `${actionable.length} chats`}</Text>
           <View style={{ flex: 1 }} />
           {updates ? <Tap accessibilityLabel="Open updates" onPress={() => open('home')} feedback="selection" style={s.updates}>
-            <View style={s.updatesPill}><Sparkles size={14} color={t.colors.accent} /><Text style={s.updateLabel} numberOfLines={1}>Updates</Text></View>
+            <View style={s.updatesPill}><Sparkles size={14} color={t.colors.textSecondary} /><Text style={s.updateLabel} numberOfLines={1}>Updates</Text></View>
           </Tap> : null}
         </View>
 
@@ -181,7 +174,7 @@ function ChatList({ server, activeChatId }: { server: Server; activeChatId?: str
                 <AgentFace server={server} size={64} />
                 <Text style={s.emptyText}>{archived ? 'No archived chats' : filter === 'running' ? 'No tasks running.' : filter === 'needs-you' ? 'Nothing waiting on you.'
                   : project ? `No chats in ${project.name} yet` : 'No chats yet'}</Text>
-                {!archived && !activeFilter ? <Button title={project ? 'New chat here' : 'New chat'} variant="tonal" icon={<Hash size={16} color={t.colors.onAccentSoft} />} onPress={newChat} /> : null}
+                {!archived && !activeFilter ? <Button title={project ? 'New chat here' : 'New chat'} icon={<SquarePen size={16} color={t.colors.onInk} />} onPress={newChat} /> : null}
                 {project ? <Button title="Show all chats" variant="ghost" onPress={() => setProjectId(null)} /> : null}
               </View>
             ) : null}
@@ -225,7 +218,7 @@ function ChatRow({ server, showFace, hero, pinned, title, subtitle, time, subtit
         {showFace ? <AgentFace server={server} size={hero ? 40 : 28} still /> : null}
         <View style={{ flex: 1, minWidth: 0 }}>
           <View style={s.rowHead}>
-            {pinned ? <Pin size={12} color={active ? t.colors.onAccentSoft : t.colors.textTertiary} /> : null}
+            {pinned ? <Pin size={12} color={t.colors.textTertiary} /> : null}
             <Text style={[s.rowTitle, hero && s.heroTitle, active && s.activeTitle]} numberOfLines={1}>{title}</Text>
             <Text style={[s.time, menu && hover && { opacity: 0 }]}>{ago(time)}</Text>
           </View>
@@ -267,7 +260,7 @@ function ResultRow({ server, result, query, onPress }: { server: Server; result:
   return (
     <Tap feedback="selection" scaleTo={0.99} onPress={onPress} accessibilityLabel={`${who} in ${where}: ${result.snippet}. Open`}
       style={({ pressed, hovered }) => [s.row, (pressed || hovered) && s.hover]}>
-      <View style={[s.rowIcon, { backgroundColor: t.colors.accentSoft }]}><Search size={16} color={t.colors.accent} /></View>
+      <View style={s.rowIcon}><Search size={18} color={t.colors.textSecondary} /></View>
       <View style={{ flex: 1, minWidth: 0 }}>
         <View style={s.rowHead}>
           <Text style={s.rowTitle} numberOfLines={1}>{where}</Text>
@@ -309,31 +302,29 @@ const useStyles = makeStyles((t) => ({
   split: { flex: 1, flexDirection: 'row', backgroundColor: t.colors.bg },
   listPane: { width: 360, borderRightWidth: 1, borderRightColor: t.colors.border },
   root: { flex: 1, backgroundColor: t.colors.bg, overflow: 'hidden' },
-  glow: { position: 'absolute', top: 0, left: 0, right: 0, height: 300 },
-  glowFade: { position: 'absolute', left: 0, right: 0, bottom: 0, height: 150 },
   section: { paddingTop: 14, paddingBottom: 6 },
   chipScroll: { marginTop: 6, marginHorizontal: -16 },
   chipRow: { flexDirection: 'row', gap: 8, paddingHorizontal: 16, paddingBottom: 2 },
   filters: { flexDirection: 'row', alignItems: 'center', gap: 14, marginTop: 4, marginBottom: 2, paddingHorizontal: 4 },
   filterText: { ...t.type.footnote, fontFamily: t.fonts.medium, color: t.colors.textTertiary },
   updates: { minHeight: 44, justifyContent: 'center', flexShrink: 1 },
-  updatesPill: { flexDirection: 'row', gap: 6, alignItems: 'center', minHeight: 32, paddingHorizontal: 12, borderRadius: t.radius.pill,
-    backgroundColor: t.colors.card, borderWidth: 1, borderColor: t.colors.cardBorder },
+  updatesPill: { flexDirection: 'row', gap: 6, alignItems: 'center', minHeight: 30, paddingHorizontal: 10, borderRadius: t.radius.sm,
+    backgroundColor: t.colors.surfaceSunken },
   updateLabel: { ...t.type.caption, fontFamily: t.fonts.semibold, color: t.colors.text, flexShrink: 1 },
   hover: { backgroundColor: t.colors.pressed },
-  active: { backgroundColor: t.colors.accentSoft, borderColor: 'transparent' },
-  activeTitle: { fontFamily: t.fonts.semibold, color: t.colors.onAccentSoft },
-  row: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 14, paddingVertical: 8, borderRadius: t.radius.lg, minHeight: 54 },
-  // The chat to pick up where you left off: a frosted card with the bot's face.
-  hero: { paddingVertical: 14, minHeight: 72, backgroundColor: t.colors.card, borderWidth: 1, borderColor: t.colors.cardBorder },
+  active: { backgroundColor: t.colors.surfaceHigh },
+  activeTitle: { color: t.colors.text },
+  row: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 12, paddingVertical: 8, borderRadius: t.radius.md, minHeight: 50 },
+  // The chat to pick up where you left off: a card with the bot's face.
+  hero: { paddingVertical: 12, minHeight: 64, backgroundColor: t.colors.surface, borderWidth: StyleSheet.hairlineWidth * 2, borderColor: t.colors.border, borderRadius: t.radius.lg },
   heroTitle: { ...t.type.heading },
   rowMore: { position: 'absolute', right: 8, top: '50%', marginTop: -16 },
-  rowIcon: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
+  rowIcon: { width: 28, alignItems: 'center', justifyContent: 'center' },
   rowHead: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  rowTitle: { ...t.type.callout, fontFamily: t.fonts.medium, color: t.colors.text, flex: 1, minWidth: 0 },
+  rowTitle: { ...t.type.callout, color: t.colors.text, flex: 1, minWidth: 0 },
   preview: { ...t.type.caption, color: t.colors.textSecondary, marginTop: 2 },
   time: { ...t.type.caption, fontFamily: t.fonts.regular, color: t.colors.textTertiary },
   empty: { alignItems: 'center', gap: 14, paddingVertical: 32, paddingHorizontal: 12 },
   emptyText: { ...t.type.callout, color: t.colors.textSecondary, textAlign: 'center' },
-  hit: { fontFamily: t.fonts.semibold, color: t.colors.text, backgroundColor: t.colors.accentSoft },
+  hit: { fontFamily: t.fonts.semibold, color: t.colors.text },
 }));

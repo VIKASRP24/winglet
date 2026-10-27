@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Text, View } from 'react-native';
-import Animated, { FadeIn, FadeInDown, FadeOut, FadeOutUp } from 'react-native-reanimated';
+import Animated, { FadeIn, FadeOut, FadeOutUp } from 'react-native-reanimated';
 import Svg, { Circle } from 'react-native-svg';
 import { api } from '../lib/api';
 import { haptic } from '../lib/haptics';
@@ -69,7 +69,7 @@ export function GoalStrip({ goal, onPress }: { goal: Goal; onPress: () => void }
   const s = useStyles();
   const reduced = useReducedMotion();
   return (
-    <Animated.View entering={reduced ? FadeIn.duration(120) : FadeInDown.springify().damping(spring.soft.damping).stiffness(spring.soft.stiffness)}
+    <Animated.View entering={reduced ? FadeIn.duration(120) : FadeIn.duration(180)}
       exiting={reduced ? FadeOut.duration(120) : FadeOutUp.duration(160)} style={s.float}>
       <Tap feedback="selection" scaleTo={0.97} onPress={onPress} accessibilityLabel={`Goal: ${goal.goal}. ${goalStatus(goal)}. Details`}>
         <FloatingPill style={s.strip}>
@@ -168,7 +168,7 @@ export function GoalSheet({ server, chatId, goal, visible, onClose, onChanged }:
                       accessibilityLabel="Add a requirement" returnKeyType="done" />
                   </View>
                   <IconButton label="Add requirement" variant="tonal" size={44} onPress={addSub}>
-                    <Plus size={18} color={t.colors.onAccentSoft} />
+                    <Plus size={18} color={t.colors.textSecondary} />
                   </IconButton>
                 </View>
               ) : null}
@@ -197,19 +197,19 @@ const useStyles = makeStyles((t) => ({
   stripStatus: { ...t.type.caption, fontSize: 11.5, lineHeight: 14 },
   hero: {
     flexDirection: 'row', alignItems: 'center', gap: t.space.lg, padding: t.space.lg, borderRadius: t.radius.lg,
-    backgroundColor: t.colors.card, borderWidth: 1, borderColor: t.colors.cardBorder,
+    backgroundColor: t.colors.surface, borderWidth: 1, borderColor: t.colors.border,
   },
   goal: { ...t.type.heading, color: t.colors.text },
   status: { ...t.type.caption, fontFamily: t.fonts.semibold },
   label: { ...t.type.caption, fontFamily: t.fonts.semibold, letterSpacing: 0.6, textTransform: 'uppercase', color: t.colors.textTertiary, paddingHorizontal: t.space.xs },
   note: { ...t.type.callout, color: t.colors.textSecondary },
-  noteBox: { gap: 6, padding: t.space.lg, borderRadius: t.radius.lg, backgroundColor: t.colors.card, borderWidth: 1, borderColor: t.colors.cardBorder },
+  noteBox: { gap: 6, padding: t.space.lg, borderRadius: t.radius.lg, backgroundColor: t.colors.surface, borderWidth: 1, borderColor: t.colors.border },
   subgoal: {
     flexDirection: 'row', alignItems: 'center', gap: 10, paddingLeft: t.space.md, paddingVertical: t.space.xs, borderRadius: t.radius.lg,
-    backgroundColor: t.colors.card, borderWidth: 1, borderColor: t.colors.cardBorder,
+    backgroundColor: t.colors.surface, borderWidth: 1, borderColor: t.colors.border,
   },
-  subBadge: { width: 24, height: 24, borderRadius: t.radius.pill, alignItems: 'center', justifyContent: 'center', backgroundColor: t.colors.accentSoft },
-  subIndex: { ...t.type.caption, fontFamily: t.fonts.bold, color: t.colors.onAccentSoft },
+  subBadge: { width: 24, height: 24, borderRadius: t.radius.pill, alignItems: 'center', justifyContent: 'center', backgroundColor: t.colors.surfaceSunken },
+  subIndex: { ...t.type.caption, fontFamily: t.fonts.semibold, color: t.colors.textSecondary },
   subText: { ...t.type.callout, color: t.colors.text, flex: 1, paddingVertical: 6 },
   addRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
 }));

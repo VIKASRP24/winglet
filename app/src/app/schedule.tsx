@@ -2,8 +2,8 @@ import { ArchivedRoutineLinks } from '../features/routine-history/ArchivedRoutin
 import { routineHref } from '../features/routine-history/model';
 import { router } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, Text, View } from 'react-native';
-import Animated, { FadeInDown, LinearTransition } from 'react-native-reanimated';
+import { ActivityIndicator, Text, View, StyleSheet } from 'react-native';
+import Animated, { FadeIn, LinearTransition } from 'react-native-reanimated';
 import { CalendarClock, CheckCircle2, ChevronRight, CircleAlert, CirclePause, Pause, Play, Plus } from '../components/icons';
 import { Screen } from '../components/Screen';
 import { withSelectedServer } from '../components/ServerScreen';
@@ -27,7 +27,7 @@ const IDEAS = [
 export type Draft = { id?: string; name: string; prompt: string; schedule: string };
 
 const rise = (reduced: boolean, i: number) => (reduced ? undefined
-  : FadeInDown.delay(Math.min(i, 8) * 60).springify().damping(spring.soft.damping).stiffness(spring.soft.stiffness));
+  : FadeIn.duration(180));
 
 /** Prompts your agent runs on its own schedule. Results arrive in the Updates chat. */
 export default withSelectedServer(ScheduleScreen);
@@ -110,9 +110,9 @@ function Empty({ onPick }: { onPick: (d?: Draft) => void }) {
   return (
     <View>
       <Animated.View entering={rise(reduced, 0)} style={s.emptyHero}>
-        <View style={s.emptyIcon}><CalendarClock size={30} color={t.colors.onAccentSoft} /></View>
-        <Text style={s.emptyBody}>No routines scheduled.</Text>
-        <Button title="New routine" icon={<Plus size={16} color={t.colors.onAccent} />} onPress={() => onPick()} style={{ alignSelf: 'stretch' }} />
+        <CalendarClock size={32} color={t.colors.textTertiary} strokeWidth={1.6} />
+        <Text style={s.emptyBody}>No routines yet</Text>
+        <Button title="New routine" icon={<Plus size={16} color={t.colors.onInk} />} onPress={() => onPick()} />
       </Animated.View>
       <Animated.View entering={rise(reduced, 1)}>
         <SectionHeader title="Ideas" />
@@ -124,7 +124,7 @@ function Empty({ onPick }: { onPick: (d?: Draft) => void }) {
   );
 }
 
-/** One routine on the timeline: a dot on the rail for its state, then a frosted card saying when it runs next. */
+/** One routine: when it runs next, what it is, how it last went, and its two everyday actions. */
 function RoutineCard({ routine: r, busy, onAction, onEdit, last }: {
   routine: Routine; busy: string | null; last?: boolean; onAction: (a: 'pause' | 'resume' | 'run') => void; onEdit: () => void;
 }) {
@@ -138,17 +138,10 @@ function RoutineCard({ routine: r, busy, onAction, onEdit, last }: {
   const status = failed ? `Last run failed: ${r.last_error || r.last_status}`
     : paused ? r.paused_reason || 'Paused' : done ? 'Completed'
     : r.last_run_at ? `Last ran ${agoText(Date.parse(r.last_run_at) / 1000)}` : undefined;
-  const tone = failed ? t.colors.danger : paused ? t.colors.warning : done ? t.colors.textTertiary : t.colors.onAccentSoft;
-  const toneBg = failed ? t.colors.dangerSoft : paused ? t.colors.warningSoft : done ? t.colors.card : t.colors.accentSoft;
-  const whenColor = failed ? t.colors.danger : paused ? t.colors.warning : done ? t.colors.textTertiary : t.colors.accent;
+  const whenColor = failed ? t.colors.danger : paused ? t.colors.warning : t.colors.textSecondary;
   const when = next ? `Next ${next}` : paused ? 'Paused' : done ? 'Done' : undefined;
-  const Icon = failed ? CircleAlert : paused ? CirclePause : done ? CheckCircle2 : CalendarClock;
   return (
     <View style={[s.item, done && { opacity: 0.7 }]}>
-      <View style={s.rail}>
-        <View style={[s.dot, { backgroundColor: toneBg }]}><Icon size={16} color={tone} /></View>
-        {!last ? <View style={s.line} /> : null}
-      </View>
       <View style={s.card}>
         <Tap feedback="selection" scaleTo={0.98} onPress={onEdit} accessibilityLabel={r.name || r.prompt} style={s.cardHead}>
           <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
@@ -160,8 +153,8 @@ function RoutineCard({ routine: r, busy, onAction, onEdit, last }: {
         </Tap>
         {status ? <Text style={[s.last, failed && { color: t.colors.danger }]}>{status}</Text> : null}
         {!done ? <View style={s.actions}>
-        <Button size="sm" variant="tonal" title="Run now" loading={spin('run')} disabled={!!busy}
-          icon={<Play size={14} color={t.colors.onAccentSoft} />} onPress={() => onAction('run')} />
+        <Button size="sm" variant="secondary" title="Run now" loading={spin('run')} disabled={!!busy}
+          icon={<Play size={14} color={t.colors.text} />} onPress={() => onAction('run')} />
         <Button size="sm" variant="secondary" title={paused ? 'Resume' : 'Pause'} loading={spin(paused ? 'resume' : 'pause')} disabled={!!busy}
           icon={paused ? <Play size={14} color={t.colors.text} /> : <Pause size={14} color={t.colors.text} />}
           onPress={() => onAction(paused ? 'resume' : 'pause')} />
@@ -260,25 +253,18 @@ export function EditSheet({ server, draft, onClose, onSaved }: { server: Server;
 
 const useStyles = makeStyles((t) => ({
   error: { ...t.type.callout, color: t.colors.danger, marginTop: 10 },
-  item: { flexDirection: 'row', gap: t.space.md },
-  rail: { width: 32, alignItems: 'center' },
-  dot: {
-    width: 32, height: 32, borderRadius: t.radius.pill, alignItems: 'center', justifyContent: 'center', marginTop: t.space.lg,
-    borderWidth: 1, borderColor: t.colors.cardBorder,
-  },
-  line: { flex: 1, width: 2, borderRadius: 1, backgroundColor: t.colors.border, marginTop: t.space.xs },
+  item: { marginBottom: t.space.md },
   card: {
-    flex: 1, minWidth: 0, marginBottom: t.space.md, backgroundColor: t.colors.card, borderRadius: t.radius.lg, borderWidth: 1,
-    borderColor: t.colors.cardBorder, overflow: 'hidden',
+    flex: 1, minWidth: 0, backgroundColor: t.colors.surface, borderRadius: t.radius.lg, borderWidth: StyleSheet.hairlineWidth * 2,
+    borderColor: t.colors.border, overflow: 'hidden',
   },
   cardHead: { flexDirection: 'row', alignItems: 'center', gap: t.space.md, padding: t.space.lg, minHeight: 56 },
-  when: { ...t.type.label },
+  when: { ...t.type.footnote, fontFamily: t.fonts.medium },
   cardTitle: { ...t.type.heading, color: t.colors.text },
   cardSub: { ...t.type.footnote, color: t.colors.textSecondary },
   last: { ...t.type.footnote, color: t.colors.textTertiary, paddingHorizontal: t.space.lg, marginTop: -t.space.sm, paddingBottom: t.space.md },
   actions: { flexDirection: 'row', gap: t.space.sm, paddingHorizontal: t.space.lg, paddingBottom: t.space.lg },
   emptyHero: { alignItems: 'center', gap: t.space.md, marginTop: t.space.xl, paddingVertical: t.space.lg },
-  emptyIcon: { width: 72, height: 72, borderRadius: t.radius.pill, backgroundColor: t.colors.accentSoft, alignItems: 'center', justifyContent: 'center' },
   emptyBody: { ...t.type.heading, color: t.colors.text },
   presets: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   preview: {

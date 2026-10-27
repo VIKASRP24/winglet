@@ -70,8 +70,8 @@ for (const [scheme, pure] of [['light', false], ['dark', false], ['dark', true]]
   }
 }
 
-test('dark is graphite, with true black available for OLED screens', () => {
-  assert.equal(buildColors('dark', 'iris').bg, '#09090B');
+test('dark is near-black, with true black available for OLED screens', () => {
+  assert.equal(buildColors('dark', 'iris').bg, '#0C0C0E');
   assert.equal(buildColors('dark', 'iris', true).bg, '#000000');
   assert.equal(buildColors('light', 'iris', true).bg, buildColors('light', 'iris').bg);
 });

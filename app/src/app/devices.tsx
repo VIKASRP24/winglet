@@ -66,7 +66,7 @@ function Devices({ server }: { server: Server }) {
       {owner ? (
         <>
           <SectionHeader title="Paired" right={me?.verified ? (
-            <Button size="sm" variant="tonal" title="Add a device" icon={<UserPlus size={15} color={t.colors.onAccentSoft} />} onPress={() => setAdding(true)} />
+            <Button size="sm" variant="tonal" title="Add a device" icon={<UserPlus size={15} color={t.colors.textSecondary} />} onPress={() => setAdding(true)} />
           ) : null} />
           {devices === null ? (error ? <LoadError message={error} onRetry={load} /> : (
             <View style={{ gap: 10 }}>{[0, 1].map((i) => <Skeleton key={i} height={64} radius={18} />)}</View>
@@ -74,7 +74,7 @@ function Devices({ server }: { server: Server }) {
             <ListGroup>
               {devices.map((d) => (
                 <ListRow key={d.id}
-                  icon={d.platform === 'web' ? <Monitor size={18} color={t.colors.onAccentSoft} /> : <Smartphone size={18} color={t.colors.onAccentSoft} />}
+                  icon={d.platform === 'web' ? <Monitor size={18} color={t.colors.textSecondary} /> : <Smartphone size={18} color={t.colors.textSecondary} />}
                   title={d.current ? `${d.name} (this one)` : d.name}
                   value={d.role === 'owner' ? 'Owner' : 'Member'}
                   subtitle={`${d.verified ? 'Verified' : 'Not verified'}, seen ${agoText(d.last_seen)}`}
@@ -85,7 +85,7 @@ function Devices({ server }: { server: Server }) {
           {error && devices ? <Text style={[s.note, { color: t.colors.danger, marginTop: 8 }]}>{error}</Text> : null}
           <SectionHeader title="History" />
           <ListGroup>
-            <ListRow icon={<Activity size={18} color={t.colors.onAccentSoft} />} title="Activity"
+            <ListRow icon={<Activity size={18} color={t.colors.textSecondary} />} title="Activity"
               onPress={() => router.push('/activity')} />
           </ListGroup>
         </>

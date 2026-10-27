@@ -67,9 +67,9 @@ export function FilesSheet({ server, chatId, visible, onClose, onJump }: {
                     accessibilityLabel={`${f.name}, ${bytes(f.size)}. Open. Long-press to find it in the chat`}
                     scaleTo={0.98} style={({ hovered, pressed }) => [s.file, (hovered || pressed) && { borderColor: t.colors.borderStrong }]}>
                     <View style={s.fileIcon}>
-                      {f.kind === 'video' ? <Video size={18} color={t.colors.onAccentSoft} />
-                        : f.kind === 'voice' || f.kind === 'audio' ? <Mic size={18} color={t.colors.onAccentSoft} />
-                          : <FileText size={18} color={t.colors.onAccentSoft} />}
+                      {f.kind === 'video' ? <Video size={18} color={t.colors.textSecondary} />
+                        : f.kind === 'voice' || f.kind === 'audio' ? <Mic size={18} color={t.colors.textSecondary} />
+                          : <FileText size={18} color={t.colors.textSecondary} />}
                     </View>
                     <View style={{ flex: 1, minWidth: 0 }}>
                       <Text style={s.fileName} numberOfLines={1}>{f.kind === 'voice' ? 'Voice message' : f.name}</Text>
@@ -89,13 +89,13 @@ export function FilesSheet({ server, chatId, visible, onClose, onJump }: {
 
 const useStyles = makeStyles((t) => ({
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  cell: { borderRadius: t.radius.md, overflow: 'hidden', backgroundColor: t.colors.card, borderWidth: 1, borderColor: t.colors.cardBorder },
+  cell: { borderRadius: t.radius.md, overflow: 'hidden', backgroundColor: t.colors.surface, borderWidth: 1, borderColor: t.colors.border },
   empty: { ...t.type.callout, color: t.colors.textSecondary, textAlign: 'center', marginVertical: 28 },
   file: {
-    flexDirection: 'row', alignItems: 'center', gap: 12, padding: t.space.md, minHeight: 64, borderRadius: t.radius.lg, backgroundColor: t.colors.card,
-    borderWidth: 1, borderColor: t.colors.cardBorder,
+    flexDirection: 'row', alignItems: 'center', gap: 12, padding: t.space.md, minHeight: 64, borderRadius: t.radius.lg, backgroundColor: t.colors.surface,
+    borderWidth: 1, borderColor: t.colors.border,
   },
-  fileIcon: { width: 40, height: 40, borderRadius: t.radius.pill, alignItems: 'center', justifyContent: 'center', backgroundColor: t.colors.accentSoft },
+  fileIcon: { width: 40, height: 40, borderRadius: t.radius.pill, alignItems: 'center', justifyContent: 'center', backgroundColor: t.colors.surfaceSunken },
   fileName: { ...t.type.callout, fontFamily: t.fonts.semibold, color: t.colors.text },
   fileMeta: { ...t.type.caption, color: t.colors.textSecondary, marginTop: 2 },
 }));

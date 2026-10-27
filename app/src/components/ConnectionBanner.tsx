@@ -1,7 +1,7 @@
 import { router } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Text, View } from 'react-native';
-import Animated, { FadeIn, FadeInDown, FadeOut, FadeOutUp } from 'react-native-reanimated';
+import Animated, { FadeIn, FadeOut, FadeOutUp } from 'react-native-reanimated';
 import { connectionView } from '../lib/connection';
 import { spring, useReducedMotion } from '../lib/motion';
 import { useApp } from '../lib/store';
@@ -51,7 +51,7 @@ export function ConnectionBanner({ server, compact }: { server: Server; compact?
           else if (view.action === 'pair') router.push('/pair');
           else router.push('/about');
         }}>
-          {view.action === 'retry' ? <RefreshCw size={14} color={t.colors.onAccentSoft} /> : null}
+          {view.action === 'retry' ? <RefreshCw size={14} color={t.colors.textSecondary} /> : null}
           <Text style={s.buttonText}>{action}</Text>
         </Tap>
       ) : null}
@@ -59,7 +59,7 @@ export function ConnectionBanner({ server, compact }: { server: Server; compact?
   );
 
   return (
-    <Animated.View entering={reduced ? FadeIn.duration(120) : FadeInDown.springify().damping(spring.soft.damping).stiffness(spring.soft.stiffness)}
+    <Animated.View entering={reduced ? FadeIn.duration(120) : FadeIn.duration(180)}
       exiting={reduced ? FadeOut.duration(120) : FadeOutUp.duration(160)} accessibilityRole="alert"
       accessibilityLiveRegion="polite" style={compact ? s.float : s.banner}>
       {compact ? <FloatingPill style={s.pill}>{body}</FloatingPill> : body}
@@ -71,7 +71,7 @@ const useStyles = makeStyles((t) => ({
   // Full size (the connection screen): a frosted card. Compact (over a chat or a list): a floating glass pill.
   banner: {
     flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 10, padding: t.space.md, borderRadius: t.radius.lg,
-    backgroundColor: t.colors.card, borderWidth: 1, borderColor: t.colors.cardBorder,
+    backgroundColor: t.colors.surface, borderWidth: 1, borderColor: t.colors.border,
   },
   float: { alignSelf: 'center', maxWidth: 560, marginTop: t.space.sm, marginHorizontal: t.space.md },
   pill: { gap: 10, paddingLeft: 6, paddingRight: 6, paddingVertical: 6 },

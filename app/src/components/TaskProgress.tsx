@@ -1,7 +1,7 @@
 import { router } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, ScrollView, Text, View } from 'react-native';
-import Animated, { FadeInDown } from 'react-native-reanimated';
+import Animated, { FadeIn } from 'react-native-reanimated';
 import { spring, useReducedMotion } from '../lib/motion';
 import { stopTask } from '../lib/actions';
 import { currentTaskActivity } from '../lib/messages';
@@ -98,7 +98,7 @@ export function TaskProgress({ server, chatId, busy }: { server: Server; chatId:
     try { await stopTask(server, chatId); } finally { setStopping(false); }
   };
   return <>
-    <Animated.View entering={reduced ? undefined : FadeInDown.springify().damping(spring.soft.damping).stiffness(spring.soft.stiffness)}
+    <Animated.View entering={reduced ? undefined : FadeIn.duration(180)}
       style={s.float} accessibilityLiveRegion="polite">
       <FloatingPill style={s.strip}>
         <Tap accessibilityLabel={`${title}. ${detail.replace(/[.!?]$/, '')}. ${pending ? 'Open request' : 'Show activity'}`}
@@ -106,7 +106,7 @@ export function TaskProgress({ server, chatId, busy }: { server: Server; chatId:
             if (pending) openRequest();
             else setOpen(true);
           }}>
-          <View style={[s.badge, { backgroundColor: pending ? t.colors.warningSoft : t.colors.accentSoft }]}>
+          <View style={[s.badge, { backgroundColor: pending ? t.colors.warningSoft : t.colors.surfaceSunken }]}>
             {pending ? pending.kind === 'approval' ? <ShieldQuestion size={17} color={t.colors.warning} /> : <CircleHelp size={17} color={t.colors.warning} />
               : terminalIcon ?? <ActivityIndicator size="small" color={t.colors.accent} />}
           </View>
@@ -148,7 +148,7 @@ const useStyles = makeStyles((t) => ({
   detail: { ...t.type.caption, color: t.colors.textSecondary, fontSize: 12 },
   stop: {
     height: 36, width: 36, alignItems: 'center', justifyContent: 'center', borderRadius: t.radius.pill,
-    backgroundColor: t.colors.card, borderWidth: 1, borderColor: t.colors.cardBorder,
+    backgroundColor: t.colors.surface, borderWidth: 1, borderColor: t.colors.border,
   },
   track: { position: 'absolute', left: 22, right: 22, bottom: 0, height: 2, borderRadius: t.radius.pill, backgroundColor: t.colors.border, overflow: 'hidden' },
   bar: { height: 2, borderRadius: t.radius.pill, backgroundColor: t.colors.accent },

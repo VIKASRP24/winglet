@@ -6,9 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLock } from '../lib/appLock';
 import { haptic } from '../lib/haptics';
 import { spring, useReducedMotion } from '../lib/motion';
-import { alpha } from '../lib/theme';
 import { makeStyles, useTheme } from '../lib/themeContext';
-import { Glass } from './Glass';
 import { X } from './icons';
 import { Tap } from './ui';
 
@@ -16,7 +14,7 @@ import { Tap } from './ui';
 const LEAVE = { ...spring.snappy, overshootClamping: true };
 
 /**
- * A bottom sheet: a frosted pane that springs up over a fading scrim, drags down to dismiss, closes on
+ * A bottom sheet: a solid pane that slides up over a fading scrim, drags down to dismiss, closes on
  * the backdrop or the back button. On wide screens it becomes a centred dialog.
  */
 export function Sheet({ visible, onClose, onDismiss, title, children, scrollable = false }: {
@@ -61,11 +59,9 @@ export function Sheet({ visible, onClose, onDismiss, title, children, scrollable
     .onFinalize((_e, success) => { if (!success) y.value = withSpring(0, spring.soft); });
 
   const panel = useAnimatedStyle(() => {
-    // How far through arriving it is, 0 (offscreen) to 1 (in place): the pane grows into place as it rises.
-    const p = 1 - Math.min(1, Math.max(0, y.value) / Math.max(1, height));
     return wide
-      ? { opacity: fade.value, transform: [{ translateY: y.value * 0.12 }, { scale: 0.94 + 0.06 * p }] }
-      : { transform: [{ translateY: y.value }, { scale: 0.97 + 0.03 * p }] };
+      ? { opacity: fade.value, transform: [{ translateY: y.value * 0.06 }] }
+      : { transform: [{ translateY: y.value }] };
   });
   const backdrop = useAnimatedStyle(() => ({ opacity: fade.value }));
 
@@ -79,7 +75,7 @@ export function Sheet({ visible, onClose, onDismiss, title, children, scrollable
         </Animated.View>
         <View style={[s.host, wide && s.hostWide, keyboard ? { paddingBottom: keyboard } : null]} pointerEvents="box-none">
           <Animated.View style={[s.panel, { maxHeight: Math.max(0, height - Math.max(insets.top, 12) - 12 - keyboard) }, wide && s.panelWide, panel]} accessibilityViewIsModal>
-            <Glass intensity={60} style={[s.glass, wide && s.glassWide, { paddingBottom: wide ? 20 : keyboard ? 12 : insets.bottom + 16 }]}>
+            <View style={[s.glass, wide && s.glassWide, { paddingBottom: wide ? 20 : keyboard ? 12 : insets.bottom + 16 }]}>
               <GestureDetector gesture={pan}>
                 <View style={s.handle}>
                   {wide ? null : <View style={s.grabber} />}
@@ -87,14 +83,14 @@ export function Sheet({ visible, onClose, onDismiss, title, children, scrollable
                     <Text style={s.title} accessibilityRole="header" numberOfLines={2}>{title}</Text>
                     <Tap accessibilityRole="button" accessibilityLabel="Close sheet" hitSlop={6} scaleTo={0.9} feedback="selection" onPress={onClose}
                       style={({ pressed, hovered }) => [s.close, (pressed || hovered) && { backgroundColor: t.colors.pressed }]}>
-                      <X size={18} color={t.colors.textSecondary} />
+                      <X size={16} color={t.colors.textSecondary} strokeWidth={2.4} />
                     </Tap>
                   </View>
                 </View>
               </GestureDetector>
               {scrollable ? <ScrollView style={s.content} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">{children}</ScrollView>
                 : <View style={s.content}>{children}</View>}
-            </Glass>
+            </View>
           </Animated.View>
         </View>
       </GestureHandlerRootView>
@@ -120,38 +116,38 @@ function useKeyboardHeight(active: boolean): number {
 }
 
 /**
- * A slim frosted pill that floats over a chat: goal, task progress, connection and sync notes, the branch line.
- * Purely visual: the caller wraps it in whatever it needs to be (a button, an alert). The shadow sits outside
- * the glass, which clips its own corners.
+ * A slim bar that sits under a chat's header or above its message box: goal, task progress, connection and sync
+ * notes, the branch line. Purely visual: the caller wraps it in whatever it needs to be (a button, an alert).
  */
 export function FloatingPill({ children, style }: { children: ReactNode; style?: StyleProp<ViewStyle> }) {
   const s = useStyles();
-  return <View style={s.pillShadow}><Glass intensity={50} style={[s.pill, style]}>{children}</Glass></View>;
+  return <View style={[s.pill, style]}>{children}</View>;
 }
 
-/** A frosted group of sheet rows: related actions sit together, so a long menu reads as a few short ones.
- * Renders nothing when every row in it is hidden. */
+/** A group of sheet rows divided by hairlines: related actions sit together, so a long menu reads as a few short
+ * ones. Renders nothing when every row in it is hidden. */
 export function SheetGroup({ children }: { children: ReactNode }) {
   const s = useStyles();
-  if (!Children.toArray(children).some(Boolean)) return null;
-  return <View style={s.group}>{children}</View>;
+  const rows = Children.toArray(children).filter(Boolean);
+  if (!rows.length) return null;
+  return <View style={s.group}>{rows.map((row, i) => <View key={i}>{i ? <View style={s.rule} /> : null}{row}</View>)}</View>;
 }
 
-/** One action row inside a sheet: its icon in a soft circle, then the label. A disabled row keeps its
- * explanation visible instead of silently disappearing (offline, busy, an older server). */
+/** One action row inside a sheet: a plain icon, then the label. A disabled row keeps its explanation visible
+ * instead of silently disappearing (offline, busy, an older server). */
 export function SheetAction({ icon, label, onPress, destructive, disabled, hint }: {
   icon?: ReactNode; label: string; onPress: () => void; destructive?: boolean; disabled?: boolean; hint?: string;
 }) {
   const t = useTheme();
   const s = useStyles();
-  const tint = destructive ? t.colors.danger : t.colors.text;
+  const tint = destructive ? t.colors.danger : t.colors.textSecondary;
   return (
     <Tap accessibilityRole="button" accessibilityLabel={hint ? `${label}. ${hint}` : label}
       accessibilityState={{ disabled: !!disabled }} disabled={!!disabled} scaleTo={0.98}
       onPress={() => { haptic.selection(); onPress(); }}
       style={({ pressed, hovered }) => [s.action, disabled && { opacity: 0.5 }, (pressed || hovered) && !disabled && { backgroundColor: t.colors.pressed }]}>
-      {icon ? <View style={[s.actionIcon, { backgroundColor: destructive ? t.colors.dangerSoft : alpha(t.colors.text, t.scheme === 'dark' ? 0.08 : 0.06) }]}>
-        {isValidElement(icon) ? cloneElement(icon as ReactElement<{ color?: string; size?: number }>, { size: 19, color: tint }) : icon}
+      {icon ? <View style={s.actionIcon}>
+        {isValidElement(icon) ? cloneElement(icon as ReactElement<{ color?: string; size?: number }>, { size: 20, color: tint }) : icon}
       </View> : null}
       <View style={{ flex: 1, minWidth: 0 }}>
         <Text style={[s.actionText, destructive && { color: t.colors.danger }]}>{label}</Text>
@@ -166,34 +162,34 @@ const useStyles = makeStyles((t) => ({
   hostWide: { justifyContent: 'center', alignItems: 'center', padding: t.space.xl },
   panel: {
     width: '100%', flexShrink: 1,
-    shadowColor: t.colors.shadow, shadowOpacity: t.scheme === 'light' ? 0.14 : 0.5, shadowRadius: 30, shadowOffset: { width: 0, height: -6 },
+    shadowColor: t.colors.shadow, shadowOpacity: t.scheme === 'light' ? 0.12 : 0.4, shadowRadius: 24, shadowOffset: { width: 0, height: -4 },
   },
-  panelWide: { maxWidth: 640, shadowOffset: { width: 0, height: 16 } },
+  panelWide: { maxWidth: 560, shadowOffset: { width: 0, height: 12 } },
   glass: {
     borderTopLeftRadius: t.radius.xl, borderTopRightRadius: t.radius.xl, paddingHorizontal: t.space.lg, paddingTop: t.space.sm,
-    flexShrink: 1,
+    flexShrink: 1, backgroundColor: t.colors.bg, overflow: 'hidden',
+    borderWidth: StyleSheet.hairlineWidth * 2, borderBottomWidth: 0, borderColor: t.colors.border,
   },
-  glassWide: { borderRadius: t.radius.xl, paddingTop: t.space.lg },
-  grabber: { alignSelf: 'center', width: 40, height: 5, borderRadius: t.radius.pill, backgroundColor: t.colors.borderStrong, marginBottom: t.space.md },
+  glassWide: { borderRadius: t.radius.xl, borderBottomWidth: StyleSheet.hairlineWidth * 2, paddingTop: t.space.lg },
+  grabber: { alignSelf: 'center', width: 36, height: 4, borderRadius: t.radius.pill, backgroundColor: t.colors.borderStrong, marginBottom: t.space.md },
   handle: { flexShrink: 0 },
   heading: { flexDirection: 'row', alignItems: 'center', gap: t.space.md, paddingLeft: t.space.xs, marginBottom: t.space.md },
-  title: { ...t.type.title, fontSize: 20, lineHeight: 26, color: t.colors.text, flex: 1 },
+  title: { ...t.type.title, fontSize: 18, lineHeight: 24, color: t.colors.text, flex: 1 },
   close: {
-    width: 36, height: 36, alignItems: 'center', justifyContent: 'center', borderRadius: t.radius.pill,
-    backgroundColor: t.colors.card, borderWidth: 1, borderColor: t.colors.cardBorder,
+    width: 30, height: 30, alignItems: 'center', justifyContent: 'center', borderRadius: t.radius.pill, backgroundColor: t.colors.surfaceSunken,
   },
   content: { flexShrink: 1, minHeight: 0 },
-  pillShadow: {
-    borderRadius: t.radius.pill,
-    shadowColor: t.colors.shadow, shadowOpacity: t.scheme === 'light' ? 0.1 : 0.4, shadowRadius: 16, shadowOffset: { width: 0, height: 6 },
+  pill: {
+    flexDirection: 'row', alignItems: 'center', gap: t.space.sm, minHeight: 40, borderRadius: t.radius.md,
+    backgroundColor: t.colors.surface, borderWidth: StyleSheet.hairlineWidth * 2, borderColor: t.colors.border,
   },
-  pill: { flexDirection: 'row', alignItems: 'center', gap: t.space.sm, minHeight: 44, borderRadius: t.radius.pill, elevation: 3 },
   group: {
-    padding: t.space.xs, marginBottom: t.space.md, borderRadius: t.radius.lg,
-    backgroundColor: t.colors.card, borderWidth: 1, borderColor: t.colors.cardBorder,
+    marginBottom: t.space.md, borderRadius: t.radius.lg, overflow: 'hidden',
+    backgroundColor: t.colors.surface, borderWidth: StyleSheet.hairlineWidth * 2, borderColor: t.colors.border,
   },
-  action: { flexDirection: 'row', alignItems: 'center', gap: 14, minHeight: 56, paddingHorizontal: t.space.md, paddingVertical: t.space.sm, borderRadius: t.radius.md },
-  actionIcon: { width: 36, height: 36, borderRadius: t.radius.pill, alignItems: 'center', justifyContent: 'center' },
-  actionText: { ...t.type.body, fontFamily: t.fonts.medium, color: t.colors.text },
-  actionHint: { ...t.type.caption, color: t.colors.textSecondary, marginTop: 2 },
+  rule: { height: StyleSheet.hairlineWidth * 2, backgroundColor: t.colors.border, marginLeft: 50 },
+  action: { flexDirection: 'row', alignItems: 'center', gap: 14, minHeight: 50, paddingHorizontal: 16, paddingVertical: 10 },
+  actionIcon: { width: 20, alignItems: 'center', justifyContent: 'center' },
+  actionText: { ...t.type.body, fontSize: 15.5, color: t.colors.text },
+  actionHint: { ...t.type.footnote, color: t.colors.textSecondary, marginTop: 1 },
 }));

@@ -60,7 +60,7 @@ const useStyles = makeStyles((t) => ({
     paddingVertical: t.space.sm, paddingLeft: t.space.sm, paddingRight: t.space.xl, minHeight: 56, elevation: 8,
   },
   toastPlain: { paddingLeft: t.space.xl },
-  face: { width: 40, height: 40, borderRadius: t.radius.pill, alignItems: 'center', justifyContent: 'center', backgroundColor: t.colors.card },
+  face: { width: 40, height: 40, borderRadius: t.radius.pill, alignItems: 'center', justifyContent: 'center', backgroundColor: t.colors.surface },
   text: { flexShrink: 1, minWidth: 0, paddingVertical: 2 },
   title: { ...t.type.callout, fontFamily: t.fonts.semibold, color: t.colors.text },
   body: { ...t.type.footnote, color: t.colors.textSecondary, marginTop: 1 },

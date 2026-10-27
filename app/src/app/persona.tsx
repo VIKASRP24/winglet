@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Platform, Text, TextInput, View } from 'react-native';
-import Animated, { FadeInDown } from 'react-native-reanimated';
+import Animated, { FadeIn } from 'react-native-reanimated';
 import { Screen } from '../components/Screen';
 import { withSelectedServer } from '../components/ServerScreen';
 import { Button, Card, Footnote, LoadError, Skeleton } from '../components/ui';
@@ -54,7 +54,7 @@ function PersonaScreen() {
   return (
     <Screen title="Persona">
       {saved === null ? error ? <LoadError message={error} onRetry={load} /> : <Skeleton height={320} radius={t.radius.lg} style={{ marginTop: 12 }} /> : (
-        <Animated.View entering={reduced ? undefined : FadeInDown.springify().damping(spring.soft.damping).stiffness(spring.soft.stiffness)}>
+        <Animated.View entering={reduced ? undefined : FadeIn.duration(180)}>
           <Card style={{ marginTop: 12, padding: 0, overflow: 'hidden', borderRadius: t.radius.xl }}>
             <TextInput value={text} onChangeText={setText} editable={!busy} multiline textAlignVertical="top" maxLength={MAX}
               placeholder="You are a calm, practical assistant. Keep answers short…" placeholderTextColor={t.colors.textTertiary}

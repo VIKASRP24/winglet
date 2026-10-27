@@ -194,7 +194,7 @@ const useStyles=makeStyles(t=>({
   root:{flex:1,backgroundColor:t.colors.bg},column:{flex:1,minHeight:0,width:'100%',maxWidth:680,alignSelf:'center'},flex:{flex:1,minWidth:0},
   roomHeader:{backgroundColor:t.colors.bg,borderBottomWidth:1,borderBottomColor:t.colors.border},roomHeaderInner:{flexDirection:'row',alignItems:'center',gap:t.space.sm,minHeight:52,paddingHorizontal:t.space.sm,maxWidth:696,width:'100%',alignSelf:'center'},
   roomRow:{flexDirection:'row',alignItems:'center',gap:12,paddingVertical:18,borderBottomWidth:1,borderBottomColor:t.colors.border},
-  face:{width:46,height:46,borderRadius:17,backgroundColor:t.colors.accentSoft,alignItems:'center',justifyContent:'center'},
+  face:{width:46,height:46,borderRadius:17,backgroundColor:t.colors.surfaceSunken,alignItems:'center',justifyContent:'center'},
   title:{...t.type.heading,color:t.colors.text},body:{...t.type.body,color:t.colors.text},meta:{...t.type.caption,color:t.colors.textSecondary},error:{...t.type.callout,color:t.colors.danger},
   notice:{...t.type.callout,color:t.colors.textSecondary,padding:t.space.lg,gap:t.space.sm,backgroundColor:t.colors.surface,borderRadius:t.radius.lg,marginVertical:t.space.md},empty:{alignItems:'center',gap:14,padding:28},
   participants:{paddingHorizontal:16,paddingVertical:10,gap:9,borderBottomWidth:1,borderBottomColor:t.colors.border},wrap:{flexDirection:'row',flexWrap:'wrap',gap:8},

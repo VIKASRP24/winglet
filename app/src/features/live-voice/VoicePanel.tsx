@@ -109,7 +109,7 @@ export function VoicePanel({ server, chatId, onClose, onType }: { server: Server
         <Button variant={state.muted ? 'tonal' : 'secondary'} style={s.grow}
           accessibilityLabel={state.muted ? 'Unmute microphone' : 'Mute microphone'}
           title={state.muted ? 'Unmute' : 'Mute'}
-          icon={state.muted ? <MicOff size={18} color={t.colors.onAccentSoft} /> : <Mic size={18} color={t.colors.text} />}
+          icon={state.muted ? <MicOff size={18} color={t.colors.textSecondary} /> : <Mic size={18} color={t.colors.text} />}
           onPress={voice.mute} />
         <Button variant="secondary" style={s.grow} title="Type instead" onPress={type} />
         <Button variant="danger" style={s.grow} title="End" onPress={close} />

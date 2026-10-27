@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, Text, TextInput, View } from 'react-native';
-import Animated, { FadeInDown } from 'react-native-reanimated';
+import Animated, { FadeIn } from 'react-native-reanimated';
 import { api, ApiError } from '../lib/api';
 import { haptic } from '../lib/haptics';
 import { availableSavedModels, isCurrentModel, modelName, modelProviders, recentModels, savedModelKey, shortModel, toggleSavedModel, type SavedModel } from '../lib/modelOptions';
@@ -78,8 +78,8 @@ export function PickerCard({ server, message, presentation = 'card', onChosen }:
     }
   };
 
-  const icon = picker.kind === 'model' ? <Cpu size={18} color={t.colors.onAccentSoft} />
-    : picker.kind === 'confirm' ? <ShieldQuestion size={18} color={t.colors.warning} /> : <SlidersHorizontal size={18} color={t.colors.onAccentSoft} />;
+  const icon = picker.kind === 'model' ? <Cpu size={18} color={t.colors.textSecondary} />
+    : picker.kind === 'confirm' ? <ShieldQuestion size={18} color={t.colors.warning} /> : <SlidersHorizontal size={18} color={t.colors.textSecondary} />;
 
   /** A choice's state on the right of its row: a spinner while sending, a filled accent dot when it's the current one. */
   const mark = (current: boolean, sending: boolean) => sending ? <ActivityIndicator size="small" color={t.colors.accent} />
@@ -131,9 +131,9 @@ export function PickerCard({ server, message, presentation = 'card', onChosen }:
   };
 
   return (
-    <Animated.View entering={reduced ? undefined : FadeInDown.springify().damping(spring.soft.damping).stiffness(spring.soft.stiffness)} style={[s.card, sheet && s.sheetCard, open && picker.kind === 'confirm' && { borderColor: t.colors.warning }]}>
+    <Animated.View entering={reduced ? undefined : FadeIn.duration(180)} style={[s.card, sheet && s.sheetCard, open && picker.kind === 'confirm' && { borderColor: t.colors.warning }]}>
       {sheet ? null : <View style={s.head}>
-        <View style={[s.icon, { backgroundColor: picker.kind === 'confirm' ? t.colors.warningSoft : t.colors.accentSoft }]}>{icon}</View>
+        <View style={[s.icon, { backgroundColor: picker.kind === 'confirm' ? t.colors.warningSoft : t.colors.surfaceSunken }]}>{icon}</View>
         <View style={{ flex: 1, minWidth: 0 }}>
           <Text style={s.title}>{picker.kind === 'model' ? 'Model for this chat' : picker.kind === 'confirm' ? 'Confirm' : 'Choose a setting'}</Text>
           {picker.kind === 'model' && picker.current_model ? (
@@ -197,7 +197,7 @@ export function PickerCard({ server, message, presentation = 'card', onChosen }:
                         </View>
                         {mark(current, busy === key)}
                       </Pressable>{star(p.slug, m)}</View> : <Chip key={key} label={shortModel(m)} selected={current} accessibilityLabel={`${m} from ${p.name}${current ? ', current' : ''}`}
-                        icon={busy === key ? <ActivityIndicator size="small" color={t.colors.accent} /> : current ? <Check size={14} color={t.colors.onAccentSoft} /> : undefined}
+                        icon={busy === key ? <ActivityIndicator size="small" color={t.colors.accent} /> : current ? <Check size={14} color={t.colors.textSecondary} /> : undefined}
                         onPress={() => !busy && choose(key, { provider: p.slug, model: m })} />
                     );
                   })}
@@ -243,7 +243,7 @@ export function PickerCard({ server, message, presentation = 'card', onChosen }:
               <Text style={[s.modelName, { flex: 1 }]}>{c.label}</Text>
               {mark(!!c.current, busy === c.value)}
             </Pressable> : <Chip key={c.value} label={c.label} selected={c.current}
-              icon={busy === c.value ? <ActivityIndicator size="small" color={t.colors.accent} /> : c.current ? <Check size={14} color={t.colors.onAccentSoft} /> : undefined}
+              icon={busy === c.value ? <ActivityIndicator size="small" color={t.colors.accent} /> : c.current ? <Check size={14} color={t.colors.textSecondary} /> : undefined}
               onPress={() => !busy && choose(c.value, { value: c.value })} />
           ))}
           {sheet ? <Pressable accessibilityRole="button" accessibilityState={{ expanded: details }} onPress={() => setDetails((value) => !value)} style={s.more}>
@@ -262,13 +262,13 @@ const useStyles = makeStyles((t) => ({
   // In the sheet every choice is its own frosted card; the current one is lit in the accent.
   savedRow: {
     flexDirection: 'row', alignItems: 'center', borderRadius: t.radius.lg, overflow: 'hidden',
-    backgroundColor: t.colors.card, borderWidth: 1, borderColor: t.colors.cardBorder,
+    backgroundColor: t.colors.surface, borderWidth: 1, borderColor: t.colors.border,
   },
-  currentRow: { backgroundColor: t.colors.accentSoft, borderColor: t.colors.accent },
+  currentRow: { backgroundColor: t.colors.surfaceHigh, borderColor: t.colors.text },
   star: { minHeight: 56, width: 48, alignItems: 'center', justifyContent: 'center' },
   settingRow: {
     flexDirection: 'row', alignItems: 'center', gap: t.space.md, paddingHorizontal: t.space.lg, paddingVertical: t.space.sm, minHeight: 56,
-    borderRadius: t.radius.lg, backgroundColor: t.colors.card, borderWidth: 1, borderColor: t.colors.cardBorder,
+    borderRadius: t.radius.lg, backgroundColor: t.colors.surface, borderWidth: 1, borderColor: t.colors.border,
   },
   modelRow: { flexDirection: 'row', alignItems: 'center', gap: t.space.md, paddingLeft: t.space.lg, paddingRight: t.space.xs, paddingVertical: t.space.sm, minHeight: 56 },
   radio: {
@@ -281,12 +281,12 @@ const useStyles = makeStyles((t) => ({
   modelId: { ...t.type.caption, color: t.colors.textSecondary },
   more: {
     minHeight: 44, paddingHorizontal: t.space.lg, flexDirection: 'row', gap: 6, alignItems: 'center', alignSelf: 'flex-start',
-    borderRadius: t.radius.pill, backgroundColor: t.colors.accentSoft,
+    borderRadius: t.radius.md, backgroundColor: t.colors.surfaceSunken,
   },
-  moreText: { ...t.type.callout, fontFamily: t.fonts.semibold, color: t.colors.onAccentSoft },
+  moreText: { ...t.type.callout, fontFamily: t.fonts.medium, color: t.colors.text },
   clear: { width: 32, height: 44, alignItems: 'center', justifyContent: 'center' },
   card: {
-    gap: 12, padding: t.space.lg, borderRadius: t.radius.lg, backgroundColor: t.colors.card, borderWidth: 1, borderColor: t.colors.cardBorder,
+    gap: 12, padding: t.space.lg, borderRadius: t.radius.lg, backgroundColor: t.colors.surface, borderWidth: 1, borderColor: t.colors.border,
     marginTop: 4, maxWidth: 560,
   },
   head: { flexDirection: 'row', alignItems: 'center', gap: 12 },
@@ -300,7 +300,7 @@ const useStyles = makeStyles((t) => ({
   chosenText: { ...t.type.caption, fontFamily: t.fonts.semibold, color: t.colors.success },
   search: {
     flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: t.space.lg, height: 44, borderRadius: t.radius.pill,
-    backgroundColor: t.colors.card, borderWidth: 1, borderColor: t.colors.cardBorder,
+    backgroundColor: t.colors.surface, borderWidth: 1, borderColor: t.colors.border,
   },
   searchInput: { flex: 1, ...t.type.callout, color: t.colors.text, ...({ outlineStyle: 'none' } as object) },
 }));

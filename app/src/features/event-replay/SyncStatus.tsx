@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, Text, View } from 'react-native';
-import Animated, { FadeIn, FadeInDown, FadeOut, FadeOutUp } from 'react-native-reanimated';
+import Animated, { FadeIn, FadeOut, FadeOutUp } from 'react-native-reanimated';
 import { FloatingPill } from '../../components/Sheet';
 import { spring, useReducedMotion } from '../../lib/motion';
 import { useApp, useServerState } from '../../lib/store';
@@ -37,7 +37,7 @@ export function SyncStatus({ serverId, details = false }: { serverId: string; de
   </Pressable>;
   // On a settings screen it's a plain line; over a chat it's a small floating pill under the header.
   if (details) return <View accessibilityLiveRegion="polite" style={s.row}>{text}{action}</View>;
-  return <Animated.View entering={reduced ? FadeIn.duration(120) : FadeInDown.springify().damping(spring.soft.damping).stiffness(spring.soft.stiffness)}
+  return <Animated.View entering={reduced ? FadeIn.duration(120) : FadeIn.duration(180)}
     exiting={reduced ? FadeOut.duration(120) : FadeOutUp.duration(160)} accessibilityLiveRegion="polite" style={s.float}>
     <FloatingPill style={s.pill}>
       {busy ? <ActivityIndicator size="small" color={t.colors.accent} style={s.spinner} />

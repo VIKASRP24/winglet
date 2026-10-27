@@ -1,7 +1,7 @@
 import { router } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { Text, TextInput, View } from 'react-native';
-import Animated, { FadeInDown } from 'react-native-reanimated';
+import Animated, { FadeIn } from 'react-native-reanimated';
 import { PairRows, useBotHost } from '../components/AddBot';
 import { BotAvatar } from '../components/BotAvatar';
 import { Bot, RotateCw } from '../components/icons';
@@ -19,7 +19,7 @@ import type { BotRow, Job } from '../lib/types';
 type BotsState = { bots: BotRow[]; multiplex: boolean; reason: string };
 
 const rise = (reduced: boolean, i: number) => (reduced ? undefined
-  : FadeInDown.delay(60 + i * 60).springify().damping(spring.soft.damping).stiffness(spring.soft.stiffness));
+  : FadeIn.duration(180));
 
 /**
  * A new bot on the same server: a Hermes profile with its own persona, memory, skills, chats and pet, made the

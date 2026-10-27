@@ -65,7 +65,7 @@ function QuietSettings({ server, named }: { server: Server; named: boolean }) {
     <>
       <SectionHeader title={named ? `${server.bot.title}: quiet hours` : 'Quiet hours'} />
       <ListGroup>
-        <ListRow icon={<Moon size={18} color={t.colors.onAccentSoft} />} title="Quiet hours" value={quiet ? 'On' : 'Off'}
+        <ListRow icon={<Moon size={18} color={t.colors.textSecondary} />} title="Quiet hours" value={quiet ? 'On' : 'Off'}
           right={<Toggle label="Quiet hours" value={!!quiet} onValueChange={(on) => save((p) => ({ ...p, quiet: on ? quietHours('22:00', '07:00', true) : undefined }))} />} />
         {quiet ? (
           <>
@@ -82,7 +82,7 @@ function QuietSettings({ server, named }: { server: Server; named: boolean }) {
           <SectionHeader title="Muted" />
           <ListGroup>
             {muted.map(([id, until]) => (
-              <ListRow key={id} icon={<BellOff size={18} color={t.colors.onAccentSoft} />} title={chatName(id)}
+              <ListRow key={id} icon={<BellOff size={18} color={t.colors.textSecondary} />} title={chatName(id)}
                 subtitle={until ? `Until ${new Date(until * 1000).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })}` : 'Until unmuted'}
                 right={<Button title="Unmute" size="sm" variant="tonal" onPress={() => save((p) => {
                   const next = { ...p.muted };

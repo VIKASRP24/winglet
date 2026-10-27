@@ -6,7 +6,6 @@ import {
 import Animated, {
   cancelAnimation, useAnimatedStyle, useSharedValue, withRepeat, withSequence, withSpring, withTiming,
 } from 'react-native-reanimated';
-import { LinearGradient } from 'expo-linear-gradient';
 import { haptic } from '../lib/haptics';
 import { FIXED } from '../lib/theme';
 import { spring, useReducedMotion } from '../lib/motion';
@@ -75,13 +74,13 @@ export function Button({ title, onPress, variant = 'primary', size = 'md', icon,
   const t = useTheme();
   const s = useStyles();
   const c = t.colors;
-  const height = size === 'lg' ? 54 : size === 'sm' ? 38 : 46;
-  const fg = { primary: c.onAccent, secondary: c.text, tonal: c.onAccentSoft, ghost: c.accent, danger: c.danger }[variant];
-  const bg = { primary: c.accentFill, secondary: c.surfaceSunken, tonal: c.accentSoft, ghost: 'transparent', danger: c.dangerSoft }[variant];
+  const height = size === 'lg' ? 50 : size === 'sm' ? 34 : 44;
+  const fg = { primary: c.onInk, secondary: c.text, tonal: c.onAccentSoft, ghost: c.accent, danger: c.danger }[variant];
+  const bg = { primary: c.ink, secondary: c.surfaceSunken, tonal: c.accentSoft, ghost: 'transparent', danger: c.dangerSoft }[variant];
   const inner = (
     <>
       {loading ? <ActivityIndicator color={fg} /> : icon}
-      {title ? <Text style={[s.buttonText, { color: fg }, size === 'sm' && { fontSize: 14 }, size === 'lg' && { fontSize: 16.5 }]} numberOfLines={1}>{title}</Text> : null}
+      {title ? <Text style={[s.buttonText, { color: fg }, size === 'sm' && { fontSize: 13.5 }, size === 'lg' && { fontSize: 16 }]} numberOfLines={1}>{title}</Text> : null}
     </>
   );
   return (
@@ -91,11 +90,11 @@ export function Button({ title, onPress, variant = 'primary', size = 'md', icon,
       accessibilityState={{ disabled: !!(disabled || loading), busy: !!loading }}
       onPress={onPress}
       disabled={disabled || loading}
-      style={[s.buttonShell, { minHeight: height, opacity: disabled ? 0.45 : 1, backgroundColor: bg }, style]}
+      scaleTo={0.98}
+      style={({ pressed, hovered }) => [s.buttonShell, { minHeight: height, opacity: disabled ? 0.4 : pressed ? 0.85 : hovered ? 0.92 : 1, backgroundColor: bg },
+        variant === 'secondary' && s.buttonOutline, size === 'sm' && { borderRadius: t.radius.sm }, style]}
     >
-      {variant === 'primary' ? <LinearGradient pointerEvents="none" colors={[c.accentFillLight, c.accentFill]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
-        style={StyleSheet.absoluteFill} /> : null}
-      <View style={[s.buttonInner, { minHeight: height }, size === 'sm' && { paddingHorizontal: 14 }]}>{inner}</View>
+      <View style={[s.buttonInner, { minHeight: height }, size === 'sm' && { paddingHorizontal: 12, gap: 6 }]}>{inner}</View>
     </Tap>
   );
 }
@@ -257,9 +256,9 @@ export function Chip({ label, icon, selected, onPress, accessibilityLabel }: {
   return (
     <Tap feedback="selection" onPress={onPress} accessibilityLabel={accessibilityLabel ?? label}
       accessibilityState={selected === undefined ? undefined : { selected }}
-      style={({ hovered }) => [s.chip, selected ? { backgroundColor: t.colors.accentSoft, borderColor: 'transparent' } : hovered && { backgroundColor: t.colors.pressed }]}>
+      style={({ hovered }) => [s.chip, selected ? { backgroundColor: t.colors.ink, borderColor: t.colors.ink } : hovered && { backgroundColor: t.colors.pressed }]}>
       {icon}
-      <Text style={[s.chipText, { color: selected ? t.colors.onAccentSoft : t.colors.text }]} numberOfLines={1}>{label}</Text>
+      <Text style={[s.chipText, { color: selected ? t.colors.onInk : t.colors.text }]} numberOfLines={1}>{label}</Text>
     </Tap>
   );
 }
@@ -304,8 +303,8 @@ export function Card({ children, style, onPress, accessibilityLabel }: { childre
   const t = useTheme();
   if (!onPress) return <View style={[s.card, style]} accessibilityLabel={accessibilityLabel}>{children}</View>;
   return (
-    <Tap feedback="selection" scaleTo={0.98} onPress={onPress} accessibilityLabel={accessibilityLabel}
-      style={({ hovered }) => [s.card, hovered && { borderColor: t.colors.borderStrong }, style]}>
+    <Tap feedback="selection" scaleTo={0.99} onPress={onPress} accessibilityLabel={accessibilityLabel}
+      style={({ hovered, pressed }) => [s.card, (hovered || pressed) && { borderColor: t.colors.borderStrong }, style]}>
       {children}
     </Tap>
   );
@@ -377,50 +376,52 @@ const useStyles = makeStyles((t) => ({
   loadError: { alignItems: 'center', gap: 10, paddingVertical: 28, paddingHorizontal: 20 },
   loadErrorText: { ...t.type.callout, color: t.colors.textSecondary, textAlign: 'center', maxWidth: 360 },
   search: {
-    flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 14, height: 46, borderRadius: t.radius.pill,
-    backgroundColor: t.colors.card, borderWidth: 1, borderColor: t.colors.cardBorder,
+    flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, height: 40, borderRadius: t.radius.md,
+    backgroundColor: t.colors.surfaceSunken,
   },
-  searchInput: { flex: 1, minWidth: 0, ...t.type.body, color: t.colors.text, ...({ outlineStyle: 'none' } as object) },
-  searchClear: { width: 20, height: 20, borderRadius: 10, backgroundColor: t.colors.textTertiary, alignItems: 'center', justifyContent: 'center' },
-  buttonShell: { borderRadius: t.radius.pill, overflow: 'hidden' },
-  buttonInner: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingHorizontal: 20 },
-  buttonText: { fontFamily: t.fonts.semibold, fontSize: 15.5 },
+  searchInput: { flex: 1, minWidth: 0, ...t.type.callout, color: t.colors.text, ...({ outlineStyle: 'none' } as object) },
+  searchClear: { width: 18, height: 18, borderRadius: 9, backgroundColor: t.colors.textTertiary, alignItems: 'center', justifyContent: 'center' },
+  buttonShell: { borderRadius: t.radius.md, overflow: 'hidden' },
+  buttonOutline: { borderWidth: StyleSheet.hairlineWidth * 2, borderColor: t.colors.border },
+  buttonInner: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingHorizontal: 18 },
+  buttonText: { fontFamily: t.fonts.semibold, fontSize: 15, letterSpacing: -0.1 },
   badge: {
-    minWidth: 20, height: 20, paddingHorizontal: 6, borderRadius: 10, backgroundColor: t.colors.danger,
-    alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: t.colors.bg,
+    minWidth: 18, height: 18, paddingHorizontal: 5, borderRadius: 9, backgroundColor: t.colors.danger,
+    alignItems: 'center', justifyContent: 'center',
   },
-  badgeText: { color: t.colors.onDanger, fontFamily: t.fonts.bold, fontSize: 11 },
-  dot: { width: 9, height: 9, borderRadius: 5 },
-  section: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', minHeight: 20, paddingHorizontal: 16, paddingTop: 24, paddingBottom: 8 },
+  badgeText: { color: t.colors.onDanger, fontFamily: t.fonts.semibold, fontSize: 11 },
+  dot: { width: 8, height: 8, borderRadius: 4 },
+  section: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', minHeight: 20, paddingHorizontal: 4, paddingTop: 28, paddingBottom: 8 },
   sectionText: { ...t.type.label, color: t.colors.textSecondary },
-  footnote: { paddingHorizontal: 16, paddingTop: 8 },
+  footnote: { paddingHorizontal: 4, paddingTop: 8 },
   footnoteText: { ...t.type.footnote, color: t.colors.textTertiary },
-  group: { backgroundColor: t.colors.card, borderRadius: t.radius.lg, borderWidth: 1, borderColor: t.colors.cardBorder, overflow: 'hidden' },
+  group: { backgroundColor: t.colors.surface, borderRadius: t.radius.lg, borderWidth: StyleSheet.hairlineWidth * 2, borderColor: t.colors.border, overflow: 'hidden' },
   hairline: { height: StyleSheet.hairlineWidth * 2, backgroundColor: t.colors.border, marginLeft: 16 },
-  row: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 16, paddingVertical: 12, minHeight: 52 },
-  rowIcon: { width: 22, alignItems: 'center', justifyContent: 'center' },
-  rowTitle: { ...t.type.body, color: t.colors.text },
+  row: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 16, paddingVertical: 12, minHeight: 50 },
+  rowIcon: { width: 20, alignItems: 'center', justifyContent: 'center' },
+  rowTitle: { ...t.type.body, fontSize: 15.5, color: t.colors.text },
   rowSubtitle: { ...t.type.footnote, color: t.colors.textSecondary, marginTop: 2 },
-  rowValue: { ...t.type.callout, color: t.colors.textSecondary, maxWidth: 160 },
-  segmented: { flexDirection: 'row', backgroundColor: t.colors.surfaceSunken, borderRadius: t.radius.pill, padding: 4 },
+  rowValue: { ...t.type.callout, color: t.colors.textSecondary, maxWidth: 170 },
+  segmented: { flexDirection: 'row', backgroundColor: t.colors.surfaceSunken, borderRadius: t.radius.md, padding: 3 },
   segmentPill: {
-    position: 'absolute', top: 4, bottom: 4, left: 4, borderRadius: t.radius.pill, backgroundColor: t.colors.surfaceHigh,
-    borderWidth: 1, borderColor: t.colors.border,
-    shadowColor: t.colors.shadow, shadowOpacity: t.scheme === 'light' ? 0.08 : 0, shadowRadius: 6, shadowOffset: { width: 0, height: 2 },
+    position: 'absolute', top: 3, bottom: 3, left: 3, borderRadius: t.radius.sm, backgroundColor: t.colors.surfaceHigh,
+    borderWidth: t.scheme === 'dark' ? StyleSheet.hairlineWidth * 2 : 0, borderColor: t.colors.border,
+    shadowColor: t.colors.shadow, shadowOpacity: t.scheme === 'light' ? 0.1 : 0, shadowRadius: 3, shadowOffset: { width: 0, height: 1 },
+    elevation: t.scheme === 'light' ? 1 : 0,
   },
-  segment: { flex: 1, minHeight: 40, flexDirection: 'row', gap: 6, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 8 },
-  segmentText: { fontFamily: t.fonts.semibold, fontSize: 14 },
+  segment: { flex: 1, minHeight: 36, flexDirection: 'row', gap: 6, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 8 },
+  segmentText: { fontFamily: t.fonts.medium, fontSize: 14 },
   chip: {
-    flexDirection: 'row', alignItems: 'center', gap: 6, minHeight: 38, paddingHorizontal: 14, borderRadius: t.radius.pill,
-    borderWidth: 1, borderColor: t.colors.cardBorder, backgroundColor: t.colors.card, maxWidth: '100%',
+    flexDirection: 'row', alignItems: 'center', gap: 6, minHeight: 34, paddingHorizontal: 12, borderRadius: t.radius.pill,
+    borderWidth: StyleSheet.hairlineWidth * 2, borderColor: t.colors.borderStrong, backgroundColor: 'transparent', maxWidth: '100%',
   },
-  chipText: { fontFamily: t.fonts.medium, fontSize: 14, flexShrink: 1 },
+  chipText: { fontFamily: t.fonts.medium, fontSize: 13.5, flexShrink: 1 },
   fieldLabel: { ...t.type.label, color: t.colors.textSecondary },
-  hint: { ...t.type.caption, fontFamily: t.fonts.regular, color: t.colors.textSecondary },
+  hint: { ...t.type.footnote, color: t.colors.textTertiary },
   input: {
-    backgroundColor: t.colors.surfaceSunken, color: t.colors.text, fontFamily: t.fonts.medium, fontSize: 16, borderRadius: t.radius.md,
-    paddingHorizontal: 16, paddingVertical: 14, borderWidth: 1, borderColor: 'transparent',
+    backgroundColor: t.colors.surfaceSunken, color: t.colors.text, fontFamily: t.fonts.regular, fontSize: 16, borderRadius: t.radius.md,
+    paddingHorizontal: 14, paddingVertical: 12, borderWidth: 1, borderColor: 'transparent',
     ...(Platform.OS === 'web' ? ({ outlineStyle: 'none' } as object) : {}),
   },
-  card: { backgroundColor: t.colors.card, borderRadius: t.radius.lg, borderWidth: 1, borderColor: t.colors.cardBorder, padding: 16 },
+  card: { backgroundColor: t.colors.surface, borderRadius: t.radius.lg, borderWidth: StyleSheet.hairlineWidth * 2, borderColor: t.colors.border, padding: 16 },
 }));

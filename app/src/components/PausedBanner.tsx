@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { ActivityIndicator, Text, View } from 'react-native';
-import Animated, { FadeIn, FadeInDown, FadeOut, FadeOutUp } from 'react-native-reanimated';
+import Animated, { FadeIn, FadeOut, FadeOutUp } from 'react-native-reanimated';
 import { signedApi } from '../lib/api';
 import { haptic } from '../lib/haptics';
 import { spring, useReducedMotion } from '../lib/motion';
@@ -37,7 +37,7 @@ export function PausedBanner({ server }: { server: Server }) {
   };
 
   return (
-    <Animated.View entering={reduced ? FadeIn.duration(120) : FadeInDown.springify().damping(spring.soft.damping).stiffness(spring.soft.stiffness)}
+    <Animated.View entering={reduced ? FadeIn.duration(120) : FadeIn.duration(180)}
       exiting={reduced ? FadeOut.duration(120) : FadeOutUp.duration(160)} accessibilityRole="alert" style={s.float}>
       <FloatingPill style={s.pill}>
         <View style={s.icon}><CirclePause size={16} color={t.colors.warning} /></View>
@@ -49,7 +49,7 @@ export function PausedBanner({ server }: { server: Server }) {
         </View>
         {owner ? (
           <Tap feedback="selection" accessibilityLabel="Resume" hitSlop={4} style={s.button} onPress={() => !busy && resume()}>
-            {busy ? <ActivityIndicator size="small" color={t.colors.onAccentSoft} /> : <Play size={13} color={t.colors.onAccentSoft} fill={t.colors.onAccentSoft} />}
+            {busy ? <ActivityIndicator size="small" color={t.colors.onAccentSoft} /> : <Play size={13} color={t.colors.textSecondary} fill={t.colors.onAccentSoft} />}
             <Text style={s.buttonText}>Resume</Text>
           </Tap>
         ) : null}

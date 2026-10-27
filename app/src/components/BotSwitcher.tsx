@@ -15,7 +15,7 @@ import { Sheet } from './Sheet';
 import { Badge, Chip, ListGroup, ListRow, Tap } from './ui';
 
 /** The "Your bots" sheet (switch, add, manage), shared by the chip and the sidebar's row of faces. */
-function useBotSheet(server: Server | undefined) {
+export function useBotSheet(server: Server | undefined) {
   const t = useTheme();
   const [open, setOpen] = useState(false);
   const addBot = useAddBot();
@@ -117,7 +117,7 @@ const useStyles = makeStyles((t) => ({
   scroll: { flexGrow: 0, flexShrink: 0 },
   row: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 2 },
   face: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: 'transparent' },
-  faceOn: { borderColor: t.colors.accent, backgroundColor: t.colors.accentSoft },
-  more: { backgroundColor: t.colors.card, borderColor: t.colors.cardBorder, borderWidth: 1 },
+  faceOn: { borderColor: t.colors.text },
+  more: { backgroundColor: t.colors.surface, borderColor: t.colors.border, borderWidth: 1 },
   dot: { position: 'absolute', top: 2, right: 2, borderWidth: 2, borderColor: t.colors.surface },
 }));

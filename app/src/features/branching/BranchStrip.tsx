@@ -1,7 +1,7 @@
 import { router } from 'expo-router';
 import { useState } from 'react';
 import { Text, View } from 'react-native';
-import Animated, { FadeIn, FadeInDown, FadeOut, FadeOutUp } from 'react-native-reanimated';
+import Animated, { FadeIn, FadeOut, FadeOutUp } from 'react-native-reanimated';
 import { FloatingPill, Sheet } from '../../components/Sheet';
 import { ChevronRight, GitBranch } from '../../components/icons';
 import { ListGroup, ListRow, Tap } from '../../components/ui';
@@ -37,7 +37,7 @@ export function BranchStrip({ server, chatId, state }: { server: Server; chatId:
 
   return (
     <>
-      <Animated.View entering={reduced ? FadeIn.duration(120) : FadeInDown.springify().damping(spring.soft.damping).stiffness(spring.soft.stiffness)}
+      <Animated.View entering={reduced ? FadeIn.duration(120) : FadeIn.duration(180)}
         exiting={reduced ? FadeOut.duration(120) : FadeOutUp.duration(140)} style={s.float}>
         <Tap
           feedback="selection"
@@ -49,7 +49,7 @@ export function BranchStrip({ server, chatId, state }: { server: Server; chatId:
         >
           <FloatingPill style={s.strip}>
             <View style={s.icon}>
-              <GitBranch size={15} color={t.colors.onAccentSoft} />
+              <GitBranch size={15} color={t.colors.textSecondary} />
             </View>
             <Text style={s.title} numberOfLines={1}>
               {branch ? ancestryLabel(branch) : branchChildrenLabel(children)}
@@ -71,7 +71,7 @@ export function BranchStrip({ server, chatId, state }: { server: Server; chatId:
 const useStyles = makeStyles((t) => ({
   float: { alignSelf: 'center', maxWidth: 520, marginTop: t.space.sm, marginHorizontal: t.space.md },
   strip: { gap: 10, paddingLeft: 6, paddingRight: t.space.md, paddingVertical: 6 },
-  icon: { width: 30, height: 30, borderRadius: t.radius.pill, alignItems: 'center', justifyContent: 'center', backgroundColor: t.colors.accentSoft },
+  icon: { width: 30, height: 30, borderRadius: t.radius.pill, alignItems: 'center', justifyContent: 'center', backgroundColor: t.colors.surfaceSunken },
   title: { ...t.type.footnote, fontFamily: t.fonts.semibold, color: t.colors.text, flexShrink: 1 },
   empty: { ...t.type.callout, color: t.colors.textSecondary, padding: 16 },
 }));

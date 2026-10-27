@@ -1,7 +1,7 @@
 import { router } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { Text, View } from 'react-native';
-import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
+import Animated, { FadeIn } from 'react-native-reanimated';
 import { withSelectedServer } from '../components/ServerScreen';
 import { Screen } from '../components/Screen';
 import { ChevronDown, ChevronRight, CircleAlert, Folder, MoreHorizontal, Plus, Search } from '../components/icons';
@@ -15,7 +15,7 @@ import { ProjectCreateSheet, ProjectMenuSheet } from '../features/projects/Proje
 import { projectCountLabel } from '../features/projects/logic';
 
 const rise = (reduced: boolean, i: number) => (reduced ? undefined
-  : FadeInDown.delay(i * 70).springify().damping(spring.soft.damping).stiffness(spring.soft.stiffness));
+  : FadeIn.duration(180));
 
 /** Every project on the selected bot: shared ones, a member's private ones, and archived ones. */
 export default withSelectedServer(ProjectsScreen);
@@ -52,7 +52,7 @@ function ProjectsScreen() {
   return (
     <Screen title="Projects"
       right={feature && runtime?.status === 'online' ? (
-        <IconButton label="New project" variant="tonal" onPress={() => setCreating(true)}><Plus size={21} color={t.colors.onAccentSoft} /></IconButton>
+        <IconButton label="New project" onPress={() => setCreating(true)}><Plus size={22} color={t.colors.text} /></IconButton>
       ) : undefined}>
       <ConnectionBanner server={server} compact />
       {!feature && runtime?.info ? (
@@ -86,7 +86,7 @@ function ProjectsScreen() {
             </View>
           ) : !q && !snapshot.projects.length ? (
             <Animated.View entering={rise(reduced, 0)} style={s.empty}>
-              <View style={s.emptyIcon}><Folder size={28} color={t.colors.onAccentSoft} /></View>
+              <View style={s.emptyIcon}><Folder size={28} color={t.colors.textSecondary} /></View>
               <Text style={s.emptyText}>No projects yet.</Text>
               {feature && runtime?.status === 'online' ? <Button title="Create a project" icon={<Plus size={17} color={t.colors.onAccent} />} onPress={() => setCreating(true)} /> : null}
             </Animated.View>
@@ -133,7 +133,7 @@ const useStyles = makeStyles((t) => ({
     backgroundColor: t.colors.warningSoft },
   noticeText: { ...t.type.callout, color: t.colors.textSecondary, flex: 1 },
   empty: { alignItems: 'center', gap: 12, paddingVertical: 34, paddingHorizontal: 18 },
-  emptyIcon: { width: 64, height: 64, borderRadius: t.radius.pill, backgroundColor: t.colors.accentSoft, alignItems: 'center', justifyContent: 'center' },
+  emptyIcon: { width: 64, height: 64, borderRadius: t.radius.pill, backgroundColor: t.colors.surfaceSunken, alignItems: 'center', justifyContent: 'center' },
   emptyTitle: { ...t.type.callout, color: t.colors.text, textAlign: 'center' },
   emptyText: { ...t.type.callout, color: t.colors.textSecondary, textAlign: 'center', maxWidth: 440 },
   archiveHead: { flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 48, paddingHorizontal: 4 },

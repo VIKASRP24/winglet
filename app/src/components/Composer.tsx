@@ -1,4 +1,3 @@
-import { LinearGradient } from 'expo-linear-gradient';
 import { VoicePanel } from '../features/live-voice/VoicePanel';
 import { Image } from 'expo-image';
 import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
@@ -275,7 +274,7 @@ export function Composer({ server, chatId, busy, bottomInset, target, onHeight, 
         <View style={s.tools}>
           {uploads ? (
             <Tap feedback="selection" accessibilityLabel="Attach photos or files" onPress={() => setAttachOpen(true)} style={s.attach} scaleTo={0.9}>
-              <Plus size={22} color={t.colors.text} />
+              <Plus size={22} color={t.colors.textSecondary} />
             </Tap>
           ) : <View style={{ width: 8 }} />}
           <ModelButton server={server} chatId={chatId} variant="composer" prepareChat={prepareChat} />
@@ -284,17 +283,15 @@ export function Composer({ server, chatId, busy, bottomInset, target, onHeight, 
             <Tap accessibilityLabel="Open hands-free voice" onPress={async () => {
               const destination = prepareChat ? await prepareChat() : chatId;
               if (destination) { onBeforeSend?.(destination); setVoiceChat(destination); }
-            }} style={s.attach}><AudioLines size={21} color={t.colors.accent} /></Tap>
+            }} style={s.attach}><AudioLines size={20} color={t.colors.textSecondary} /></Tap>
           ) : null}
           {!busy && !text.trim() && !files.length && voice ? (
             <VoiceButton server={server} chatId={chatId} onSent={onSent} prepareChat={prepareChat} onBeforeSend={onBeforeSend} />
           ) : (
             <Tap key="send" feedback="none" accessibilityLabel={preparing ? 'Starting chat' : uploading ? 'Waiting for uploads' : 'Send'} accessibilityState={{ disabled: !ready || preparing }}
-              disabled={!ready || preparing} onPress={() => send()} scaleTo={0.9} style={[s.sendBtn, { backgroundColor: ready ? t.colors.accentFill : t.colors.card }]}>
-              {ready ? <LinearGradient pointerEvents="none" colors={[t.colors.accentFillLight, t.colors.accentFill]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
-                style={StyleSheet.absoluteFill} /> : null}
+              disabled={!ready || preparing} onPress={() => send()} scaleTo={0.9} style={[s.sendBtn, { backgroundColor: ready ? t.colors.ink : t.colors.surfaceSunken }]}>
               {uploading || preparing ? <ActivityIndicator size="small" color={t.colors.textSecondary} /> : (
-                <ArrowUp size={20} color={ready ? t.colors.onAccent : t.colors.textTertiary} strokeWidth={2.5} />
+                <ArrowUp size={19} color={ready ? t.colors.onInk : t.colors.textTertiary} strokeWidth={2.5} />
               )}
             </Tap>
           )}
@@ -330,7 +327,7 @@ function Tray({ server, chatId, files }: { server: Server; chatId: string; files
           accessibilityLabel={`${f.name}, ${f.status === 'uploading' ? `uploading ${Math.round(f.progress * 100)}%` : f.status}`}>
           {f.previewUri ? <Image source={{ uri: f.previewUri }} style={s.thumb} contentFit="cover" /> : (
             <View style={[s.thumb, s.thumbFile]}>
-              <FileText size={18} color={t.colors.onAccentSoft} />
+              <FileText size={18} color={t.colors.textSecondary} />
               <Text style={s.thumbName} numberOfLines={2}>{f.name}</Text>
             </View>
           )}
@@ -403,16 +400,16 @@ function VoiceButton({ server, chatId, onSent, prepareChat, onBeforeSend }: { se
 const useStyles = makeStyles((t) => ({
   wrap: { position: 'absolute', left: 0, right: 0, bottom: 0, paddingHorizontal: 12, paddingTop: 6 },
   perch: { position: 'absolute', left: 26, zIndex: 3 },
-  box: { borderRadius: t.radius.xl, maxWidth: 820, width: '100%', alignSelf: 'center', overflow: 'hidden' },
+  box: { borderRadius: 24, maxWidth: 820, width: '100%', alignSelf: 'center', overflow: 'hidden',
+    shadowColor: t.colors.shadow, shadowOpacity: t.scheme === 'light' ? 0.06 : 0, shadowRadius: 12, shadowOffset: { width: 0, height: 2 } },
   row: { flexDirection: 'row', paddingHorizontal: 14, paddingTop: 5 },
-  tools: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 6, paddingBottom: 6 },
-  attach: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', backgroundColor: t.colors.card,
-    borderWidth: 1, borderColor: t.colors.cardBorder },
+  tools: { flexDirection: 'row', alignItems: 'center', gap: 2, paddingHorizontal: 8, paddingBottom: 8 },
+  attach: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
   input: {
     flex: 1, ...t.type.body, color: t.colors.text, paddingTop: 9, paddingBottom: 9, paddingHorizontal: 6, maxHeight: 150,
     ...(Platform.OS === 'web' ? ({ outlineStyle: 'none' } as object) : {}),
   },
-  sendBtn: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
+  sendBtn: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
   offlineNote: { ...t.type.caption, color: t.colors.warning, marginBottom: 6, marginLeft: 12, maxWidth: 820, alignSelf: 'center', width: '100%' },
   commands: { borderRadius: t.radius.lg, marginBottom: 8, paddingVertical: 4, maxWidth: 820, width: '100%', alignSelf: 'center' },
   command: { justifyContent: 'center', gap: 1, paddingHorizontal: 16, paddingVertical: 7, minHeight: 52 },

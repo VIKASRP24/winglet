@@ -59,7 +59,7 @@ export default function ShareScreen() {
             <ListGroup>
               {shareTargets(rt?.chats, main, server.deviceId).map((chat) => (
                 <ListRow key={chat.id} title={chat.main ? `${server.bot.title} (main chat)` : chat.title}
-                  icon={chat.main ? <MessageCircle size={18} color={t.colors.onAccentSoft} /> : <Hash size={18} color={t.colors.onAccentSoft} />}
+                  icon={chat.main ? <MessageCircle size={18} color={t.colors.textSecondary} /> : <Hash size={18} color={t.colors.textSecondary} />}
                   onPress={() => deliver(server.id, chat.id)} />
               ))}
             </ListGroup>

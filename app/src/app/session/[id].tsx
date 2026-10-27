@@ -1,7 +1,7 @@
 import { useLocalSearchParams } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { Text, View } from 'react-native';
-import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
+import Animated, { FadeIn } from 'react-native-reanimated';
 import { ChevronDown, ChevronRight, TriangleAlert, Wrench } from '../../components/icons';
 import { Markdown } from '../../components/Markdown';
 import { Screen } from '../../components/Screen';
@@ -52,7 +52,7 @@ export default function SessionScreen() {
           {data.truncated ? <Text style={s.note}>Showing the latest 500 messages.</Text> : null}
           {data.messages.map((m, i) => (
             <Animated.View key={`${m.id}-${i}`} entering={reduced || i > 10 ? undefined
-              : FadeInDown.delay(i * 45).springify().damping(spring.soft.damping).stiffness(spring.soft.stiffness)}>
+              : FadeIn.duration(180)}>
               <Turn message={m} />
             </Animated.View>
           ))}
@@ -123,10 +123,10 @@ const useStyles = makeStyles((t) => ({
   time: { ...t.type.caption, color: t.colors.textTertiary },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
   chip: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 5, borderRadius: t.radius.pill,
-    backgroundColor: t.colors.card, borderWidth: 1, borderColor: t.colors.cardBorder },
+    backgroundColor: t.colors.surface, borderWidth: 1, borderColor: t.colors.border },
   chipText: { ...t.type.caption, color: t.colors.textSecondary, fontFamily: t.fonts.mono },
-  tool: { paddingHorizontal: 14, paddingVertical: 12, minHeight: 44, borderRadius: t.radius.lg, backgroundColor: t.colors.card,
-    borderWidth: 1, borderColor: t.colors.cardBorder, gap: 8, justifyContent: 'center' },
+  tool: { paddingHorizontal: 14, paddingVertical: 12, minHeight: 44, borderRadius: t.radius.lg, backgroundColor: t.colors.surface,
+    borderWidth: 1, borderColor: t.colors.border, gap: 8, justifyContent: 'center' },
   toolHead: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   toolLabel: { ...t.type.caption, color: t.colors.textSecondary, fontFamily: t.fonts.mono },
   toolText: { ...t.type.footnote, fontFamily: t.fonts.mono, color: t.colors.text },

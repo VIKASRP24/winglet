@@ -1,23 +1,22 @@
-import { cloneElement, memo, useCallback, useState, type ReactElement } from 'react';
+import { useCallback, useState } from 'react';
 import { Redirect, router, useFocusEffect } from 'expo-router';
 import { Text, useWindowDimensions, View } from 'react-native';
-import Animated, { FadeInDown, useAnimatedScrollHandler, useSharedValue } from 'react-native-reanimated';
+import Animated, { useAnimatedScrollHandler, useSharedValue } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ManageBot } from '../../components/ManageBot';
 import { VerifyNotice } from '../../components/VerifyPhone';
 import { BotSwitcher } from '../../components/BotSwitcher';
-import { HUB_BAR, HubBar, HubGlow } from '../../components/InboxView';
+import { HUB_BAR, HubBar } from '../../components/InboxView';
 import { LivePet } from '../../components/LivePet';
 import {
-  Activity, BarChart, Brain, CalendarClock, Check, ChevronRight, Cpu, FileDiff, HeartPulse, Key, MessageCircle, MessageSquareText, PawPrint, Plug,
+  Activity, BarChart, Brain, CalendarClock, Check, Cpu, FileDiff, HeartPulse, Key, MessageCircle, MessageSquareText, PawPrint, Plug,
   ScrollText, ShieldCheck, Sparkles, SquareTerminal, Star, UserRoundPen,
 } from '../../components/icons';
 import { moodOf } from '../../lib/agent';
 import { modelName } from '../../lib/modelOptions';
 import { api } from '../../lib/api';
-import { useReducedMotion } from '../../lib/motion';
 import { useTabBarSpace } from '../../components/TabBar';
-import { Button, Footnote, ListGroup, ListRow, SectionHeader, Tap } from '../../components/ui';
+import { Button, Footnote, ListGroup, ListRow, SectionHeader } from '../../components/ui';
 import { connectionView } from '../../lib/connection';
 import { setMainBot, useMainBot } from '../../lib/mainBot';
 import { homeChat, isOwner, useApp, useServerState } from '../../lib/store';
@@ -61,59 +60,52 @@ function AgentHub({ server }: { server: Server }) {
   const tone = !online ? view.tone === 'error' ? t.colors.danger : t.colors.warning
     : mood === 'waiting' ? t.colors.warning : t.colors.success;
 
-  const brainTiles: TileSpec[] = brain ? [
-    { key: 'model', icon: <Cpu />, title: 'Model', value: model, onPress: () => router.push('/model') },
-    { key: 'providers', icon: <Key />, title: 'Providers', onPress: () => router.push('/providers') },
-    { key: 'persona', icon: <UserRoundPen />, title: 'Persona', onPress: () => router.push('/persona') },
-    ...(rt?.info?.features?.pets ? [{ key: 'pet', icon: <PawPrint />, title: 'Pet', value: rt.pet?.name, onPress: () => router.push('/pets') }] : []),
-    { key: 'memory', icon: <Brain />, title: 'Memory', onPress: () => router.push('/memory') },
-    { key: 'usage', icon: <BarChart />, title: 'Usage', onPress: () => router.push('/usage') },
+  const brainRows = brain ? [
+    <ListRow key="model" icon={<Cpu />} title="Model" value={model} onPress={() => router.push('/model')} />,
+    <ListRow key="providers" icon={<Key />} title="Providers" onPress={() => router.push('/providers')} />,
+    <ListRow key="persona" icon={<UserRoundPen />} title="Persona" onPress={() => router.push('/persona')} />,
+    ...(rt?.info?.features?.pets ? [<ListRow key="pet" icon={<PawPrint />} title="Pet" value={rt.pet?.name} onPress={() => router.push('/pets')} />] : []),
+    <ListRow key="memory" icon={<Brain />} title="Memory" onPress={() => router.push('/memory')} />,
+    <ListRow key="usage" icon={<BarChart />} title="Usage" onPress={() => router.push('/usage')} />,
   ] : [];
-  const abilityTiles: TileSpec[] = rt?.info?.features?.abilities && owner ? [
-    { key: 'skills', icon: <Sparkles />, title: 'Skills', onPress: () => router.push('/skills') },
-    { key: 'tools', icon: <SquareTerminal />, title: 'Tools', onPress: () => router.push('/tools') },
-    { key: 'mcp', icon: <Plug />, title: 'MCP servers', onPress: () => router.push('/mcp') },
+  const abilityRows = rt?.info?.features?.abilities && owner ? [
+    <ListRow key="skills" icon={<Sparkles />} title="Skills" onPress={() => router.push('/skills')} />,
+    <ListRow key="tools" icon={<SquareTerminal />} title="Tools" onPress={() => router.push('/tools')} />,
+    <ListRow key="mcp" icon={<Plug />} title="MCP servers" onPress={() => router.push('/mcp')} />,
   ] : [];
-  const historyTiles: TileSpec[] = control ? [
-    { key: 'schedule', icon: <CalendarClock />, title: 'Schedule', onPress: () => router.push('/schedule') },
-    ...(rt.info?.features?.checkpoints ? [{ key: 'checkpoints', icon: <FileDiff />, title: 'Checkpoints', onPress: () => router.push('/checkpoints') }] : []),
-    ...(rt.info?.features?.sessions ? [{ key: 'sessions', icon: <MessageSquareText />, title: 'Sessions', onPress: () => router.push('/sessions') }] : []),
-    ...(!child ? [{ key: 'logs', icon: <ScrollText />, title: 'Logs', onPress: () => router.push('/logs') }] : []),
+  const historyRows = control ? [
+    <ListRow key="schedule" icon={<CalendarClock />} title="Schedule" onPress={() => router.push('/schedule')} />,
+    ...(rt.info?.features?.checkpoints ? [<ListRow key="checkpoints" icon={<FileDiff />} title="Checkpoints" onPress={() => router.push('/checkpoints')} />] : []),
+    ...(rt.info?.features?.sessions ? [<ListRow key="sessions" icon={<MessageSquareText />} title="Sessions" onPress={() => router.push('/sessions')} />] : []),
+    ...(!child ? [<ListRow key="logs" icon={<ScrollText />} title="Logs" onPress={() => router.push('/logs')} />] : []),
   ] : [];
 
   return (
     <View style={s.root}>
-      <HubGlow y={y} server={server} height={460} />
       <Animated.ScrollView onScroll={onScroll} scrollEventThrottle={16}
         contentContainerStyle={[s.content, { paddingTop: insets.top + HUB_BAR, paddingBottom: (wide ? t.space.xl : tabSpace) + t.space.sm }]}>
-        <View style={s.hero}>
-          <LivePet server={server} size={124} glow accessibilityLabel={`${server.bot.title}, ${status}. Tap to poke`} />
-          <Text style={s.name} accessibilityRole="header" numberOfLines={2}>{server.bot.title}</Text>
-          <View style={s.pills}>
-            <View style={s.pill} accessibilityLabel={`Status: ${status}`}>
+        <View style={s.profile}>
+          <LivePet server={server} size={64} accessibilityLabel={`${server.bot.title}, ${status}. Tap to poke`} />
+          <View style={s.identity}>
+            <Text style={s.name} accessibilityRole="header" numberOfLines={2}>{server.bot.title}</Text>
+            <View style={s.meta} accessibilityLabel={`Status: ${status}${model ? `. Model: ${model}` : ''}`}>
               <View style={[s.dot, { backgroundColor: tone }]} />
-              <Text style={s.pillText} numberOfLines={1}>{status}</Text>
+              <Text style={s.metaText} numberOfLines={1}>{status}{model ? ` · ${model}` : ''}</Text>
             </View>
-            {model ? (
-              <View style={s.pill} accessibilityLabel={`Model: ${model}`}>
-                <Cpu size={14} color={t.colors.textSecondary} />
-                <Text style={s.pillText} numberOfLines={1}>{model}</Text>
-              </View>
-            ) : null}
           </View>
-          <View style={s.heroActions}>
-            <Button title="Main chat" style={s.heroButton} icon={<MessageCircle size={18} color={t.colors.onAccent} />}
-              onPress={() => router.push(`/chat/${server.id}/${homeChat(rt)}`)} />
-            {child ? null : <Button title="Updates" variant="secondary" style={s.heroButton} icon={<Sparkles size={18} color={t.colors.text} />}
-              onPress={() => router.push(`/chat/${server.id}/home`)} />}
-          </View>
+        </View>
+        <View style={s.actions}>
+          <Button title="Open chat" style={s.action} icon={<MessageCircle size={17} color={t.colors.onInk} />}
+            onPress={() => router.push(`/chat/${server.id}/${homeChat(rt)}`)} />
+          {child ? null : <Button title="Updates" variant="secondary" style={s.action} icon={<Sparkles size={17} color={t.colors.text} />}
+            onPress={() => router.push(`/chat/${server.id}/home`)} />}
         </View>
 
         <VerifyNotice server={server} />
 
-        {brainTiles.length ? <><SectionHeader title="Agent" /><TileGrid tiles={brainTiles} delay={0} /></> : null}
-        {abilityTiles.length ? <><SectionHeader title="Abilities" /><TileGrid tiles={abilityTiles} delay={4} /></> : null}
-        {historyTiles.length ? <><SectionHeader title="Automation & history" /><TileGrid tiles={historyTiles} delay={6} /></> : null}
+        {brainRows.length ? <><SectionHeader title="Agent" /><ListGroup>{brainRows}</ListGroup></> : null}
+        {abilityRows.length ? <><SectionHeader title="Abilities" /><ListGroup>{abilityRows}</ListGroup></> : null}
+        {historyRows.length ? <><SectionHeader title="Automation & history" /><ListGroup>{historyRows}</ListGroup></> : null}
 
         <SectionHeader title="Server" />
         <ListGroup>
@@ -136,7 +128,7 @@ function AgentHub({ server }: { server: Server }) {
 
         {rt?.info?.version ? <Footnote style={s.version}>Server plugin {rt.info.version}{rt.info.hermes_version ? ` · Hermes ${rt.info.hermes_version}` : ''}</Footnote> : null}
       </Animated.ScrollView>
-      <HubBar y={y} right={<BotSwitcher />} />
+      <HubBar y={y} title={server.bot.title} right={<BotSwitcher />} />
     </View>
   );
 }
@@ -152,72 +144,16 @@ function useAgentInfo(server: Server, enabled: boolean): AgentInfo | null {
   return enabled && loaded?.id === server.id ? loaded.info : null;
 }
 
-type TileSpec = { key: string; icon: ReactElement; title: string; value?: string; onPress: () => void };
-
-/** Two frosted tiles a row; an odd one out takes the whole row. */
-function TileGrid({ tiles, delay }: { tiles: TileSpec[]; delay: number }) {
-  const s = useStyles();
-  const rows: TileSpec[][] = [];
-  for (let i = 0; i < tiles.length; i += 2) rows.push(tiles.slice(i, i + 2));
-  return (
-    <View style={s.grid}>
-      {rows.map((row, r) => (
-        <View key={row[0].key} style={s.gridRow}>
-          {row.map((tile, c) => <Tile key={tile.key} tile={tile} wide={row.length === 1} order={delay + r * 2 + c} />)}
-        </View>
-      ))}
-    </View>
-  );
-}
-
-const Tile = memo(function Tile({ tile, wide, order }: { tile: TileSpec; wide: boolean; order: number }) {
-  const t = useTheme();
-  const s = useStyles();
-  const reduced = useReducedMotion();
-  return (
-    <Animated.View style={s.tileCell} entering={reduced ? undefined : FadeInDown.delay(Math.min(order, 10) * 40).springify().damping(22).stiffness(180)}>
-      <Tap feedback="selection" scaleTo={0.96} accessibilityLabel={tile.value ? `${tile.title}, ${tile.value}` : tile.title} onPress={tile.onPress}
-        style={({ pressed, hovered }) => [s.tile, wide && s.tileWide, (pressed || hovered) && { borderColor: t.colors.borderStrong }]}>
-        <View style={s.tileIcon}>{cloneElement(tile.icon as ReactElement<{ size?: number; color?: string }>, { size: 20, color: t.colors.onAccentSoft })}</View>
-        <View style={wide ? s.tileTextWide : s.tileText}>
-          <Text style={s.tileTitle} numberOfLines={1}>{tile.title}</Text>
-          {tile.value ? <Text style={s.tileValue} numberOfLines={1}>{tile.value}</Text> : null}
-        </View>
-        {wide ? <ChevronRight size={18} color={t.colors.textTertiary} /> : null}
-      </Tap>
-    </Animated.View>
-  );
-});
-
 const useStyles = makeStyles((t) => ({
   root: { flex: 1, backgroundColor: t.colors.bg },
   content: { paddingHorizontal: t.space.lg, maxWidth: 680, width: '100%', alignSelf: 'center' },
-  hero: {
-    alignItems: 'center', gap: t.space.md, marginTop: t.space.sm, paddingTop: t.space.xl, paddingBottom: t.space.xl, paddingHorizontal: t.space.xl,
-    backgroundColor: t.colors.card, borderRadius: t.radius.xl, borderWidth: 1, borderColor: t.colors.cardBorder,
-  },
-  name: { ...t.type.display, color: t.colors.text, textAlign: 'center', marginTop: t.space.sm },
-  pills: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: t.space.sm },
-  pill: {
-    flexDirection: 'row', alignItems: 'center', gap: 6, minHeight: 30, paddingHorizontal: t.space.md, maxWidth: '100%',
-    borderRadius: t.radius.pill, backgroundColor: t.colors.pressed, borderWidth: 1, borderColor: t.colors.cardBorder,
-  },
-  pillText: { ...t.type.caption, color: t.colors.textSecondary, flexShrink: 1 },
-  dot: { width: 8, height: 8, borderRadius: t.radius.pill },
-  heroActions: { flexDirection: 'row', gap: t.space.sm, alignSelf: 'stretch', marginTop: t.space.sm },
-  heroButton: { flex: 1 },
-  grid: { gap: t.space.md },
-  gridRow: { flexDirection: 'row', gap: t.space.md },
-  tileCell: { flex: 1 },
-  tile: {
-    minHeight: 104, padding: t.space.lg, gap: t.space.md, justifyContent: 'space-between',
-    backgroundColor: t.colors.card, borderRadius: t.radius.lg, borderWidth: 1, borderColor: t.colors.cardBorder,
-  },
-  tileWide: { minHeight: 68, flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-start', paddingVertical: t.space.md },
-  tileIcon: { width: 40, height: 40, borderRadius: t.radius.pill, backgroundColor: t.colors.accentSoft, alignItems: 'center', justifyContent: 'center' },
-  tileText: { gap: 2 },
-  tileTextWide: { flex: 1, minWidth: 0, gap: 2 },
-  tileTitle: { ...t.type.bodyStrong, color: t.colors.text },
-  tileValue: { ...t.type.caption, color: t.colors.textSecondary },
+  profile: { flexDirection: 'row', alignItems: 'center', gap: t.space.lg, paddingHorizontal: 4, marginTop: t.space.xs },
+  identity: { flex: 1, minWidth: 0, gap: 4 },
+  name: { ...t.type.display, color: t.colors.text },
+  meta: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  metaText: { ...t.type.callout, color: t.colors.textSecondary, flexShrink: 1 },
+  dot: { width: 7, height: 7, borderRadius: 4 },
+  actions: { flexDirection: 'row', gap: t.space.sm, marginTop: t.space.xl },
+  action: { flex: 1 },
   version: { alignItems: 'center', paddingTop: t.space.xl },
 }));

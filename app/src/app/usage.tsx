@@ -1,7 +1,6 @@
-import { LinearGradient } from 'expo-linear-gradient';
 import { useEffect, useState, type ReactNode } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import Animated, { FadeInDown } from 'react-native-reanimated';
+import Animated, { FadeIn } from 'react-native-reanimated';
 import { Coins, MessagesSquare, Zap } from '../components/icons';
 import { shortModel } from '../components/PickerCard';
 import { Screen } from '../components/Screen';
@@ -25,7 +24,7 @@ const compact = (n: number) => n >= 1e9 ? `${(n / 1e9).toFixed(1)}B` : n >= 1e6 
 const money = (n: number) => n === 0 ? '$0' : n < 0.01 ? '<$0.01' : `$${n.toFixed(2)}`;
 const tokens = (r: Row) => (r.input_tokens ?? 0) + (r.output_tokens ?? 0);
 const rise = (reduced: boolean, i: number) => (reduced ? undefined
-  : FadeInDown.delay(i * 70).springify().damping(spring.soft.damping).stiffness(spring.soft.stiffness));
+  : FadeIn.duration(180));
 
 /** Tokens and estimated cost, per day and per model, from Hermes's own session records. */
 export default withSelectedServer(UsageScreen);
@@ -61,11 +60,11 @@ function UsageScreen() {
         : <View style={{ gap: 12, marginTop: 16 }}><Skeleton height={140} radius={t.radius.lg} /><Skeleton height={220} radius={t.radius.lg} /></View>) : (
         <>
           <Animated.View entering={rise(reduced, 0)} style={s.tiles}>
-            <Stat wide label="Tokens" value={compact(totalTokens)} icon={<Zap size={18} color={t.colors.onAccentSoft} />} />
-            <View style={s.tileRow}>
-              <Stat label="Estimated cost" value={money(cost)} icon={<Coins size={18} color={t.colors.onAccentSoft} />} />
-              <Stat label="Sessions" value={String(data.totals.total_sessions ?? 0)} icon={<MessagesSquare size={18} color={t.colors.onAccentSoft} />} />
-            </View>
+            <Stat label="Tokens" value={compact(totalTokens)} />
+            <View style={s.divider} />
+            <Stat label="Est. cost" value={money(cost)} />
+            <View style={s.divider} />
+            <Stat label="Sessions" value={String(data.totals.total_sessions ?? 0)} />
           </Animated.View>
           <Footnote>Costs use public prices and may differ from your bill.</Footnote>
           <Animated.View entering={rise(reduced, 1)}>
@@ -82,17 +81,13 @@ function UsageScreen() {
   );
 }
 
-/** One number, big, in a frosted tile. */
-function Stat({ label, value, icon, wide }: { label: string; value: string; icon: ReactNode; wide?: boolean }) {
-  const t = useTheme();
+/** One number with its label, a column of the summary. */
+function Stat({ label, value }: { label: string; value: string }) {
   const s = useStyles();
   return (
-    <View style={[s.tile, wide ? s.tileWide : { flex: 1 }]} accessible accessibilityLabel={`${label}: ${value}`}>
-      {wide ? <LinearGradient pointerEvents="none" colors={[t.colors.accentSoft, alpha(t.colors.accent, 0)]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
-        style={StyleSheet.absoluteFill} /> : null}
-      <View style={s.tileIcon}>{icon}</View>
-      <Text style={wide ? s.tileValueBig : s.tileValue} numberOfLines={1} adjustsFontSizeToFit>{value}</Text>
+    <View style={s.tile} accessible accessibilityLabel={`${label}: ${value}`}>
       <Text style={s.tileLabel} numberOfLines={1}>{label}</Text>
+      <Text style={s.tileValue} numberOfLines={1} adjustsFontSizeToFit>{value}</Text>
     </View>
   );
 }
@@ -111,7 +106,6 @@ export function DailyBars({ rows }: { rows: Usage['daily'] }) {
   const picked = chosen ? rows.indexOf(chosen) : null;
   const shown = chosen ?? rows[rows.length - 1];
   const label = (day: string) => new Date(`${day}T12:00:00`).toLocaleDateString([], { month: 'short', day: 'numeric' });
-  const faded = alpha(t.colors.accent, 0.4);
   return (
     <Card style={{ gap: 14 }}>
       <View style={s.readout} accessibilityLiveRegion="polite">
@@ -130,9 +124,7 @@ export function DailyBars({ rows }: { rows: Usage['daily'] }) {
             return (
               <Pressable key={r.day} onPress={() => setDay(on ? null : r.day)} style={s.hit} hitSlop={4}
                 accessibilityRole="button" accessibilityLabel={`${label(r.day)}: ${compact(tokens(r))} tokens, ${money(r.estimated_cost ?? 0)}`}>
-                <View style={[s.bar, { height: h, opacity: picked === null || on ? 1 : 0.3 }]}>
-                  <LinearGradient pointerEvents="none" colors={[t.colors.accent, faded]} style={s.fill} />
-                </View>
+                <View style={[s.bar, { height: h, backgroundColor: t.colors.accent, opacity: picked === null || on ? 1 : 0.3 }]} />
               </Pressable>
             );
           })}
@@ -161,29 +153,22 @@ function Models({ rows }: { rows: Usage['by_model'] }) {
 const useStyles = makeStyles((t) => ({
   error: { ...t.type.callout, color: t.colors.danger, marginTop: 10 },
   empty: { ...t.type.callout, color: t.colors.textSecondary },
-  tiles: { gap: t.space.md, marginTop: t.space.xl },
-  tileRow: { flexDirection: 'row', gap: t.space.md },
-  tile: {
-    backgroundColor: t.colors.card, borderColor: t.colors.cardBorder, borderWidth: 1, borderRadius: t.radius.lg, padding: t.space.lg,
-    gap: t.space.xs, overflow: 'hidden', minWidth: 0,
+  tiles: {
+    flexDirection: 'row', marginTop: t.space.lg, paddingVertical: t.space.lg, backgroundColor: t.colors.surface,
+    borderColor: t.colors.border, borderWidth: StyleSheet.hairlineWidth * 2, borderRadius: t.radius.lg,
   },
-  tileWide: { paddingVertical: t.space.xl },
-  tileIcon: {
-    width: 36, height: 36, borderRadius: t.radius.pill, backgroundColor: t.colors.accentSoft, alignItems: 'center', justifyContent: 'center',
-    marginBottom: t.space.sm,
-  },
-  tileValueBig: { ...t.type.hero, fontSize: 44, lineHeight: 50, color: t.colors.text },
-  tileValue: { ...t.type.title, color: t.colors.text },
+  divider: { width: StyleSheet.hairlineWidth * 2, backgroundColor: t.colors.border },
+  tile: { flex: 1, minWidth: 0, gap: 4, paddingHorizontal: t.space.lg },
+  tileValue: { ...t.type.title, fontSize: 22, color: t.colors.text, fontVariant: ['tabular-nums'] },
   tileLabel: { ...t.type.footnote, color: t.colors.textSecondary },
   readout: { gap: 2 },
   readoutDay: { ...t.type.caption, color: t.colors.textSecondary },
-  readoutValue: { ...t.type.title, color: t.colors.text },
+  readoutValue: { ...t.type.title, color: t.colors.text, fontVariant: ['tabular-nums'] },
   plot: { height: 148, justifyContent: 'flex-end' },
   grid: { position: 'absolute', left: 0, right: 0, bottom: 0, height: StyleSheet.hairlineWidth * 2, backgroundColor: t.colors.border },
   bars: { flexDirection: 'row', alignItems: 'flex-end', gap: 3, height: 148 },
   hit: { flex: 1, height: 148, justifyContent: 'flex-end', alignItems: 'center' },
-  fill: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
-  bar: { width: '100%', maxWidth: 14, minWidth: 2, borderRadius: t.radius.pill, overflow: 'hidden' },
+  bar: { width: '100%', maxWidth: 16, minWidth: 2, borderTopLeftRadius: 3, borderTopRightRadius: 3 },
   axis: { flexDirection: 'row', justifyContent: 'space-between' },
   axisText: { ...t.type.caption, color: t.colors.textTertiary },
   modelHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', gap: 12 },

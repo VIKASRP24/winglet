@@ -1,5 +1,4 @@
-import { LinearGradient } from 'expo-linear-gradient';
-import { Platform, Text, View } from 'react-native';
+import { Platform, Text, View, StyleSheet } from 'react-native';
 import { BotAvatar } from '../components/BotAvatar';
 import { Check, Monitor, Moon, Sun } from '../components/icons';
 import { Screen } from '../components/Screen';
@@ -35,14 +34,14 @@ export default function AppearanceScreen() {
           return (
             <Tap key={value} feedback="selection" scaleTo={0.96} accessibilityRole="radio" accessibilityState={{ selected: on }} accessibilityLabel={label}
               onPress={() => { if (!on) set('theme')(value); }} style={s.themeCell}>
-              <View style={[s.themeFrame, on && { borderColor: t.colors.accent }]}>
+              <View style={[s.themeFrame, on && { borderColor: t.colors.text }]}>
                 <View style={s.themeShot}>
                   {value === 'system' ? <>
                     <MiniTheme colors={light} half="left" />
                     <MiniTheme colors={dark} half="right" />
                   </> : <MiniTheme colors={value === 'light' ? light : dark} />}
                 </View>
-                {on ? <View style={s.themeCheck}><Check size={12} color={t.colors.onAccent} strokeWidth={3.5} /></View> : null}
+                {on ? <View style={s.themeCheck}><Check size={12} color={t.colors.onInk} strokeWidth={3.5} /></View> : null}
               </View>
               <View style={s.themeLabel}>
                 <Icon size={14} color={on ? t.colors.text : t.colors.textSecondary} />
@@ -66,10 +65,10 @@ export default function AppearanceScreen() {
             return (
               <Tap key={name} feedback="selection" accessibilityRole="radio" accessibilityState={{ selected: on }} accessibilityLabel={a.label}
                 onPress={() => update({ accent: name })} style={s.swatchCell}>
-                <View style={[s.swatchRing, on && { borderColor: t.scheme === 'dark' ? a.dark : a.light }]}>
-                  <LinearGradient colors={[a.fillLight, a.fill]} start={{ x: 0.1, y: 0 }} end={{ x: 0.9, y: 1 }} style={s.swatch}>
-                    {on ? <Check size={22} color={t.colors.onAccent} strokeWidth={3} /> : null}
-                  </LinearGradient>
+                <View style={[s.swatchRing, on && { borderColor: t.colors.text }]}>
+                  <View style={[s.swatch, { backgroundColor: t.scheme === 'dark' ? a.dark : a.fill }]}>
+                    {on ? <Check size={16} color={t.scheme === 'dark' ? t.colors.bg : t.colors.onAccent} strokeWidth={3} /> : null}
+                  </View>
                 </View>
                 <Text style={[s.swatchLabel, on && s.labelOn]}>{a.label}</Text>
               </Tap>
@@ -119,7 +118,7 @@ function MiniTheme({ colors: c, half }: { colors: Colors; half?: 'left' | 'right
       <View style={[s.miniInner, half === 'left' && s.miniLeft, half === 'right' && s.miniRight]}>
         <View style={[s.miniLine, { backgroundColor: c.borderStrong, width: '46%' }]} />
         <View style={[s.miniBubble, { backgroundColor: c.surfaceHigh, borderColor: c.border, width: '72%' }]} />
-        <View style={[s.miniBubble, { backgroundColor: c.accentFill, borderColor: 'transparent', width: '52%', alignSelf: 'flex-end' }]} />
+        <View style={[s.miniBubble, { backgroundColor: c.bubble, borderColor: 'transparent', width: '52%', alignSelf: 'flex-end' }]} />
       </View>
     </View>
   );
@@ -137,8 +136,8 @@ function Preview() {
         <Text style={s.previewText}>Want a weekly disk check?</Text>
       </View>
       {layout === 'bubbles' ? (
-        <View style={[s.previewBubble, { backgroundColor: t.colors.accentFill }]}>
-          <Text style={[s.previewText, { color: t.colors.onAccent }]}>Yes, every Monday</Text>
+        <View style={[s.previewBubble, { backgroundColor: t.colors.bubble }]}>
+          <Text style={s.previewText}>Yes, every Monday</Text>
         </View>
       ) : (
         <View style={s.previewBot}>
@@ -152,21 +151,21 @@ function Preview() {
 
 const useStyles = makeStyles((t) => ({
   control: { padding: t.space.lg, gap: t.space.sm },
-  label: { ...t.type.body, color: t.colors.text },
+  label: { ...t.type.body, fontSize: 15.5, color: t.colors.text },
   swatches: { flexDirection: 'row', justifyContent: 'space-between', gap: t.space.xs },
   swatchCell: { flex: 1, alignItems: 'center', gap: t.space.sm, minWidth: 48, minHeight: 48 },
-  swatchRing: { padding: 3, borderRadius: t.radius.pill, borderWidth: 2.5, borderColor: 'transparent' },
-  swatch: { width: 50, height: 50, borderRadius: t.radius.pill, alignItems: 'center', justifyContent: 'center' },
+  swatchRing: { padding: 3, borderRadius: t.radius.pill, borderWidth: 2, borderColor: 'transparent' },
+  swatch: { width: 36, height: 36, borderRadius: t.radius.pill, alignItems: 'center', justifyContent: 'center' },
   swatchLabel: { ...t.type.caption, color: t.colors.textSecondary },
   labelOn: { color: t.colors.text, fontFamily: t.fonts.semibold },
   themes: { flexDirection: 'row', gap: t.space.md },
   themeCell: { flex: 1, alignItems: 'center', gap: t.space.sm },
-  themeFrame: { alignSelf: 'stretch', borderRadius: t.radius.lg, borderWidth: 2.5, borderColor: 'transparent', padding: 3 },
+  themeFrame: { alignSelf: 'stretch', borderRadius: t.radius.lg, borderWidth: 2, borderColor: 'transparent', padding: 3 },
   themeShot: {
-    height: 104, flexDirection: 'row', borderRadius: t.radius.md, overflow: 'hidden', borderWidth: 1, borderColor: t.colors.cardBorder,
+    height: 96, flexDirection: 'row', borderRadius: t.radius.md, overflow: 'hidden', borderWidth: StyleSheet.hairlineWidth * 2, borderColor: t.colors.border,
   },
   themeCheck: {
-    position: 'absolute', top: 9, right: 9, width: 22, height: 22, borderRadius: t.radius.pill, backgroundColor: t.colors.accentFill,
+    position: 'absolute', top: 9, right: 9, width: 20, height: 20, borderRadius: t.radius.pill, backgroundColor: t.colors.ink,
     alignItems: 'center', justifyContent: 'center',
   },
   themeLabel: { flexDirection: 'row', alignItems: 'center', gap: 6 },

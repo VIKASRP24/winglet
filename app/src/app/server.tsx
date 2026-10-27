@@ -1,7 +1,7 @@
 import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Text, View } from 'react-native';
-import Animated, { FadeInDown } from 'react-native-reanimated';
+import Animated, { FadeIn } from 'react-native-reanimated';
 import { JobSheet } from '../components/JobSheet';
 import {
   CalendarClock, Check, CircleAlert, CircleArrowUp, CirclePause, CircleHelp, RefreshCw, RotateCw, ScrollText, ShieldCheck,
@@ -108,7 +108,7 @@ function ServerScreen() {
 
       <SectionHeader title="Health" />
       {!host ? <Skeleton height={150} radius={t.radius.lg} /> : (
-        <Animated.View entering={reduced ? undefined : FadeInDown.springify().damping(spring.soft.damping).stiffness(spring.soft.stiffness)} style={{ gap: t.space.md }}>
+        <Animated.View entering={reduced ? undefined : FadeIn.duration(180)} style={{ gap: t.space.md }}>
           {host.cpu_percent !== undefined || host.memory || host.disk ? (
             <View style={s.meters}>
               {host.cpu_percent !== undefined ? <Meter label="Processor" percent={host.cpu_percent}
@@ -131,12 +131,12 @@ function ServerScreen() {
       <SectionHeader title="Controls" />
       <ListGroup>
         {info?.can_pause !== false ? (
-          <ListRow icon={<CirclePause size={18} color={paused ? t.colors.warning : t.colors.onAccentSoft} />}
+          <ListRow icon={<CirclePause size={18} color={paused ? t.colors.warning : t.colors.textSecondary} />}
             iconColor={paused ? t.colors.warning : undefined} title="Pause new work"
             subtitle="New work waits; running tasks finish."
             right={<Toggle label="Pause new work" value={!!paused} onValueChange={(on) => !pausing && setPaused(on)} />} />
         ) : null}
-        <ListRow icon={<RotateCw size={18} color={t.colors.onAccentSoft} />} title="Restart"
+        <ListRow icon={<RotateCw size={18} color={t.colors.textSecondary} />} title="Restart"
           onPress={() => setConfirm('restart')} />
       </ListGroup>
 
@@ -153,11 +153,11 @@ function ServerScreen() {
 
       <SectionHeader title="Tools" />
       <ListGroup>
-        <ListRow icon={<CalendarClock size={18} color={t.colors.onAccentSoft} />} title="Schedule"
+        <ListRow icon={<CalendarClock size={18} color={t.colors.textSecondary} />} title="Schedule"
           onPress={() => router.push('/schedule')} />
-        <ListRow icon={<ScrollText size={18} color={t.colors.onAccentSoft} />} title="Logs"
+        <ListRow icon={<ScrollText size={18} color={t.colors.textSecondary} />} title="Logs"
           onPress={() => router.push('/logs')} />
-        <ListRow icon={<ShieldCheck size={18} color={t.colors.onAccentSoft} />} title="Activity"
+        <ListRow icon={<ShieldCheck size={18} color={t.colors.textSecondary} />} title="Activity"
           onPress={() => router.push('/activity')} />
       </ListGroup>
 
@@ -169,7 +169,7 @@ function ServerScreen() {
               <ListRow key={j.id} title={JOB_LABEL[j.kind]} subtitle={j.detail.message} value={agoText(j.created_at)}
                 icon={j.state === 'succeeded' ? <Check size={18} color={t.colors.success} />
                   : j.state === 'failed' ? <CircleAlert size={18} color={t.colors.danger} />
-                  : j.state === 'running' ? <RotateCw size={18} color={t.colors.onAccentSoft} /> : <CircleHelp size={18} color={t.colors.warning} />}
+                  : j.state === 'running' ? <RotateCw size={18} color={t.colors.textSecondary} /> : <CircleHelp size={18} color={t.colors.warning} />}
                 iconColor={j.state === 'succeeded' ? t.colors.success : j.state === 'failed' ? t.colors.danger : undefined}
                 onPress={() => setJob(j)} />
             ))}
@@ -210,12 +210,12 @@ function StatusCard({ info, paused, online }: { info: SystemInfo | null; paused:
   const s = useStyles();
   const reduced = useReducedMotion();
   const tone = !online ? t.colors.textTertiary : paused ? t.colors.warning : t.colors.success;
-  const toneSoft = !online ? t.colors.card : paused ? t.colors.warningSoft : t.colors.successSoft;
+  const toneSoft = !online ? t.colors.surface : paused ? t.colors.warningSoft : t.colors.successSoft;
   const label = !online ? 'Offline' : paused ? 'Paused' : 'Running';
   if (!info) return <Skeleton height={168} radius={t.radius.lg} style={{ marginTop: t.space.xl }} />;
   const why = paused ? `${paused.reason || 'New work is on hold.'}${paused.engaged_at ? ` Since ${new Date(paused.engaged_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : ''}` : '';
   return (
-    <Animated.View entering={reduced ? undefined : FadeInDown.springify().damping(spring.soft.damping).stiffness(spring.soft.stiffness)}>
+    <Animated.View entering={reduced ? undefined : FadeIn.duration(180)}>
       <SectionHeader title="Status" />
       <Card style={s.status}>
         <View style={s.statusHead} accessible accessibilityLabel={`${label}, up ${duration(info.uptime_seconds)}${why ? `. ${why}` : ''}`}>
@@ -269,7 +269,7 @@ function UpdateRow({ name, version, status, available, onUpdate }: {
 }) {
   const t = useTheme();
   return (
-    <ListRow icon={<CircleArrowUp size={18} color={available ? t.colors.success : t.colors.onAccentSoft} />}
+    <ListRow icon={<CircleArrowUp size={18} color={available ? t.colors.success : t.colors.textSecondary} />}
       iconColor={available ? t.colors.success : undefined} title={name} value={version} subtitle={status}
       right={available ? <Button size="sm" title="Update" onPress={onUpdate} /> : undefined} />
   );
@@ -314,7 +314,7 @@ const useStyles = makeStyles((t) => ({
   meters: { flexDirection: 'row', flexWrap: 'wrap', gap: t.space.md },
   meter: {
     flexGrow: 1, flexBasis: 140, minWidth: 0, gap: t.space.xs, padding: t.space.lg, borderRadius: t.radius.lg,
-    backgroundColor: t.colors.card, borderWidth: 1, borderColor: t.colors.cardBorder,
+    backgroundColor: t.colors.surface, borderWidth: 1, borderColor: t.colors.border,
   },
   meterValue: { ...t.type.display, color: t.colors.text },
   track: { height: 6, borderRadius: t.radius.pill, backgroundColor: t.colors.border, overflow: 'hidden', marginTop: t.space.xs },

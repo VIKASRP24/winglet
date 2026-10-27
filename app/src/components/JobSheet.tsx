@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, ScrollView, Text, View } from 'react-native';
-import Animated, { FadeIn, ZoomIn } from 'react-native-reanimated';
+import Animated, { FadeIn } from 'react-native-reanimated';
 import { api } from '../lib/api';
 import { haptic } from '../lib/haptics';
 import { spring, useReducedMotion } from '../lib/motion';
@@ -79,7 +79,7 @@ export function JobSheet({ server, job: initial, onClose, onDone }: {
           <View style={[s.badge, { backgroundColor: soft }]}>
             {running ? <ActivityIndicator color={tint} /> : (
               // The outcome pops into the badge with a small spring when the job ends.
-              <Animated.View key={job.state} entering={reduced ? undefined : ZoomIn.springify().damping(spring.snappy.damping).stiffness(spring.snappy.stiffness)}>
+              <Animated.View key={job.state} entering={reduced ? undefined : FadeIn.duration(180)}>
                 {job.state === 'succeeded' ? <Check size={30} color={tint} />
                   : job.state === 'failed' ? <CircleAlert size={30} color={tint} /> : <CircleHelp size={30} color={tint} />}
               </Animated.View>
@@ -131,6 +131,6 @@ const useStyles = makeStyles((t) => ({
     ...t.type.footnote, fontFamily: t.fonts.mono, color: t.colors.codeText, padding: t.space.md, borderRadius: t.radius.md,
     backgroundColor: t.colors.codeBg, overflow: 'hidden',
   },
-  log: { maxHeight: 220, borderRadius: t.radius.md, backgroundColor: t.colors.codeBg, borderWidth: 1, borderColor: t.colors.cardBorder },
+  log: { maxHeight: 220, borderRadius: t.radius.md, backgroundColor: t.colors.codeBg, borderWidth: 1, borderColor: t.colors.border },
   logText: { ...t.type.footnote, fontFamily: t.fonts.mono, color: t.colors.textSecondary },
 }));

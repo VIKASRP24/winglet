@@ -1,7 +1,9 @@
 import { Redirect } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Platform, View } from 'react-native';
-import { useAddBot } from '../../components/AddBot';
+import { useBotSheet } from '../../components/BotSwitcher';
+import { SquarePen, X } from '../../components/icons';
+import { IconButton } from '../../components/ui';
 import { useAppNavigation } from '../../components/AppNavigation';
 import { ChatView } from '../../components/ChatView';
 import { focusComposer } from '../../components/Composer';
@@ -9,7 +11,7 @@ import { Landing, type LandingMode } from '../../components/Landing';
 import { NEW_CHAT_DRAFT, newChatTarget } from '../../lib/landingChat';
 import { useMainBot } from '../../lib/mainBot';
 import { homeChat, useApp } from '../../lib/store';
-import { makeStyles } from '../../lib/themeContext';
+import { makeStyles, useTheme } from '../../lib/themeContext';
 import type { Server } from '../../lib/types';
 
 function pairFromHash(): { code: string; fp?: string } | null {
@@ -40,14 +42,13 @@ export default function Home() {
 
 function HomeFor({ server }: { server: Server }) {
   const s = useStyles();
+  const t = useTheme();
   const chatId = useApp((st) => homeChat(st.runtime[server.id]));
   const [mode, setMode] = useState<LandingMode>('bot');
   const [newChatId, setNewChatId] = useState<string>();
   const [generation, setGeneration] = useState(0);
   const currentGeneration = useRef(0);
-  const main = useMainBot();
-  const mainBot = main ?? server;
-  const addBot = useAddBot();
+  const bots = useBotSheet(server);
   const changeMode = useCallback((next: LandingMode) => {
     setMode(next);
     if (next === 'new-chat') {
@@ -56,25 +57,27 @@ function HomeFor({ server }: { server: Server }) {
       setNewChatId(undefined);
     }
   }, []);
-  // A bot picked elsewhere (the sidebar) brings the landing back to that bot.
+  // A bot picked elsewhere (the sidebar, the header) brings the landing back to that bot.
   const previous = useRef(server.id);
   useEffect(() => { if (previous.current !== server.id) { previous.current = server.id; setMode('bot'); } }, [server.id]);
-  const prepareChat = useMemo(() => newChatTarget(mainBot.id, (id) => {
+  const prepareChat = useMemo(() => newChatTarget(server.id, (id) => {
     if (currentGeneration.current === generation) setNewChatId(id);
-  }), [mainBot.id, generation]);
+  }), [server.id, generation]);
   const fresh = mode === 'new-chat';
-  const target = fresh ? mainBot : server;
   const targetChat = fresh ? newChatId ?? NEW_CHAT_DRAFT : chatId;
   const suggest = useCallback((text: string) => {
-    useApp.getState().setDraft(target.id, targetChat, text);
-    focusComposer(target.id, targetChat);
-  }, [target.id, targetChat]);
+    useApp.getState().setDraft(server.id, targetChat, text);
+    focusComposer(server.id, targetChat);
+  }, [server.id, targetChat]);
   return <View style={s.root}>
-    <ChatView server={target} chatId={targetChat}
-      landing={{ title: fresh ? 'New chat' : server.bot.title,
-        dock: (props) => <Landing server={target} mode={mode} onMode={changeMode} onSuggest={suggest} onAddBot={addBot.open} {...props} />,
+    <ChatView server={server} chatId={targetChat}
+      landing={{ title: server.bot.title, onTitlePress: bots.open,
+        actions: fresh
+          ? <IconButton label="Cancel new chat" onPress={() => changeMode('bot')}><X size={22} color={t.colors.text} /></IconButton>
+          : <IconButton label="New chat" onPress={() => changeMode('new-chat')}><SquarePen size={21} color={t.colors.text} /></IconButton>,
+        dock: (props) => <Landing server={server} mode={mode} onSuggest={suggest} {...props} />,
         prepareChat: fresh && !newChatId ? prepareChat : undefined }} />
-    {addBot.sheet}
+    {bots.sheet}
   </View>;
 }
 

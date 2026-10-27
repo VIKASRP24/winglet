@@ -1,11 +1,9 @@
 import { useEffect } from 'react';
 import { Text, View } from 'react-native';
-import Animated, { cancelAnimation, Easing, FadeInDown, useAnimatedStyle, useSharedValue, withRepeat, withTiming } from 'react-native-reanimated';
+import Animated, { FadeIn } from 'react-native-reanimated';
 import { unlock, useLock } from '../lib/appLock';
-import { spring, useReducedMotion } from '../lib/motion';
+import { useReducedMotion } from '../lib/motion';
 import { makeStyles, useTheme } from '../lib/themeContext';
-import { Aurora, useAuroraColors } from './Aurora';
-import { Glass } from './Glass';
 import { Fingerprint } from './icons';
 import { Logo } from './Logo';
 import { Button } from './ui';
@@ -24,30 +22,15 @@ function Cover() {
   const t = useTheme();
   const s = useStyles();
   const reduced = useReducedMotion();
-  const glow = useAuroraColors();
-  const y = useSharedValue(0);
-  useEffect(() => {
-    if (reduced) { cancelAnimation(y); y.value = 0; return; }
-    y.value = withRepeat(withTiming(1, { duration: 3400, easing: Easing.inOut(Easing.sin) }), -1, true);
-    return () => cancelAnimation(y);
-  }, [reduced, y]);
-  const float = useAnimatedStyle(() => ({ transform: [{ translateY: (y.value - 0.5) * 10 }] }));
-  const enter = reduced ? undefined : FadeInDown.delay(120).springify().damping(spring.soft.damping).stiffness(spring.soft.stiffness);
   return (
     <View style={s.cover} accessibilityViewIsModal>
-      <Aurora colors={glow} strength={1.2} />
-      <Animated.View style={[s.mark, float]}>
-        <View style={[s.halo, { backgroundColor: t.colors.accentSoft }]} />
-        <Logo size={84} />
-      </Animated.View>
-      <Text style={s.title} accessibilityRole="header">Winglet is locked</Text>
-      <Animated.View entering={enter} style={s.panelWrap}>
-        <Glass style={s.panel}>
-          <View style={s.print} accessible={false}>
-            <Fingerprint size={30} color={t.colors.onAccentSoft} />
-          </View>
-          <Button title="Unlock" size="lg" style={{ alignSelf: 'stretch' }} icon={<Fingerprint size={20} color={t.colors.onAccent} />} onPress={() => unlock()} />
-        </Glass>
+      <Animated.View entering={reduced ? undefined : FadeIn.duration(200)} style={s.column}>
+        <Logo size={56} />
+        <View style={s.words}>
+          <Text style={s.title} accessibilityRole="header">Winglet is locked</Text>
+          <Text style={s.sub}>Unlock with your fingerprint, face or passcode.</Text>
+        </View>
+        <Button title="Unlock" size="lg" style={{ alignSelf: 'stretch' }} icon={<Fingerprint size={19} color={t.colors.onInk} />} onPress={() => unlock()} />
       </Animated.View>
     </View>
   );
@@ -56,12 +39,10 @@ function Cover() {
 const useStyles = makeStyles((t) => ({
   cover: {
     position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 100, backgroundColor: t.colors.bg,
-    alignItems: 'center', justifyContent: 'center', gap: t.space.xl, padding: t.space.xxl,
+    alignItems: 'center', justifyContent: 'center', padding: t.space.xxl,
   },
-  mark: { alignItems: 'center', justifyContent: 'center', width: 140, height: 140 },
-  halo: { position: 'absolute', width: 140, height: 140, borderRadius: t.radius.pill },
-  title: { ...t.type.hero, color: t.colors.text, textAlign: 'center' },
-  panelWrap: { width: '100%', maxWidth: 340 },
-  panel: { borderRadius: t.radius.xl, padding: t.space.xl, gap: t.space.xl, alignItems: 'center' },
-  print: { width: 64, height: 64, borderRadius: t.radius.pill, backgroundColor: t.colors.accentSoft, alignItems: 'center', justifyContent: 'center' },
+  column: { width: '100%', maxWidth: 320, alignItems: 'center', gap: t.space.xl },
+  words: { alignItems: 'center', gap: t.space.xs },
+  title: { ...t.type.title, color: t.colors.text, textAlign: 'center' },
+  sub: { ...t.type.callout, color: t.colors.textSecondary, textAlign: 'center' },
 }));

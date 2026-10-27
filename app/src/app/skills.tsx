@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, ScrollView, Text, useWindowDimensions, View } from 'react-native';
-import Animated, { FadeInDown } from 'react-native-reanimated';
+import Animated, { FadeIn } from 'react-native-reanimated';
 import { JobSheet } from '../components/JobSheet';
 import { Download, Search, Trash2 } from '../components/icons';
 import { Markdown } from '../components/Markdown';
@@ -19,7 +19,7 @@ import type { CatalogSkill, Job, Server, Skill } from '../lib/types';
 
 const ORIGIN: Record<Skill['provenance'], string> = { bundled: 'Comes with Hermes', hub: 'Installed', agent: 'Agent or you' };
 const rise = (reduced: boolean, i: number) => (reduced || i > 8 ? undefined
-  : FadeInDown.delay(i * 50).springify().damping(spring.soft.damping).stiffness(spring.soft.stiffness));
+  : FadeIn.duration(180));
 
 /** What your agent knows how to do: turn skills on and off, read them, and add Hermes's official ones. */
 export default withSelectedServer(SkillsScreen);
@@ -142,7 +142,7 @@ function NoMatch({ query }: { query: string }) {
   const s = useStyles();
   return (
     <View style={s.empty}>
-      <View style={s.emptyIcon}><Search size={24} color={t.colors.onAccentSoft} /></View>
+      <View style={s.emptyIcon}><Search size={24} color={t.colors.textSecondary} /></View>
       <Text style={s.emptyText}>{query ? `Nothing matches "${query}".` : 'Nothing here yet.'}</Text>
     </View>
   );
@@ -212,9 +212,9 @@ const useStyles = makeStyles((t) => ({
   error: { ...t.type.callout, color: t.colors.danger, marginTop: 10 },
   installed: { ...t.type.caption, color: t.colors.textTertiary },
   empty: { alignItems: 'center', gap: t.space.md, paddingVertical: t.space.xxl },
-  emptyIcon: { width: 56, height: 56, borderRadius: t.radius.pill, backgroundColor: t.colors.accentSoft, alignItems: 'center', justifyContent: 'center' },
+  emptyIcon: { width: 56, height: 56, borderRadius: t.radius.pill, backgroundColor: t.colors.surfaceSunken, alignItems: 'center', justifyContent: 'center' },
   emptyText: { ...t.type.callout, color: t.colors.textSecondary },
   metaText: { ...t.type.caption, color: t.colors.textSecondary },
   description: { ...t.type.callout, color: t.colors.text },
-  doc: { borderRadius: t.radius.lg, backgroundColor: t.colors.card, borderWidth: 1, borderColor: t.colors.cardBorder },
+  doc: { borderRadius: t.radius.lg, backgroundColor: t.colors.surface, borderWidth: 1, borderColor: t.colors.border },
 }));

@@ -23,10 +23,10 @@ export function InboxCard({ serverId, item, compact, embedded, bare }: { serverI
   return <ResultCard serverId={serverId} item={item} compact={compact} embedded={embedded} bare={bare} />;
 }
 
-/** What kind of card this is, as an icon in a soft tinted circle. */
-function KindIcon({ icon: Icon, color, soft, small }: { icon: typeof ShieldAlert; color: string; soft: string; small?: boolean }) {
+/** What kind of card this is, as a plain icon coloured by what it needs from you. */
+function KindIcon({ icon: Icon, color, small }: { icon: typeof ShieldAlert; color: string; soft?: string; small?: boolean }) {
   const s = useStyles();
-  return <View style={[s.kind, small && s.kindSmall, { backgroundColor: soft }]}><Icon size={small ? 14 : 17} color={color} /></View>;
+  return <View style={[s.kind, small && s.kindSmall]}><Icon size={small ? 16 : 18} color={color} /></View>;
 }
 
 function StatusLine({ item }: { item: InboxItem }) {
@@ -156,7 +156,7 @@ function QuestionCard({ serverId, item, embedded, bare }: { serverId: string; it
   return (
     <Card style={[s.card, embedded && s.embedded, bare && s.bare]} accessibilityLabel="Question from the agent">
       <View style={s.header}>
-        <KindIcon icon={CircleHelp} color={t.colors.onAccentSoft} soft={t.colors.accentSoft} small={embedded} />
+        <KindIcon icon={CircleHelp} color={t.colors.textSecondary} small={embedded} />
         <Text style={[s.title, { flex: 1 }]}>{item.payload.question || item.body}</Text>
       </View>
       {pending ? (
@@ -231,8 +231,8 @@ const useStyles = makeStyles((t) => ({
   compactCard: { gap: 6, padding: 9, borderRadius: t.radius.sm },
   bare: { backgroundColor: 'transparent', borderWidth: 0, borderRadius: 0, padding: 0 },
   header: { flexDirection: 'row', alignItems: 'center', gap: t.space.md },
-  kind: { width: 34, height: 34, borderRadius: t.radius.pill, alignItems: 'center', justifyContent: 'center' },
-  kindSmall: { width: 26, height: 26 },
+  kind: { width: 20, height: 22, alignItems: 'center', justifyContent: 'center' },
+  kindSmall: { width: 18 },
   action: { flexGrow: 1 },
   pill: { alignSelf: 'flex-start' },
   title: { ...t.type.bodyStrong, color: t.colors.text },
@@ -248,7 +248,7 @@ const useStyles = makeStyles((t) => ({
     paddingHorizontal: t.space.lg, borderWidth: 1, borderColor: 'transparent',
   },
   choiceText: { ...t.type.callout, fontFamily: t.fonts.medium, color: t.colors.text },
-  choiceOn: { borderColor: t.colors.accent, backgroundColor: t.colors.accentSoft },
+  choiceOn: { borderColor: t.colors.text, backgroundColor: t.colors.surfaceHigh },
   check: { width: 22, height: 22, borderRadius: 7, borderWidth: 2, borderColor: t.colors.textSecondary, marginRight: 12, alignItems: 'center', justifyContent: 'center' },
   checkOn: { backgroundColor: t.colors.accentFill, borderColor: t.colors.accentFill },
   recommended: { ...t.type.caption, color: t.colors.onAccentSoft },

@@ -112,7 +112,7 @@ function ToolsScreen() {
                     setMembers({ ...info.members, toolsets: v ? [...info.members.toolsets, ts.name] : info.members.toolsets.filter((n) => n !== ts.name) })} />} />
                 );
               })}
-              <ListRow icon={<Plug size={18} color={t.colors.onAccentSoft} />} title="MCP servers"
+              <ListRow icon={<Plug size={18} color={t.colors.textSecondary} />} title="MCP servers"
                 right={<Toggle label="MCP servers for members" value={info.members.mcp} onValueChange={(mcp) => setMembers({ ...info.members, mcp })} />} />
             </ListGroup>
           ) : null}

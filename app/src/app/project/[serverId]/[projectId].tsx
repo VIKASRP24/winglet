@@ -2,10 +2,9 @@ import { Redirect, router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
 import { Platform, ScrollView, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import Animated, { FadeInDown, LinearTransition } from 'react-native-reanimated';
+import Animated, { FadeIn, LinearTransition } from 'react-native-reanimated';
 import { useContentWidth } from '../../../components/AppNavigation';
 import { AgentFace } from '../../../components/AgentFace';
-import { Aurora, useAuroraColors } from '../../../components/Aurora';
 import { ChatMenu } from '../../../components/ChatMenu';
 import { ChatView } from '../../../components/ChatView';
 import { ConnectionBanner } from '../../../components/ConnectionBanner';
@@ -43,9 +42,6 @@ function ProjectView({ server, projectId, wide }: { server: Server; projectId: s
   const s = useStyles();
   const reduced = useReducedMotion();
   const insets = useSafeAreaInsets();
-  const aurora = useAuroraColors(server);
-  // The bot's glow behind the title, as on every pushed screen.
-  const glow = <View pointerEvents="none" style={s.glow}><Aurora colors={aurora} strength={0.7} /></View>;
   const snapshot = useApp((st) => st.runtime[server.id]?.projects);
   const chats = useApp((st) => st.runtime[server.id]?.chats);
   const runtime = useApp((st) => st.runtime[server.id] ?? undefined);
@@ -106,7 +102,6 @@ function ProjectView({ server, projectId, wide }: { server: Server; projectId: s
   if (!feature && runtime?.info) {
     return (
       <View style={[s.root, { paddingTop: insets.top + 8 }]}>
-        {glow}
         <PageHeader onBack={back} title="Project" />
         <View style={s.notice}>
           <CircleAlert size={21} color={t.colors.warning} />
@@ -118,7 +113,6 @@ function ProjectView({ server, projectId, wide }: { server: Server; projectId: s
   if (!snapshot) {
     return (
       <View style={[s.root, { paddingTop: insets.top + 8 }]}>
-        {glow}
         <PageHeader onBack={back} title="Project" />
         {online ? (
           <View style={s.loading}>
@@ -139,7 +133,6 @@ function ProjectView({ server, projectId, wide }: { server: Server; projectId: s
   if (!project) {
     return (
       <View style={[s.root, { paddingTop: insets.top + 8 }]}>
-        {glow}
         <PageHeader onBack={back} title="Project" />
         <View style={s.empty}>
           <Text style={s.emptyText}>Project deleted. Its chats and drafts are still in All chats.</Text>
@@ -151,7 +144,6 @@ function ProjectView({ server, projectId, wide }: { server: Server; projectId: s
 
   const listPane = (
     <View style={[s.listPane, wide && s.listPaneWide, { paddingTop: wide ? 14 : insets.top + 6 }]}>
-      {glow}
       <PageHeader onBack={back} title={project.name} onMenu={() => setMenu(true)} wide={wide} />
       <ScrollView contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: Math.max(insets.bottom, 20) + 12 }}
         keyboardShouldPersistTaps="handled">
@@ -182,7 +174,7 @@ function ProjectView({ server, projectId, wide }: { server: Server; projectId: s
           <View style={s.list}>
             {visible.map((chat, index) => (
               <Animated.View key={chat.id} entering={reduced ? undefined
-                : FadeInDown.delay(Math.min(index, 10) * 35).springify().damping(spring.soft.damping).stiffness(spring.soft.stiffness)}
+                : FadeIn.duration(180)}
                 layout={reduced ? undefined : LinearTransition.duration(180).easing(easeOut)}>
                 <ProjectChatRow server={server} chat={chat} active={wide && activeId === chat.id} first={index === 0}
                   pinned={pinnedChats.includes(chatKey(server.id, chat.id))}
@@ -296,7 +288,7 @@ function ResultRow({ result, onPress }: { result: SearchResult; onPress: () => v
   return (
     <Tap feedback="selection" scaleTo={0.99} onPress={onPress} accessibilityLabel={`Message in ${result.chat.title}: ${result.snippet}. Open`}
       style={({ pressed, hovered }) => [s.row, (pressed || hovered) && { backgroundColor: t.colors.pressed }]}>
-      <View style={s.resultIcon}><Search size={15} color={t.colors.onAccentSoft} /></View>
+      <View style={s.resultIcon}><Search size={15} color={t.colors.textSecondary} /></View>
       <View style={{ flex: 1, minWidth: 0 }}>
         <Text style={s.rowTitle} numberOfLines={1}>{result.chat.title}</Text>
         <Text style={s.sub} numberOfLines={2}>{result.snippet}</Text>
@@ -337,18 +329,17 @@ const useStyles = makeStyles((t) => ({
   archiveText: { ...t.type.callout, color: t.colors.textSecondary, flex: 1 },
   searchRow: { flexDirection: 'row', gap: 8, alignItems: 'center', marginTop: 14 },
   row: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: t.space.md, paddingVertical: 7, borderRadius: t.radius.sm, minHeight: 50 },
-  glow: { position: 'absolute', top: 0, left: 0, right: 0, height: 380 },
   list: {
-    backgroundColor: t.colors.card, borderRadius: t.radius.lg, borderWidth: 1, borderColor: t.colors.cardBorder, padding: t.space.xs,
+    backgroundColor: t.colors.surface, borderRadius: t.radius.lg, borderWidth: 1, borderColor: t.colors.border, padding: t.space.xs,
     overflow: 'hidden',
   },
-  resultIcon: { width: 30, height: 30, borderRadius: t.radius.pill, backgroundColor: t.colors.accentSoft, alignItems: 'center', justifyContent: 'center' },
+  resultIcon: { width: 30, height: 30, borderRadius: t.radius.pill, backgroundColor: t.colors.surfaceSunken, alignItems: 'center', justifyContent: 'center' },
   rowHead: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   rowTitle: { ...t.type.callout, color: t.colors.text, flex: 1, minWidth: 0 },
   sub: { ...t.type.caption, color: t.colors.textSecondary, marginTop: 2 },
   time: { ...t.type.caption, color: t.colors.textTertiary },
   empty: { alignItems: 'center', gap: 12, paddingVertical: 34, paddingHorizontal: 18 },
-  emptyIcon: { width: 62, height: 62, borderRadius: 20, alignItems: 'center', justifyContent: 'center', backgroundColor: t.colors.accentSoft },
+  emptyIcon: { width: 62, height: 62, borderRadius: 20, alignItems: 'center', justifyContent: 'center', backgroundColor: t.colors.surfaceSunken },
   emptyTitle: { ...t.type.callout, color: t.colors.text, textAlign: 'center' },
   emptyText: { ...t.type.callout, color: t.colors.textSecondary, textAlign: 'center', maxWidth: 420 },
   notice: { flexDirection: 'row', gap: 10, alignItems: 'flex-start', margin: 16, padding: 16, borderRadius: t.radius.lg, backgroundColor: t.colors.warningSoft },

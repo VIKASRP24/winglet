@@ -101,7 +101,7 @@ export default function ConnectionScreen() {
           {stale ? <Footnote>Last known, from before this phone lost {server.bot.title}. Updates when the connection is back.</Footnote> : null}
           <ListGroup>
             {status.tunnel ? <TunnelRow tunnel={status.tunnel} now={now} checkedAt={stale ? checkedAt : null} /> : null}
-            <ListRow icon={<Globe size={18} color={t.colors.onAccentSoft} />} title="Address it gives out"
+            <ListRow icon={<Globe size={18} color={t.colors.textSecondary} />} title="Address it gives out"
               subtitle={status.url ?? undefined}
               value={status.url ? undefined : status.mode === 'quick' ? 'None right now' : 'Not set'}
               right={status.url ? <CopyButton label="Copy the server's address" onPress={() => copy(status.url!)} /> : undefined} />
@@ -121,9 +121,9 @@ export default function ConnectionScreen() {
 
       <SectionHeader title="This phone" />
       <ListGroup>
-        <ListRow icon={<Smartphone size={18} color={t.colors.onAccentSoft} />} title="Address" subtitle={server.url}
+        <ListRow icon={<Smartphone size={18} color={t.colors.textSecondary} />} title="Address" subtitle={server.url}
           right={<CopyButton label="Copy this phone's address" onPress={() => copy(server.url)} />} />
-        {native ? <ListRow icon={<Pencil size={18} color={t.colors.onAccentSoft} />} title="Change address" onPress={() => setMoving('')} /> : null}
+        {native ? <ListRow icon={<Pencil size={18} color={t.colors.textSecondary} />} title="Change address" onPress={() => setMoving('')} /> : null}
         <RecoveryRow server={server} status={status} now={now} />
       </ListGroup>
 
@@ -141,7 +141,7 @@ export default function ConnectionScreen() {
         <>
           <SectionHeader title="Notifications" />
           <ListGroup>
-            <ListRow icon={<Bell size={18} color={t.colors.onAccentSoft} />} title="Notifications and quiet hours" onPress={() => router.push('/notifications')} />
+            <ListRow icon={<Bell size={18} color={t.colors.textSecondary} />} title="Notifications and quiet hours" onPress={() => router.push('/notifications')} />
           </ListGroup>
         </>
       )}
@@ -209,7 +209,7 @@ function recoveryState(server: Server, status: ConnectionStatus | null, now: num
 function RecoveryRow({ server, status, now }: { server: Server; status: ConnectionStatus | null; now: number }) {
   const t = useTheme();
   const { value, detail } = recoveryState(server, status, now);
-  return <ListRow icon={<ShieldCheck size={18} color={t.colors.onAccentSoft} />} title="Address recovery" value={value} subtitle={detail} />;
+  return <ListRow icon={<ShieldCheck size={18} color={t.colors.textSecondary} />} title="Address recovery" value={value} subtitle={detail} />;
 }
 
 function TunnelRow({ tunnel, now, checkedAt }: { tunnel: NonNullable<ConnectionStatus['tunnel']>; now: number; checkedAt: number | null }) {
@@ -221,7 +221,7 @@ function TunnelRow({ tunnel, now, checkedAt }: { tunnel: NonNullable<ConnectionS
   const error = tunnel.error && checkedAt === null ? tunnel.error : null;
   const wide = checkedAt !== null || !!error;
   return (
-    <ListRow icon={<Activity size={18} color={t.colors.onAccentSoft} />} title="Tunnel"
+    <ListRow icon={<Activity size={18} color={t.colors.textSecondary} />} title="Tunnel"
       value={wide ? undefined : line.text}
       subtitle={wide ? [line.text, error].filter(Boolean).join('. ') : undefined}
       right={<View accessibilityLabel={line.text} style={[s.dot, { backgroundColor: color }]} />} />
@@ -238,12 +238,12 @@ function Notifications({ server, status, now, testing, onTest }: {
     <>
       <SectionHeader title="Notifications" />
       <ListGroup>
-        <ListRow icon={channel ? <Bell size={18} color={t.colors.onAccentSoft} /> : <TriangleAlert size={18} color={t.colors.warning} />}
+        <ListRow icon={channel ? <Bell size={18} color={t.colors.textSecondary} /> : <TriangleAlert size={18} color={t.colors.warning} />}
           iconColor={channel ? undefined : t.colors.warning} title={channel ? `On, through the ${channel}` : 'Not set up on this device'}
           subtitle={channel ? last ?? 'Nothing sent since the server started.' : undefined}
           right={channel ? <Button size="sm" variant="tonal" title="Test" loading={testing} onPress={onTest} />
             : <Button size="sm" title="Set up" onPress={() => router.push('/notifications')} />} />
-        <ListRow icon={<Moon size={18} color={t.colors.onAccentSoft} />} title="Quiet hours and muted chats" onPress={() => router.push('/notifications')} />
+        <ListRow icon={<Moon size={18} color={t.colors.textSecondary} />} title="Quiet hours and muted chats" onPress={() => router.push('/notifications')} />
       </ListGroup>
     </>
   );

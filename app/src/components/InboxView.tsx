@@ -1,9 +1,7 @@
 import { router, useLocalSearchParams } from 'expo-router';
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { FlatList, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
-import Animated, {
-  FadeInDown, interpolate, useAnimatedScrollHandler, useAnimatedStyle, useSharedValue, type SharedValue,
-} from 'react-native-reanimated';
+import Animated, { FadeIn, interpolate, useAnimatedScrollHandler, useAnimatedStyle, useSharedValue, type SharedValue } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useShallow } from 'zustand/react/shallow';
 import { ago } from '../lib/agent';
@@ -14,9 +12,8 @@ import { makeStyles, useTheme } from '../lib/themeContext';
 import type { InboxItem, Server } from '../lib/types';
 import { AgentFace } from './AgentFace';
 import { NavigationToggle } from './AppNavigation';
-import { Aurora, useAuroraColors } from './Aurora';
 import { Glass } from './Glass';
-import { ArrowRight } from './icons';
+import { ChevronRight } from './icons';
 import { InboxCard } from './InboxCards';
 import { LivePet } from './LivePet';
 import { useTabBarSpace } from './TabBar';
@@ -53,17 +50,6 @@ export function HubBar({ y, title, right }: { y: SharedValue<number>; title?: st
   );
 }
 
-/** The bot's glow behind the top of a hub screen; it drifts up and away as you scroll. */
-export function HubGlow({ y, server, height = 380 }: { y: SharedValue<number>; server?: Server; height?: number }) {
-  const colors = useAuroraColors(server);
-  const slide = useAnimatedStyle(() => ({ transform: [{ translateY: -Math.max(0, y.value) * 0.6 }] }));
-  return (
-    <Animated.View pointerEvents="none" style={[{ position: 'absolute', top: 0, left: 0, right: 0, height }, slide]}>
-      <Aurora colors={colors} strength={0.75} />
-    </Animated.View>
-  );
-}
-
 /** Everything that needs you, across every paired bot, with a filter per bot. */
 export function InboxView() {
   const t = useTheme();
@@ -84,7 +70,7 @@ export function InboxView() {
   const list = useRef<FlatList<Entry>>(null);
   const y = useSharedValue(0);
   const onScroll = useAnimatedScrollHandler((e) => { y.value = e.contentOffset.y; });
-  // The glow and the empty state follow the bot you're filtering to, or the one you're on.
+  // The empty state follows the bot you're filtering to, or the one you're on.
   const focus = servers.find((x) => x.id === only) ?? servers.find((x) => x.id === selectedId) ?? servers[0];
 
   useEffect(() => {
@@ -118,14 +104,13 @@ export function InboxView() {
   }, [params.item, entries, view]);
 
   const renderItem = useCallback(({ item: e, index }: { item: Entry; index: number }) => (
-    <Animated.View entering={reduced ? undefined : FadeInDown.delay(Math.min(index, 6) * 55).springify().damping(22).stiffness(180)}>
+    <Animated.View entering={reduced ? undefined : FadeIn.duration(180)}>
       <InboxEntry server={e.server} item={e.item} highlighted={params.item === e.item.id} />
     </Animated.View>
   ), [reduced, params.item]);
 
   return (
     <View style={s.root}>
-      <HubGlow y={y} server={focus} />
       <Animated.FlatList
         ref={list}
         data={entries}
@@ -160,7 +145,7 @@ export function InboxView() {
         ItemSeparatorComponent={Gap}
         ListEmptyComponent={
           <View style={s.empty}>
-            {focus ? <LivePet server={focus} size={104} glow /> : null}
+            {focus ? <LivePet server={focus} size={72} /> : null}
             <Text style={s.emptyText}>{view === 'pending' ? 'Nothing needs you right now.' : 'Approvals, questions and results appear here.'}</Text>
           </View>
         }
@@ -184,21 +169,16 @@ const InboxEntry = memo(function InboxEntry({ server, item, highlighted }: { ser
   const chat = rt?.chats[item.chat_id];
   return (
     <View style={[s.entry, highlighted && s.highlight]}>
-      <View style={s.meta}>
-        <AgentFace server={server} size={34} still />
-        <View style={{ flex: 1, minWidth: 0 }}>
-          <Text style={s.metaBot} numberOfLines={1}>{server.bot.title}</Text>
-          <Text style={s.metaText} numberOfLines={1}>
-            {chat?.kind === 'home' ? 'Updates' : chat?.title ?? item.chat_id} · {ago(item.created_at)}
-          </Text>
-        </View>
-        <Tap feedback="selection" accessibilityRole="link" accessibilityLabel="Open chat" hitSlop={6} scaleTo={0.94}
-          onPress={() => router.push(`/chat/${server.id}/${item.chat_id}`)}
-          style={({ hovered }) => [s.open, hovered && { opacity: 0.85 }]}>
-          <Text style={s.openText}>Open chat</Text>
-          <ArrowRight size={14} color={t.colors.onAccentSoft} />
-        </Tap>
-      </View>
+      <Tap feedback="selection" accessibilityRole="link" accessibilityLabel={`Open chat: ${chat?.kind === 'home' ? 'Updates' : chat?.title ?? 'chat'}`}
+        scaleTo={0.99} onPress={() => router.push(`/chat/${server.id}/${item.chat_id}`)}
+        style={({ pressed, hovered }) => [s.meta, (pressed || hovered) && { opacity: 0.7 }]}>
+        <AgentFace server={server} size={24} still />
+        <Text style={s.metaText} numberOfLines={1}>
+          <Text style={s.metaBot}>{server.bot.title}</Text> · {chat?.kind === 'home' ? 'Updates' : chat?.title ?? item.chat_id}
+        </Text>
+        <Text style={s.metaTime}>{ago(item.created_at)}</Text>
+        <ChevronRight size={16} color={t.colors.textTertiary} />
+      </Tap>
       <InboxCard serverId={server.id} item={item} bare />
     </View>
   );
@@ -211,21 +191,17 @@ const useStyles = makeStyles((t) => ({
   barInner: { flexDirection: 'row', alignItems: 'center', gap: t.space.xs, minHeight: 52, paddingHorizontal: t.space.sm, maxWidth: 696, width: '100%', alignSelf: 'center' },
   smallTitle: { ...t.type.heading, color: t.colors.text, flex: 1, minWidth: 0, marginLeft: t.space.xs },
   content: { paddingHorizontal: t.space.lg, flexGrow: 1, maxWidth: 680, width: '100%', alignSelf: 'center' },
-  head: { gap: t.space.lg, marginBottom: t.space.lg },
-  title: { ...t.type.display, color: t.colors.text, marginTop: t.space.xs },
+  head: { gap: t.space.md, marginBottom: t.space.lg },
+  title: { ...t.type.display, color: t.colors.text, marginTop: 2, paddingHorizontal: 4 },
   entry: {
-    backgroundColor: t.colors.card, borderRadius: t.radius.lg, borderWidth: 1, borderColor: t.colors.cardBorder,
-    padding: t.space.lg, gap: t.space.md,
+    backgroundColor: t.colors.surface, borderRadius: t.radius.lg, borderWidth: StyleSheet.hairlineWidth * 2, borderColor: t.colors.border,
+    padding: t.space.lg, paddingTop: t.space.sm, gap: t.space.sm,
   },
-  highlight: { borderColor: t.colors.accent, borderWidth: 2 },
-  meta: { flexDirection: 'row', alignItems: 'center', gap: t.space.md },
-  metaBot: { ...t.type.label, color: t.colors.text },
-  metaText: { ...t.type.caption, color: t.colors.textSecondary, marginTop: 1 },
-  open: {
-    flexDirection: 'row', alignItems: 'center', gap: t.space.xs, minHeight: 34, paddingHorizontal: t.space.md,
-    borderRadius: t.radius.pill, backgroundColor: t.colors.accentSoft,
-  },
-  openText: { ...t.type.caption, fontFamily: t.fonts.semibold, color: t.colors.onAccentSoft },
+  highlight: { borderColor: t.colors.accent },
+  meta: { flexDirection: 'row', alignItems: 'center', gap: t.space.sm, minHeight: 40 },
+  metaBot: { fontFamily: t.fonts.semibold, color: t.colors.text },
+  metaText: { ...t.type.footnote, color: t.colors.textSecondary, flex: 1, minWidth: 0 },
+  metaTime: { ...t.type.caption, fontFamily: t.fonts.regular, color: t.colors.textTertiary },
   empty: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: t.space.xxl, gap: t.space.xl, minHeight: 360 },
   emptyText: { ...t.type.body, color: t.colors.textSecondary, textAlign: 'center', maxWidth: 320 },
 }));

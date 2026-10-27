@@ -56,7 +56,7 @@ export function ManageBot({ server, parent }: { server: Server; parent: Server }
     <>
       <SectionHeader title="This bot" />
       <ListGroup>
-        <ListRow icon={<Pencil size={18} color={t.colors.onAccentSoft} />} title="Rename" value={server.bot.title}
+        <ListRow icon={<Pencil size={18} color={t.colors.textSecondary} />} title="Rename" value={server.bot.title}
           onPress={() => { setTitle(server.bot.title); setSheet('rename'); }} />
         <ListRow icon={<Trash2 size={18} color={t.colors.danger} />} iconColor={t.colors.danger} title={`Delete ${server.bot.title}`} destructive
           onPress={() => setSheet('delete')} />
