@@ -1,6 +1,6 @@
 import { router } from 'expo-router';
 import { useState } from 'react';
-import { ScrollView, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useShallow } from 'zustand/react/shallow';
 import { mainFirst } from '../lib/bots';
 import { connectionView } from '../lib/connection';
@@ -113,7 +113,45 @@ export function BotFaces({ server }: { server: Server }) {
   </>;
 }
 
+/**
+ * The landing's bot switcher: every paired bot as a chip with its face and name, one tap away. Only shown with two or
+ * more bots; the header's picker still adds and manages them.
+ */
+export function BotPills({ server }: { server: Server }) {
+  const t = useTheme();
+  const s = useStyles();
+  const servers = useApp((st) => st.servers);
+  const pending = useApp(useShallow((st) => Object.fromEntries(st.servers.map((x) => [x.id, st.runtime[x.id]?.pending ?? 0]))));
+  const chosen = usePrefs((st) => st.prefs.mainBot);
+  if (servers.length < 2) return null;
+  return <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.pillScroll} contentContainerStyle={s.pills}
+    accessibilityLabel="Switch bot" keyboardShouldPersistTaps="handled">
+    {mainFirst(servers, chosen).map((x) => {
+      const on = x.id === server.id;
+      const waiting = pending[x.id] ?? 0;
+      return <Tap key={x.id} feedback="selection" scaleTo={0.96} accessibilityRole="radio" accessibilityState={{ selected: on }}
+        accessibilityLabel={`${x.bot.title}${waiting ? `, ${waiting} waiting` : ''}`}
+        onPress={() => { if (!on) useApp.getState().select(x.id, homeChat(useApp.getState().runtime[x.id])); }}
+        style={({ pressed, hovered }) => [s.pill, on ? s.pillOn : (pressed || hovered) && { backgroundColor: t.colors.surfaceRaised }]}>
+        <AgentFace server={x} size={22} still />
+        <Text style={[s.pillText, on && s.pillTextOn]} numberOfLines={1}>{x.bot.title}</Text>
+        {waiting && !on ? <View style={[s.pillDot, { backgroundColor: t.colors.warning }]} /> : null}
+      </Tap>;
+    })}
+  </ScrollView>;
+}
+
 const useStyles = makeStyles((t) => ({
+  pillScroll: { flexGrow: 0, alignSelf: 'stretch', marginTop: t.space.xs },
+  pills: { flexGrow: 1, justifyContent: 'center', gap: 8, paddingHorizontal: t.space.lg },
+  pill: {
+    flexDirection: 'row', alignItems: 'center', gap: 8, height: 38, paddingLeft: 8, paddingRight: 14, borderRadius: t.radius.pill,
+    backgroundColor: t.colors.surface, borderWidth: StyleSheet.hairlineWidth * 2, borderColor: t.colors.border, maxWidth: 200,
+  },
+  pillOn: { backgroundColor: t.colors.surfaceHigh, borderColor: t.colors.borderStrong },
+  pillText: { fontFamily: t.fonts.medium, fontSize: 14.5, color: t.colors.textSecondary, flexShrink: 1 },
+  pillTextOn: { color: t.colors.text, fontFamily: t.fonts.semibold },
+  pillDot: { width: 6, height: 6, borderRadius: 3 },
   scroll: { flexGrow: 0, flexShrink: 0 },
   row: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 2 },
   face: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: 'transparent' },

@@ -5,7 +5,7 @@ import { Platform } from 'react-native';
 // tests/theme.test.ts for every theme and accent combination.
 
 export type Scheme = 'light' | 'dark';
-export type AccentName = 'iris' | 'ocean' | 'mint' | 'sunset' | 'rose';
+export type AccentName = 'iris' | 'ocean' | 'mint' | 'sunset' | 'rose' | 'mono';
 
 type Accent = {
   label: string;
@@ -20,11 +20,12 @@ type Accent = {
 };
 
 export const ACCENTS: Record<AccentName, Accent> = {
-  iris: { label: 'Iris', light: '#5B4BD6', dark: '#988CFF', fill: '#5B4BD6', fillLight: '#6E64DC', deep: '#4E2ECA' },
+  iris: { label: 'Iris', light: '#5B4BD6', dark: '#A196FF', fill: '#5B4BD6', fillLight: '#6E64DC', deep: '#4E2ECA' },
   ocean: { label: 'Ocean', light: '#0369A1', dark: '#38BDF8', fill: '#0369A1', fillLight: '#037BB7', deep: '#024479' },
   mint: { label: 'Mint', light: '#047857', dark: '#34D399', fill: '#047857', fillLight: '#04845E', deep: '#035141' },
   sunset: { label: 'Sunset', light: '#BA3E0B', dark: '#FB923C', fill: '#C2410C', fillLight: '#D1430D', deep: '#9C410A' },
   rose: { label: 'Rose', light: '#BE123C', dark: '#FB7185', fill: '#BE123C', fillLight: '#E51651', deep: '#990E24' },
+  mono: { label: 'Mono', light: '#3F3F46', dark: '#D4D4D8', fill: '#3F3F46', fillLight: '#52525B', deep: '#27272A' },
 };
 
 export const ACCENT_NAMES = Object.keys(ACCENTS) as AccentName[];
@@ -69,37 +70,37 @@ const base = {
     pressed: 'rgba(0,0,0,0.045)',
   },
   dark: {
-    bg: '#0C0C0E',
-    surface: '#161619',
-    surfaceRaised: '#1B1B1F',
-    surfaceSunken: '#1B1B1F',
-    surfaceHigh: '#232327',
-    bubble: '#232327',
-    glass: 'rgba(12,12,14,0.94)',
-    glassOpaque: '#161619',
-    glassBorder: 'rgba(255,255,255,0.07)',
+    bg: '#161618',
+    surface: '#1F1F22',
+    surfaceRaised: '#252529',
+    surfaceSunken: '#252529',
+    surfaceHigh: '#2D2D32',
+    bubble: '#2B2B30',
+    glass: 'rgba(22,22,24,0.94)',
+    glassOpaque: '#1F1F22',
+    glassBorder: 'rgba(255,255,255,0.08)',
     glassSheen: 'transparent',
-    card: '#161619',
-    cardBorder: 'rgba(255,255,255,0.07)',
-    border: 'rgba(255,255,255,0.07)',
-    borderStrong: 'rgba(255,255,255,0.13)',
+    card: '#1F1F22',
+    cardBorder: 'rgba(255,255,255,0.08)',
+    border: 'rgba(255,255,255,0.08)',
+    borderStrong: 'rgba(255,255,255,0.14)',
     text: '#EDEDEF',
-    textSecondary: '#A3A3AB',
-    textTertiary: '#8E8E97',
+    textSecondary: '#AEAEB6',
+    textTertiary: '#9C9CA5',
     success: '#22C55E',
     warning: '#F59E0B',
     danger: '#FB7185',
-    codeBg: '#111113',
+    codeBg: '#141417',
     codeText: '#E4E4EA',
     synKeyword: '#FF7AB2',
     synString: '#8BD99A',
     synNumber: '#F7B267',
-    synComment: '#8E8E9A',
+    synComment: '#9A9AA6',
     synFunction: '#A99BFF',
     synType: '#6CCFF6',
-    overlay: 'rgba(0,0,0,0.62)',
+    overlay: 'rgba(0,0,0,0.6)',
     shadow: '#000000',
-    pressed: 'rgba(255,255,255,0.055)',
+    pressed: 'rgba(255,255,255,0.06)',
   },
 } as const;
 
@@ -164,13 +165,30 @@ export function alpha(hex: string, a: number): string {
   return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
 }
 
-export const SOFT_ALPHA = { light: 0.1, dark: 0.16 } as const;
+export const SOFT_ALPHA = { light: 0.1, dark: 0.13 } as const;
 
-/** Dark surfaces one step down, for OLED screens: true black behind everything. */
-const PURE_BLACK = { bg: '#000000', surface: '#111113', surfaceRaised: '#17171A', surfaceSunken: '#17171A', surfaceHigh: '#232327', bubble: '#1E1E22', glass: 'rgba(0,0,0,0.94)', glassOpaque: '#111113', card: '#111113', codeBg: '#0B0B0D' };
+/** How dark the dark theme is: soft charcoal (the default), deeper graphite, or true black for OLED screens. */
+export type DarkTone = 'charcoal' | 'graphite' | 'black';
+export const DARK_TONES: DarkTone[] = ['charcoal', 'graphite', 'black'];
 
-export function buildColors(scheme: Scheme, accentName: AccentName, pureBlack = false): Colors {
-  const b = scheme === 'dark' && pureBlack ? { ...base.dark, ...PURE_BLACK } : base[scheme];
+/** Graphite and black swap the surfaces and keep everything else from charcoal. */
+const DARK_TONE_SURFACES: Record<Exclude<DarkTone, 'charcoal'>, Partial<Record<keyof typeof base.dark, string>>> = {
+  graphite: {
+    bg: '#0C0C0E', surface: '#161619', surfaceRaised: '#1B1B1F', surfaceSunken: '#1B1B1F', surfaceHigh: '#232327', bubble: '#232327',
+    glass: 'rgba(12,12,14,0.94)', glassOpaque: '#161619', card: '#161619', codeBg: '#111113',
+    glassBorder: 'rgba(255,255,255,0.07)', cardBorder: 'rgba(255,255,255,0.07)', border: 'rgba(255,255,255,0.07)', borderStrong: 'rgba(255,255,255,0.13)',
+    pressed: 'rgba(255,255,255,0.055)',
+  },
+  black: {
+    bg: '#000000', surface: '#111113', surfaceRaised: '#17171A', surfaceSunken: '#17171A', surfaceHigh: '#232327', bubble: '#1E1E22',
+    glass: 'rgba(0,0,0,0.94)', glassOpaque: '#111113', card: '#111113', codeBg: '#0B0B0D',
+    glassBorder: 'rgba(255,255,255,0.07)', cardBorder: 'rgba(255,255,255,0.07)', border: 'rgba(255,255,255,0.07)', borderStrong: 'rgba(255,255,255,0.13)',
+    pressed: 'rgba(255,255,255,0.055)',
+  },
+};
+
+export function buildColors(scheme: Scheme, accentName: AccentName, tone: DarkTone = 'charcoal'): Colors {
+  const b = scheme === 'dark' && tone !== 'charcoal' ? { ...base.dark, ...DARK_TONE_SURFACES[tone] } : base[scheme];
   const a = ACCENTS[accentName];
   const accent = scheme === 'light' ? a.light : a.dark;
   const soft = SOFT_ALPHA[scheme];
@@ -191,8 +209,8 @@ export function buildColors(scheme: Scheme, accentName: AccentName, pureBlack = 
   };
 }
 
-export function buildTheme(scheme: Scheme, accentName: AccentName, pureBlack = false): Theme {
-  return { scheme, accentName, colors: buildColors(scheme, accentName, pureBlack), radius, space, fonts, type };
+export function buildTheme(scheme: Scheme, accentName: AccentName, tone: DarkTone = 'charcoal'): Theme {
+  return { scheme, accentName, colors: buildColors(scheme, accentName, tone), radius, space, fonts, type };
 }
 
 export const fonts = {

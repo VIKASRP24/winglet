@@ -10,6 +10,7 @@ import { homeChat, useApp, useServerState } from '../lib/store';
 import { makeStyles, useTheme } from '../lib/themeContext';
 import type { Server } from '../lib/types';
 import type { DockPetFrame } from './ChatPet';
+import { BotPills } from './BotSwitcher';
 import { LivePet } from './LivePet';
 import { Tap } from './ui';
 
@@ -25,7 +26,7 @@ function greeting(now = new Date()) {
 /**
  * What sits above an empty message box: the bot's pet, a greeting, and a short row of things worth doing next (what's
  * waiting, chats to pick up, a few ways to start). Switching bots and starting a new chat live in the header; everything
- * else is in the sidebar.
+ * else is in the sidebar. With more than one bot, a row of chips under the greeting switches between them in one tap.
  */
 export const Landing = memo(function Landing({ server, mode, focused, onPetLayout, onSuggest }: {
   server: Server; mode: LandingMode; focused: boolean; onPetLayout: (frame: DockPetFrame) => void;
@@ -78,6 +79,7 @@ export const Landing = memo(function Landing({ server, mode, focused, onPetLayou
           {fresh ? `Start fresh with ${bot}` : status === 'All quiet' ? `How can ${bot} help?` : status}
         </Text>
       </Animated.View>
+      {fresh ? null : <BotPills server={server} />}
     </View>
     <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.rail} contentContainerStyle={s.railContent}
       keyboardShouldPersistTaps="handled" accessibilityLabel="Suggestions">

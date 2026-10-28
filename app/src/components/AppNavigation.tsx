@@ -1,5 +1,5 @@
 import { router, usePathname } from 'expo-router';
-import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState, type ComponentType, type ReactNode } from 'react';
 import { BackHandler, Keyboard, Platform, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
 import Animated, { runOnJS, useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
@@ -24,6 +24,7 @@ import { useBotSheet } from './BotSwitcher';
 import { KeyboardViewport } from './KeyboardViewport';
 import { Bot, CalendarClock, ChevronsUpDown, Inbox, MessageCircle, MessagesSquare, MoreHorizontal, PanelLeft, Pin, Settings, SquarePen, Users } from './icons';
 import { AgentFace } from './AgentFace';
+import { MenuMark } from './MenuMark';
 import { Badge, IconButton, SearchField, Tap } from './ui';
 import { ago } from '../lib/agent';
 import { connectionView } from '../lib/connection';
@@ -78,8 +79,9 @@ export function AppNavigation({ children }: { children: ReactNode }) {
 export function NavigationToggle() {
   const t = useTheme();
   const nav = useAppNavigation();
-  return <IconButton label={nav.reserved >= 280 ? 'Collapse sidebar' : 'Open sidebar'} onPress={nav.reserved >= 280 ? () => usePrefs.getState().update({ sidebar: 'drawer' }) : nav.open}>
-    <PanelLeft size={22} color={t.colors.text} />
+  const pinned = nav.reserved >= 280;
+  return <IconButton label={pinned ? 'Collapse sidebar' : 'Open sidebar'} onPress={pinned ? () => usePrefs.getState().update({ sidebar: 'drawer' }) : nav.open}>
+    {pinned ? <PanelLeft size={22} color={t.colors.text} /> : <MenuMark size={24} color={t.colors.text} />}
   </IconButton>;
 }
 
@@ -319,7 +321,7 @@ function NavigationRail() {
   const nav = useAppNavigation();
   const pathname = usePathname();
   const count = useApp((st) => Object.values(st.runtime).reduce((n, rt) => n + (rt?.pending ?? 0), 0));
-  const item = (label: string, Icon: typeof Bot, path?: string, action?: () => void) => {
+  const item = (label: string, Icon: ComponentType<{ size?: number; color?: string }>, path?: string, action?: () => void) => {
     const active = path === '/' ? pathname === '/' || pathname.startsWith('/chat/') : !!path && pathname === path;
     return <View key={label} style={s.railSlot}>
       <Tap accessibilityLabel={label} accessibilityState={{ selected: active }} feedback="selection"
@@ -331,7 +333,7 @@ function NavigationRail() {
     </View>;
   };
   return <View style={[s.rail, { paddingTop: insets.top + 8, paddingBottom: Math.max(12, insets.bottom) }]}>
-    {item('Open sidebar', PanelLeft, undefined, nav.open)}
+    {item('Open sidebar', MenuMark, undefined, nav.open)}
     <View style={s.railDivider} />
     {item('Chat', MessageCircle, '/', nav.home)}
     {item('All chats', MessagesSquare, '/chats')}

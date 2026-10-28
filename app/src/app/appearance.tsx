@@ -4,7 +4,7 @@ import { Check, Monitor, Moon, Sun } from '../components/icons';
 import { Screen } from '../components/Screen';
 import { Card, Footnote, ListGroup, ListRow, SectionHeader, Segmented, Tap, Toggle } from '../components/ui';
 import { usePrefs, type Prefs } from '../lib/prefs';
-import { ACCENT_NAMES, ACCENTS, type Colors } from '../lib/theme';
+import { ACCENT_NAMES, ACCENTS, DARK_TONES, type Colors, type DarkTone } from '../lib/theme';
 import { makeStyles, themeFor, useTheme } from '../lib/themeContext';
 
 const THEMES = [
@@ -12,6 +12,8 @@ const THEMES = [
   { value: 'light', label: 'Light', icon: Sun },
   { value: 'dark', label: 'Dark', icon: Moon },
 ] as const;
+
+const TONE_LABELS: Record<DarkTone, string> = { charcoal: 'Charcoal', graphite: 'Graphite', black: 'Black' };
 
 /** Every change applies at once. Sidebar placement is in Settings. */
 export default function AppearanceScreen() {
@@ -21,7 +23,7 @@ export default function AppearanceScreen() {
   const update = usePrefs((st) => st.update);
   const set = <K extends keyof Prefs>(key: K) => (value: Prefs[K]) => update({ [key]: value } as Partial<Prefs>);
   const light = themeFor('light', prefs.accent).colors;
-  const dark = themeFor('dark', prefs.accent, prefs.pureBlack).colors;
+  const dark = themeFor('dark', prefs.accent, prefs.darkTone).colors;
 
   return (
     <Screen title="Appearance">
@@ -51,10 +53,25 @@ export default function AppearanceScreen() {
           );
         })}
       </View>
-      {prefs.theme !== 'light' ? <ListGroup style={{ marginTop: t.space.lg }}>
-        <ListRow title="Pure black" right={<Toggle label="Pure black" value={prefs.pureBlack} onValueChange={set('pureBlack')} />} />
-      </ListGroup> : null}
-      {prefs.theme !== 'light' ? <Footnote>Uses a true-black background in dark mode.</Footnote> : null}
+      {prefs.theme !== 'light' ? <>
+        <SectionHeader title="Dark mode" />
+        <View style={s.themes} accessibilityRole="radiogroup" accessibilityLabel="Dark mode tone">
+          {DARK_TONES.map((tone) => {
+            const on = prefs.darkTone === tone;
+            return (
+              <Tap key={tone} feedback="selection" scaleTo={0.96} accessibilityRole="radio" accessibilityState={{ selected: on }} accessibilityLabel={TONE_LABELS[tone]}
+                onPress={() => { if (!on) set('darkTone')(tone); }} style={s.themeCell}>
+                <View style={[s.themeFrame, on && { borderColor: t.colors.text }]}>
+                  <View style={[s.themeShot, s.toneShot]}><MiniTheme colors={themeFor('dark', prefs.accent, tone).colors} /></View>
+                  {on ? <View style={s.themeCheck}><Check size={12} color={t.colors.onInk} strokeWidth={3.5} /></View> : null}
+                </View>
+                <Text style={[s.swatchLabel, on && s.labelOn]}>{TONE_LABELS[tone]}</Text>
+              </Tap>
+            );
+          })}
+        </View>
+        <Footnote>Black saves battery on OLED screens.</Footnote>
+      </> : null}
 
       <SectionHeader title="Accent" />
       <Card>
@@ -164,6 +181,7 @@ const useStyles = makeStyles((t) => ({
   themeShot: {
     height: 96, flexDirection: 'row', borderRadius: t.radius.md, overflow: 'hidden', borderWidth: StyleSheet.hairlineWidth * 2, borderColor: t.colors.border,
   },
+  toneShot: { height: 80 },
   themeCheck: {
     position: 'absolute', top: 9, right: 9, width: 20, height: 20, borderRadius: t.radius.pill, backgroundColor: t.colors.ink,
     alignItems: 'center', justifyContent: 'center',

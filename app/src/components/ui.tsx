@@ -79,7 +79,7 @@ export function Button({ title, onPress, variant = 'primary', size = 'md', icon,
   const bg = { primary: c.ink, secondary: c.surfaceSunken, tonal: c.surfaceSunken, ghost: 'transparent', danger: c.dangerSoft }[variant];
   const inner = (
     <>
-      {loading ? <ActivityIndicator color={fg} /> : icon}
+      {loading ? <ActivityIndicator color={fg} /> : isValidElement<{ color?: string }>(icon) ? cloneElement(icon, { color: fg }) : icon}
       {title ? <Text style={[s.buttonText, { color: fg }, size === 'sm' && { fontSize: 13.5 }, size === 'lg' && { fontSize: 16 }]} numberOfLines={1}>{title}</Text> : null}
     </>
   );
@@ -226,7 +226,8 @@ export function Segmented<T extends string>({ options, value, onChange, label }:
   const index = Math.max(0, options.findIndex((o) => o.value === value));
   const x = useSharedValue(0);
   const reduced = useReducedMotion();
-  const each = width ? (width - 8) / options.length : 0;
+  // The pill sits inside the track's 3px padding on each side.
+  const each = width ? (width - 6) / options.length : 0;
   useEffect(() => {
     x.value = reduced ? index * each : withSpring(index * each, spring.snappy);
   }, [index, each, reduced, x]);
