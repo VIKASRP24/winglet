@@ -36,3 +36,9 @@ test('streaming and rich bot messages never collapse into a status notice', () =
     { meta: { kind: 'card' } },
   ]) assert.equal(statusNoticeText(message(text, patch as Partial<Message>)), null);
 });
+
+test('short replies with Markdown formatting stay ordinary replies', () => {
+  for (const text of ['⚠️ [Renew your key](https://example.com)', '⚠️ Run `hermes doctor` first', '⚡ **Done**, all set']) {
+    assert.equal(statusNoticeText(message(text)), null, text);
+  }
+});

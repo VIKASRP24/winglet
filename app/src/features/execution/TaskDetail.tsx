@@ -150,7 +150,7 @@ function SubagentRow({ sub, all, depth, capabilities }: {
       <Tap
         disabled={!expandable}
         accessibilityRole={expandable ? 'button' : undefined}
-        accessibilityLabel={`${sub.goal || 'Subagent'}. ${[details, duration].filter(Boolean).join(' · ')}${detail ? `. ${detail}` : ''}`}
+        accessibilityLabel={`${sub.goal || 'Subagent'}. ${[showState ? null : subagentStateLabel(sub.status), details, duration].filter(Boolean).join(' · ')}${detail ? `. ${detail}` : ''}`}
         accessibilityState={expandable ? { expanded: open } : undefined}
         onPress={() => setOpen((value) => !value)}
         style={s.row}

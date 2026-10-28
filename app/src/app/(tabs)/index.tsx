@@ -10,7 +10,8 @@ import { focusComposer } from '../../components/Composer';
 import { Landing, type LandingMode } from '../../components/Landing';
 import { NEW_CHAT_DRAFT, newChatTarget } from '../../lib/landingChat';
 import { useMainBot } from '../../lib/mainBot';
-import { homeChat, useApp } from '../../lib/store';
+import { mergeDraft } from '../../lib/share';
+import { draftKey, homeChat, useApp } from '../../lib/store';
 import { makeStyles, useTheme } from '../../lib/themeContext';
 import type { Server } from '../../lib/types';
 
@@ -66,7 +67,9 @@ function HomeFor({ server }: { server: Server }) {
   const fresh = mode === 'new-chat';
   const targetChat = fresh ? newChatId ?? NEW_CHAT_DRAFT : chatId;
   const suggest = useCallback((text: string) => {
-    useApp.getState().setDraft(server.id, targetChat, text);
+    const app = useApp.getState();
+    // Anything already typed stays; the suggestion goes after it.
+    app.setDraft(server.id, targetChat, mergeDraft(app.drafts[draftKey(server.id, targetChat)] ?? '', text));
     focusComposer(server.id, targetChat);
   }, [server.id, targetChat]);
   return <View style={s.root}>

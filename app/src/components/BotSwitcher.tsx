@@ -14,14 +14,17 @@ import { Check, ChevronsUpDown, Plus, Settings } from './icons';
 import { Sheet } from './Sheet';
 import { Badge, Chip, ListGroup, ListRow, Tap } from './ui';
 
-/** The "Your bots" sheet (switch, add, manage), shared by the chip and the sidebar's row of faces. */
-export function useBotSheet(server: Server | undefined) {
+/**
+ * The "Your bots" sheet (switch, add, manage), shared by the chip and the sidebar's row of faces. `onSwitch` runs after
+ * another bot is picked, for places that must also move to it (the sidebar, over an open conversation).
+ */
+export function useBotSheet(server: Server | undefined, onSwitch?: (serverId: string) => void) {
   const t = useTheme();
   const [open, setOpen] = useState(false);
   const addBot = useAddBot();
   const sheet = server ? <>
     <Sheet visible={open} onClose={() => setOpen(false)} title="Your bots" scrollable>
-      <BotList server={server} onDone={() => setOpen(false)} />
+      <BotList server={server} onDone={() => setOpen(false)} onSwitch={onSwitch} />
       <ListGroup style={{ marginTop: t.space.md }}>
         <ListRow icon={<Plus />} title="Add a bot" onPress={() => { setOpen(false); addBot.open(); }} />
         <ListRow icon={<Settings />} title="Manage bots" onPress={() => { setOpen(false); router.push('/bots'); }} />
@@ -32,7 +35,7 @@ export function useBotSheet(server: Server | undefined) {
   return { open: () => setOpen(true), sheet };
 }
 
-function BotList({ server, onDone }: { server: Server; onDone: () => void }) {
+function BotList({ server, onDone, onSwitch }: { server: Server; onDone: () => void; onSwitch?: (serverId: string) => void }) {
   const t = useTheme();
   const servers = useApp((st) => st.servers);
   const runtime = useApp((st) => st.runtime);
@@ -51,7 +54,7 @@ function BotList({ server, onDone }: { server: Server; onDone: () => void }) {
           {rt?.pending ? <Badge count={rt.pending} /> : null}
           {on ? <Check size={20} color={t.colors.accent} accessibilityLabel="Current bot" /> : null}
         </View>}
-        onPress={() => { if (!on) select(x.id, homeChat(useApp.getState().runtime[x.id])); onDone(); }} />;
+        onPress={() => { if (!on) { select(x.id, homeChat(useApp.getState().runtime[x.id])); onSwitch?.(x.id); } onDone(); }} />;
     })}
   </ListGroup>;
 }

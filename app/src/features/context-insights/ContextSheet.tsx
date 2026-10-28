@@ -7,7 +7,7 @@ import { api, ApiError, signedApi } from '../../lib/api';
 import { isOwner, useApp } from '../../lib/store';
 import { makeStyles, useTheme } from '../../lib/themeContext';
 import type { Server } from '../../lib/types';
-import { composition, compressionRetryRequest, contextPercent, costLabel, sourceLabel, tokenCount, type AccountView, type CompressionRequest, type ContextOperation, type ContextView } from './model';
+import { compressionRetryRequest, contextRows, contextPercent, costLabel, sourceLabel, tokenCount, type AccountView, type CompressionRequest, type ContextOperation, type ContextView } from './model';
 
 const stamp=(seconds?:number|null)=>seconds?new Date(seconds*1000).toLocaleString():'Unknown';
 
@@ -52,7 +52,7 @@ export function ContextSheet({server,chatId,visible,onClose}:{server:Server;chat
     catch(e){if(pending.current===request)pending.current=compressionRetryRequest(request,e instanceof ApiError?e.status:undefined);if(current===generation.current)setError((e as Error).message);}
     finally{setStarting(false);}
   };
-  const segments=data?composition(data.context.categories):[];const percent=data?contextPercent(data.context):null;
+  const segments=data?contextRows(data.context.categories):[];const percent=data?contextPercent(data.context):null;
   return <Sheet visible={visible} title="Context and usage" onClose={onClose}><View style={{height:Math.max(180,Math.min(720,height-170))}}><ScrollView contentContainerStyle={s.content} keyboardShouldPersistTaps="handled">
     {!owner?<Text style={s.note}>An owner can inspect context and provider usage.</Text>:<>
     {!online?<Text style={s.warning}>Offline. Cached values may be stale.</Text>:null}
@@ -71,7 +71,8 @@ export function ContextSheet({server,chatId,visible,onClose}:{server:Server;chat
       </ListGroup>
       <SectionHeader title="Estimated composition"/>
       {segments.length?<ListGroup>{segments.map(c=><ListRow key={c.id} title={c.label}
-        value={`~${tokenCount(c.tokens)} tokens`} subtitle={`${(c.share*100).toFixed(1)}% of estimated context`}/>)}</ListGroup>
+        value={c.share===null?'Unknown':`~${tokenCount(c.tokens)} tokens`}
+        subtitle={c.share===null?undefined:`${(c.share*100).toFixed(1)}% of ${c.partial?'known estimates':'estimated context'}`}/>)}</ListGroup>
         :<Footnote>A breakdown is available when Hermes retains a resident agent.</Footnote>}
       {data.warning?<Footnote>{data.warning}</Footnote>:null}
       <SectionHeader title="Session usage"/>

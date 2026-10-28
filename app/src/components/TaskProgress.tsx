@@ -119,7 +119,7 @@ export function TaskProgress({ server, chatId, busy }: { server: Server; chatId:
           {stopping ? <ActivityIndicator size="small" color={t.colors.textSecondary} /> : <Square size={13} color={online ? t.colors.text : t.colors.textTertiary} fill={online ? t.colors.text : t.colors.textTertiary} />}
         </Tap> : null}
         {/* How far through its plan it is, as a thin accent line along the bottom of the pill. */}
-        {!pending && progress.total > 0 ? <View pointerEvents="none" style={s.track}>
+        {!pending && progress.total > 0 && snapshot?.plan?.live !== false ? <View pointerEvents="none" style={s.track}>
           <View style={[s.bar, { width: `${Math.round(Math.max(0.04, progress.fraction) * 100)}%` }]} />
         </View> : null}
       </FloatingPill>

@@ -10,6 +10,6 @@ export function statusNoticeText(message: Message): string | null {
   const match = /^(?:⏳|⚡|⏱|\u{1F504}|⚠)️?\s+(.+)$/u.exec(text);
   if (!match) return null;
   const body = match[1].trim();
-  if (!body || /```|~~~/.test(body) || /^(?:#{1,6}\s|>\s?|[-*+]\s|\d+[.)]\s|[-*_]{3,}$)/.test(body)) return null;
+  if (!body || /```|~~~|`|\[[^\]]*\]\(|\*\*|__|<https?:/.test(body) || /^(?:#{1,6}\s|>\s?|[-*+]\s|\d+[.)]\s|[-*_]{3,}$)/.test(body)) return null;
   return body;
 }

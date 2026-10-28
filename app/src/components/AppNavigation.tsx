@@ -22,7 +22,7 @@ import { ChatFilters } from './ChatFilters';
 import { ProjectSection } from '../features/projects/ProjectSection';
 import { useBotSheet } from './BotSwitcher';
 import { KeyboardViewport } from './KeyboardViewport';
-import { Bot, CalendarClock, ChevronsUpDown, Inbox, MessageCircle, MessagesSquare, MoreHorizontal, PanelLeft, Pin, Settings, SquarePen, Users } from './icons';
+import { Bot, CalendarClock, ChevronsUpDown, House, Inbox, MessageCircle, MessagesSquare, MoreHorizontal, PanelLeft, Pin, Settings, SquarePen, Users } from './icons';
 import { AgentFace } from './AgentFace';
 import { MenuMark } from './MenuMark';
 import { Badge, IconButton, SearchField, Tap } from './ui';
@@ -170,7 +170,8 @@ function Sidebar({ onClose, drawer = false }: { onClose: () => void; drawer?: bo
   const now = useActivityClock(typing);
   const [menu, setMenu] = useState<{ server: Server; chat: Chat } | null>(null);
   const server = servers.find((bot) => bot.id === selected.serverId) ?? servers[0];
-  const bots = useBotSheet(server);
+  // Switching bots here also leaves any open conversation, so you land on the new bot rather than typing to the old one.
+  const bots = useBotSheet(server, () => go('/'));
   const rt = useApp((st) => server ? st.runtime[server.id] : undefined);
   const view = connectionView(network, rt, server?.bot.title ?? '');
   const canSchedule = !!rt?.info?.features?.control && isOwner(rt);
@@ -231,6 +232,7 @@ function Sidebar({ onClose, drawer = false }: { onClose: () => void; drawer?: bo
     </View>
     <ScrollView style={{ flex: 1 }} keyboardShouldPersistTaps="handled" contentContainerStyle={s.scroll}>
       {query ? null : <View style={s.navList}>
+        {nav('Home', House, '/', () => go('/'))}
         {nav(creating ? 'Starting…' : 'New chat', SquarePen, null, () => void newChat())}
         {nav('Inbox', Inbox, '/inbox', () => go('/inbox'), waiting)}
         {nav('All chats', MessagesSquare, '/chats', () => go('/chats'))}
