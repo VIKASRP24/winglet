@@ -398,7 +398,8 @@ function VoiceButton({ server, chatId, onSent, prepareChat, onBeforeSend }: { se
 }
 
 const useStyles = makeStyles((t) => ({
-  wrap: { position: 'absolute', left: 0, right: 0, bottom: 0, paddingHorizontal: 12, paddingTop: 6 },
+  // Opaque, so the conversation never shows around or under the message box.
+  wrap: { position: 'absolute', left: 0, right: 0, bottom: 0, paddingHorizontal: 12, paddingTop: 6, backgroundColor: t.colors.bg },
   perch: { position: 'absolute', left: 26, zIndex: 3 },
   box: { borderRadius: 24, maxWidth: 820, width: '100%', alignSelf: 'center', overflow: 'hidden',
     shadowColor: t.colors.shadow, shadowOpacity: t.scheme === 'light' ? 0.06 : 0, shadowRadius: 12, shadowOffset: { width: 0, height: 2 } },

@@ -118,8 +118,8 @@ export const FIXED = {
   onAccentWash: 'rgba(0,0,0,0.22)',
 };
 
-/** The Winglet mark's tile, the same in every theme. */
-export const BRAND = { from: '#8B6CFF', via: '#6C5CE7', to: '#3BA7FF', mark: '#FFFFFF', stroke: 'rgba(91,75,214,0.55)' };
+/** The Winglet app icon's tile and mark, the same in every theme. */
+export const BRAND = { tile: '#5B4BD6', mark: '#FFFFFF' };
 
 /** The agent's face: dark eyes and mouth, a grey body when offline, light highlights. */
 export const AVATAR = {

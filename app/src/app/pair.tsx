@@ -100,7 +100,7 @@ export default function PairScreen() {
               </Text>
               <Text style={s.context}>
                 {showInstall ? 'Add Winglet to your Home Screen for notifications.'
-                  : <>Run <Text style={s.code}>hermes winglet pair</Text> on your server, then scan the code it shows.</>}
+                  : <>Run <Text style={s.code}>hermes winglet pair</Text> on your server, then {Platform.OS === 'web' ? 'enter the code it shows' : 'scan the code it shows'}.</>}
               </Text>
             </View>
 
