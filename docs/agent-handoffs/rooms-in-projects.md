@@ -1,21 +1,25 @@
-# Rooms in projects — incomplete work
+# Rooms in projects
 
-Status: **not ready for review or deployment**. No capability flag is advertised and no app controls are implemented.
+## Design
 
-## Intended contract
+A room can be filed in at most one owner-shared project across all bots. The project's bot must participate when the room is filed. If the bot later leaves the roster, the link remains and the project view marks the room with a note. Project membership never grants a room read permission. Moving a room only changes project metadata, not its transcript, roster or upstream Hermes state. Deleting a project removes its links, never its rooms. Archived or deleted rooms do not appear in project views.
 
-Rooms are gateway-level and projects are bot-scoped. The intended rule is one shared owner project per room, with the project's bot in the room roster when filed. Later roster changes must not silently remove the link. Filing organizes metadata only: it must not merge project chats into the upstream Hermes transcript, change the transcript, or modify the roster.
+“Project into a Room” means starting a new Room from a Project, not merging existing project chats into a shared Room transcript. Hermes owns the room transcript, so merging chats would misrepresent and potentially alter upstream state.
 
-## Work in progress
+## Contract
 
-`plugin/projects.py` adds a `project_rooms` table, atomic link mutation using the existing project transaction, revision checks and idempotency receipts, and project deletion cleanup. `plugin/hub.py` contains an owner-signed move route and a read route that filters room grants and archived rooms. These routes are not yet advertised as a capability. `tests/test_project_rooms.py` exercises basic transaction behavior. This is incomplete and not security-reviewed; do not ship it as-is.
+The additive `project_rooms` feature flag gates the app's room-in-project controls. Older servers without the flag retain the old rooms and projects behavior. Reads use paired-device authorization and the normal room read-grant checks; writes are owner-signed. The app sends writes using `signedApi`, shows failures and does not enqueue them in an offline outbox.
 
-The design keeps link writes in the project database to preserve atomicity with project revisions and receipts. The move route locks room metadata while validating the roster. More work is required to establish safe cross-database ordering and to test concurrent archive, grant revocation, roster changes, deletion, and retries. In particular, room creation and filing cannot simply be treated as an atomic transaction across the Hermes runtime, room metadata, and project database; recovery and retry behavior must be designed and tested.
+- `GET /api/project-rooms` lists readable, active filed rooms across bots, including the project id, bot, current project revision and a `bot_missing` indicator. Project visibility and room read grants are both required.
+- `POST /api/project-rooms/{room_id}` moves or removes a room. The request carries a `client_id`, destination `project_id` (null for removal), destination `revision`, and the previous `from_project_id` and `from_revision` when applicable. Project revisions and idempotent retry receipts protect concurrent changes.
+- `POST /api/rooms` optionally accepts `project_id` and `revision` alongside its normal `operation_id`, title and bots. Creation happens first; the project filing request uses a server-derived `room-file:` plus the operation id. A successful filing returns `filed: true` and normally a project snapshot; if a post-commit snapshot fails, the response retains `filed: true` without the snapshot. If filing fails, the room remains available and the response includes `filed: false` and `file_error`; the app tells the owner and offers the ordinary move flow. Without a project id, room creation retains its existing response.
 
-## Validation
+The room metadata and project links live in separate SQLite databases. A room metadata transaction protects validation of its archive state and roster during a filing write; the project database transaction commits the link, project revisions and retry receipt together. There is no distributed transaction spanning room creation and project filing. A filing failure must therefore never erase or pretend to erase an already-created room. Project reads filter out missing and archived rooms, even when an old link remains. Restoring an archived room can make a retained link visible again. Roster removal retains the link deliberately.
 
-`python -X utf8 -m pytest tests/test_projects.py tests/test_project_rooms.py -q`: 16 passed. No full suite, app, Hermes, red check or CI evidence is available.
+## App
 
-## Remaining work
+The room settings sheet opens a project picker with an unfiled option. Project views list Rooms separately from chats, indicate a missing project bot, and offer New room for active owner-shared projects. The target project's bot is preselected for creation. A failed create-and-file displays a partial-success message; conflict and network failures do not queue a mutation.
 
-Implement the feature flag and app flows, creation from a project, refresh and conflict handling, and complete the authorization and lifecycle tests specified in the assignment. Run all required validation before opening a PR. Phone QA later should cover move/remove, new room, grants, roster changes, archive/deletion, offline and stale revision behavior, old-server compatibility, accessibility and reconnect.
+## Validation and limits
+
+The full local plugin suite passed with 698 passed and 32 skipped; the app suite passed 464 tests and TypeScript passed. Web export and the existing bundle-reference check passed. The 14 room-project tests all failed against a detached `origin/dev` worktree without the implementation, then passed with the feature. The local report records all final commands and counts. Pinned-Hermes tests run in CI only; CI and physical-phone validation are deferred to the reviewer. Later phone QA should exercise move/remove and project creation, cross-bot moves, access revocation, archive and restore, roster changes, offline and conflicting writes, old-server compatibility, accessibility, and reconnection.
