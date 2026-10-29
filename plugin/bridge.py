@@ -15,6 +15,43 @@ from typing import Any, Dict, Iterable, List, Optional, Set
 logger = logging.getLogger(__name__)
 
 
+class ChatApprovalBypass:
+    """Hermes's own per-session bypass (the gateway ``/yolo``), keyed by one chat's session.
+
+    Hermes keeps it in an in-memory set (``tools.approval._session_yolo``): it never applies to
+    another session, is cleared at a session boundary such as ``/new`` (``clear_session``), and does
+    not survive a restart. Its floors (``_floor_block``: hardline blocklist, deny rules) run before
+    the bypass is consulted, so those still block.
+    """
+
+    def __init__(self, adapter: Any, approval: Any):
+        self.adapter, self.approval = adapter, approval
+
+    def session_key(self, chat_id: str) -> Optional[str]:
+        return self.adapter._session_key(chat_id)
+
+    def is_enabled(self, key: str) -> bool:
+        return self.approval.is_session_yolo_enabled(key)
+
+    def enable(self, key: str) -> None:
+        self.approval.enable_session_yolo(key)
+
+    def disable(self, key: str) -> None:
+        self.approval.disable_session_yolo(key)
+
+
+def chat_approval_bypass(adapter: Any) -> Optional[ChatApprovalBypass]:
+    """The bypass, or None when this Hermes lacks any of its functions (the app then hides it)."""
+    try:
+        from tools import approval
+    except ImportError:
+        return None
+    if all(callable(getattr(approval, name, None)) for name in
+           ("is_session_yolo_enabled", "enable_session_yolo", "disable_session_yolo")):
+        return ChatApprovalBypass(adapter, approval)
+    return None
+
+
 def notified_request_id(adapter: Any, chat_id: str, session_key: str) -> Optional[str]:
     """Capture identity at Hermes' synchronous adapter call, before crossing to the loop.
 
