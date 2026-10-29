@@ -33,7 +33,7 @@ async def smart_gateway(tmp_path, monkeypatch, aiohttp_client):
     store.ensure_chat("general", "General")
     hub = Hub(store, web_root=tmp_path / "web")
     adapter = WingletAdapter.__new__(WingletAdapter)
-    adapter.name = "Winglet"
+    adapter.platform = SimpleNamespace(value="winglet")  # Hermes derives adapter.name from it
     adapter._hub = hub
     adapter._typing_paused = set()
     hub.on_approval = adapter._on_approval
