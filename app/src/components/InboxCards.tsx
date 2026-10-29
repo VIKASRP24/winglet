@@ -2,6 +2,7 @@ import { router } from 'expo-router';
 import { useRef, useState } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 import { agoText } from '../lib/agent';
+import { bypassKey, useApprovalBypass } from '../lib/approvalBypass';
 import { haptic } from '../lib/haptics';
 import { isOwner, useApp } from '../lib/store';
 import { makeStyles, useTheme } from '../lib/themeContext';
@@ -58,8 +59,13 @@ function ApprovalCard({ serverId, item, compact, embedded, bare }: { serverId: s
   const s = useStyles();
   const respond = useApp((st) => st.respond);
   const owner = useApp((st) => isOwner(st.runtime[serverId]));
+  const server = useApp((st) => st.servers?.find((x) => x.id === serverId));
+  const eligible = useApp((st) => st.runtime[serverId]?.info?.features?.chat_approval_bypass === true && st.runtime[serverId]?.chats?.[item.chat_id]?.kind === 'chat');
+  const chatTitle = useApp((st) => st.runtime[serverId]?.chats?.[item.chat_id]?.title || 'this chat');
+  const bypassEnabled = useApprovalBypass((st) => server ? st.enabled[bypassKey(server, item.chat_id)] : false);
   const [busy, setBusy] = useState<string | null>(null);
   const [confirmAlways, setConfirmAlways] = useState(false);
+  const [confirmBypass, setConfirmBypass] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const acting = useRef(false);
   const choices = [...(item.payload.choices ?? [])].filter((choice) => !item.payload.smart_denied || choice === 'once' || choice === 'deny')
@@ -77,6 +83,25 @@ function ApprovalCard({ serverId, item, compact, embedded, bare }: { serverId: s
         if (choice === 'deny') haptic.error();
         else haptic.success();
       }
+    } finally { acting.current = false; setBusy(null); }
+  };
+  const enableBypass = async () => {
+    const state = useApp.getState();
+    const current = state.runtime[serverId]?.inbox[item.id];
+    if (acting.current || !server || !isOwner(state.runtime[serverId]) || !eligible || current?.status !== 'pending' || current.payload.smart_denied) return;
+    acting.current = true;
+    setBusy('bypass');
+    try {
+      // This single signed operation resolves the pending request on the server too.
+      await useApprovalBypass.getState().enable(server, item.chat_id, item.id);
+      setConfirmBypass(false);
+      void state.loadInbox(serverId);
+      haptic.success();
+    } catch (e) {
+      haptic.error();
+      state.toast({ serverId, title: "Couldn't allow everything", body: (e as Error).message });
+      void state.loadInbox(serverId);
+      void useApprovalBypass.getState().refresh(server, item.chat_id).catch(() => {});
     } finally { acting.current = false; setBusy(null); }
   };
   return (
@@ -103,7 +128,7 @@ function ApprovalCard({ serverId, item, compact, embedded, bare }: { serverId: s
         </View>
       ) : pending ? (
         <View style={s.actions}>
-          {choices.map((choice) => (
+          {[...choices.map((choice) => (
             <Button
               key={choice}
               size="sm"
@@ -115,7 +140,9 @@ function ApprovalCard({ serverId, item, compact, embedded, bare }: { serverId: s
               feedback="none"
               onPress={() => (choice === 'always' ? setConfirmAlways(true) : act(choice))}
             />
-          ))}
+          )), ...(eligible && !item.payload.smart_denied && !bypassEnabled ? [<Button key="bypass" size="sm" style={s.action}
+            title="Allow everything in this chat" variant="secondary" disabled={!!busy}
+            onPress={() => setConfirmBypass(true)} />] : [])]}
         </View>
       ) : (
         <StatusLine item={item} />
@@ -128,6 +155,14 @@ function ApprovalCard({ serverId, item, compact, embedded, bare }: { serverId: s
           <View style={s.command}><Text selectable style={s.commandText} numberOfLines={6}>{item.payload.command || item.body}</Text></View>
           <Button title="Always allow" variant="danger" onPress={() => { setConfirmAlways(false); act('always'); }} />
           <Button title="Cancel" variant="secondary" onPress={() => setConfirmAlways(false)} />
+        </View>
+      </Sheet>
+      <Sheet visible={confirmBypass} onClose={() => !busy && setConfirmBypass(false)} title="Allow everything in this chat?">
+        <View style={{ gap: 14, paddingHorizontal: 4 }}>
+          <Text style={s.sheetText}>{`This approves the current request. Future commands in “${chatTitle}” can run without asking until you turn approvals back on or the session ends. To undo this, choose Turn back on in the chat. Commands could change or delete files.`}</Text>
+          <View style={s.command}><Text selectable style={s.commandText} numberOfLines={6}>{item.payload.command || item.body}</Text></View>
+          <Button title="Allow everything in this chat" variant="danger" loading={busy === 'bypass'} disabled={!!busy && busy !== 'bypass'} onPress={() => void enableBypass()} />
+          <Button title="Cancel" variant="secondary" disabled={!!busy} onPress={() => setConfirmBypass(false)} />
         </View>
       </Sheet>
     </Card>

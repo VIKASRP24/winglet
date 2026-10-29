@@ -131,6 +131,7 @@ ROUTE_POLICY = {
     "h_vapid": "public", "h_inbox_respond": "public", "h_server_key": "public", "h_address_check": "public",
     "h_me": "device", "h_connection": "device", "h_connection_status": "device", "h_unpair": "device", "h_chats": "device",
     "h_chat_create": "device", "h_chat_rename": "device", "h_chat_delete": "device", "h_messages": "device",
+    "h_chat_bypass_get": "owner", "h_chat_bypass_delete": "owner_signed",
     "h_message_send": "device", "h_upload": "device", "h_export": "device", "h_commands": "device",
     "h_push_prefs": "device", "h_push_prefs_put": "device", "h_inbox": "device", "h_webpush_subscribe": "device",
     "h_webpush_unsubscribe": "device", "h_ntfy": "device", "h_push_test": "device", "h_device_verify": "device",
@@ -319,6 +320,10 @@ class Hub:
         # Hermes-side callbacks, installed by the adapter.
         self.on_user_message: Optional[InboundFn] = None
         self.on_approval: Optional[ResolveFn] = None
+        # Hermes's per-session approval bypass for one chat (plugin/bridge.py), installed by the
+        # adapter; None (old Hermes) hides "Allow everything in this chat".
+        self.chat_approval_bypass: Any = None
+        self._inbox_response_lock = asyncio.Lock()
         self.on_answer: Optional[ResolveFn] = None
         # Installed by the adapter; the hub itself never imports Hermes.
         self.hermes_version: Callable[[], str] = lambda: ""
@@ -349,6 +354,8 @@ class Hub:
         r.add_post("/api/chats", self.h_chat_create)
         r.add_patch("/api/chats/{chat_id}", self.h_chat_rename)
         r.add_delete("/api/chats/{chat_id}", self.h_chat_delete)
+        r.add_get("/api/chats/{chat_id}/approval-bypass", self.h_chat_bypass_get)
+        r.add_delete("/api/chats/{chat_id}/approval-bypass", self.h_chat_bypass_delete)
         r.add_get("/api/chats/{chat_id}/messages", self.h_messages)
         r.add_post("/api/chats/{chat_id}/messages", self.h_message_send)
         r.add_post("/api/chats/{chat_id}/uploads", self.h_upload)
@@ -803,6 +810,7 @@ class Hub:
         return {"phone_tools": self.phone_tools is not None, "routine_history": self.routine_history is not None, "routine_run_detail": self.routine_history is not None, **(self.context_insights.capabilities() if self.context_insights else {k:False for k in ("session_context","context_compression","provider_limits","usage_insights")}), "rooms": self.rooms is not None and self.rooms.available(),
                 "room_mentions": self.rooms is not None and self.rooms.available(),
                 "project_rooms": self.rooms is not None and self.rooms.available(), "rooms_member_write": False,
+                "chat_approval_bypass": self.chat_approval_bypass is not None,
                 "wear_relay": True, "wear_reply": True, "encrypted_push": True, "webpush": True, "ntfy": True, "approvals": True, "questions": True, "uploads": True, "voice": True,
                 "replies": True, "export": True, "mute": True, "status_updates": True, "roles": True,
                 "signed_actions": True, "ws_auth": True, "pickers": True, "agent": self.hermes is not None,
@@ -1672,12 +1680,44 @@ class Hub:
         items = [i for i in items if self.can_see(device, chats.get(i["chat_id"]))]
         return _json({"items": items, "pending": self.pending_for(device)})
 
+    def _chat_bypass_key(self, chat_id: str) -> Optional[str]:
+        """The Hermes session key an ordinary chat maps to, or None (Rooms, Updates, unknown chats,
+        or a server whose Hermes has no per-session bypass)."""
+        chat = self.store.get_chat(chat_id)
+        if self.chat_approval_bypass is None or not chat or chat.get("kind") != "chat":
+            return None
+        return self.chat_approval_bypass.session_key(chat_id) or None
+
+    async def h_chat_bypass_get(self, request: web.Request) -> web.Response:
+        key = self._chat_bypass_key(request.match_info["chat_id"])
+        if not key:
+            return _error(404, "chat or approval bypass unavailable")
+        return _json({"enabled": self.chat_approval_bypass.is_enabled(key)})
+
+    async def h_chat_bypass_delete(self, request: web.Request) -> web.Response:
+        chat_id = request.match_info["chat_id"]
+        # Same lock as card answers: a turn-off can't interleave with a turn-on from an answer.
+        async with self._inbox_response_lock:
+            key = self._chat_bypass_key(chat_id)
+            if not key:
+                return _error(404, "chat or approval bypass unavailable")
+            was_on = self.chat_approval_bypass.is_enabled(key)
+            self.chat_approval_bypass.disable(key)
+            self.audit("approval_bypass.off", self._require(request),
+                       f"chat {chat_id}" if was_on else f"chat {chat_id} (already off)")
+        return _json({"enabled": False})
+
     async def h_inbox_respond(self, request: web.Request) -> web.Response:
         item_id = request.match_info["item_id"]
         body = await self._body(request)
         choice = str(body.get("choice") or request.query.get("choice") or "")
         answer = body.get("answer")
+        allow_all = body.get("allow_all", False)
+        if not isinstance(allow_all, bool):
+            return _error(400, "allow_all must be a boolean")
         device = self._device(request)
+        if allow_all and (device is None or device["role"] != "owner"):
+            return _error(403, "Only an owner can disable approvals.")
         if device is None:
             # Older notifications carried signed action links. Only "deny" is honoured from one: an
             # approval must be given from the card itself, where the whole command is visible.
@@ -1685,7 +1725,7 @@ class Hub:
             if not (choice == "deny" and hmac.compare_digest(sig, self.action_signature(item_id, choice))):
                 return _error(401, "not paired")
         item = self.store.get_inbox(item_id)
-        if device is not None and item and item["kind"] == "approval" and choice != "deny":
+        if device is not None and (allow_all or (item and item["kind"] == "approval" and choice != "deny")):
             if device["role"] != "owner":
                 return _error(403, "Only an owner can approve or deny commands. It's waiting in their inbox.")
             problem = await self._signature_problem(request, device)
@@ -1693,7 +1733,8 @@ class Hub:
                 needs = {"needs": "verify"} if problem in (VERIFY_FIRST, BAD_SIGNATURE) else {}
                 return _json({"error": problem, **needs}, status=403)
         try:
-            ok, item = await self.respond(item_id, choice=choice, answer=answer, device=device)
+            ok, item = await self.respond(item_id, choice=choice, answer=answer, device=device,
+                                          allow_all=allow_all, chat_id=body.get("chat_id"))
         except Forbidden as exc:
             return _error(403, str(exc))
         if item is None:
@@ -1701,9 +1742,16 @@ class Hub:
         return _json({"ok": ok, "item": item}, status=200 if ok else 409)
 
     async def respond(self, item_id: str, *, choice: str = "", answer: Any = None,
-                      device: Optional[Dict[str, Any]] = None) -> tuple[bool, Optional[Dict]]:
-        """Answer an inbox card. ``device`` is who's answering; None only for an old notification's
-        deny link, which the caller has already checked."""
+                      device: Optional[Dict[str, Any]] = None, allow_all: bool = False,
+                      chat_id: Optional[str] = None) -> tuple[bool, Optional[Dict]]:
+        """Serialize card answers so only the winner may change bypass state."""
+        async with self._inbox_response_lock:
+            return await self._respond_locked(item_id, choice=choice, answer=answer, device=device,
+                                              allow_all=allow_all, chat_id=chat_id)
+
+    async def _respond_locked(self, item_id: str, *, choice: str, answer: Any,
+                              device: Optional[Dict[str, Any]], allow_all: bool,
+                              chat_id: Optional[str]) -> tuple[bool, Optional[Dict]]:
         item = self.store.get_inbox(item_id)
         if item is None or (device is not None and not self.can_see(device, self.store.get_chat(item["chat_id"]))):
             return False, None
@@ -1711,6 +1759,18 @@ class Hub:
             return False, item
         if item["kind"] == "approval" and device is not None and device["role"] != "owner":
             raise Forbidden("Only an owner can approve or deny commands. It's waiting in their inbox.")
+        bypass_key = None
+        if allow_all:
+            # "Allow everything in this chat": only a one-time approval of an ordinary card. The
+            # session is the stored card's, and must be the one Hermes files that chat under now. The
+            # app must name the chat it showed the confirm for; it is a required cross-check only.
+            if (device is None or device["role"] != "owner" or item["kind"] != "approval"
+                    or choice != "once" or item["payload"].get("smart_denied") is not False
+                    or not isinstance(chat_id, str) or chat_id != item["chat_id"]):
+                return False, item
+            bypass_key = self._chat_bypass_key(item["chat_id"])
+            if not bypass_key or item["payload"].get("session_key") != bypass_key:
+                return False, item
         ok = False
         if item["kind"] == "approval":
             if choice not in (item["payload"].get("choices") or []):
@@ -1718,6 +1778,12 @@ class Hub:
             ok = bool(self.on_approval and await self.on_approval(item, choice))
             resolution = choice
             if ok:
+                # Only after Hermes accepted this answer: a lost race or an expired request never
+                # turns the bypass on. Hermes wakes the worker inside resolve, so a command that
+                # arrives before this line still gets an ordinary card (fails closed; see APPROVALS.md).
+                if bypass_key and not self.chat_approval_bypass.is_enabled(bypass_key):
+                    self.chat_approval_bypass.enable(bypass_key)
+                    self.audit("approval_bypass.on", device, f"chat {item['chat_id']}")
                 self.audit("approval", device, f"{choice}: {_clip(item['payload'].get('command') or item['title'], 120)}")
         elif item["kind"] == "question":
             if isinstance(answer, list):  # multi-select: the labels the user ticked

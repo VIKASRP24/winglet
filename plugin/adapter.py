@@ -253,6 +253,7 @@ class WingletAdapter(BasePlatformAdapter):
             hub.listen = f"{self._host}:{self._port}"
             hub.on_user_message = self._on_user_message
             hub.on_approval = self._on_approval
+            hub.chat_approval_bypass = bridge.chat_approval_bypass(self)
             hub.on_answer = self._on_answer
             hub.hermes_version = hermes_api.hermes_version
             hub.commands_provider = hermes_api.list_commands

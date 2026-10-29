@@ -11,10 +11,13 @@ function harness() {
   const states: any[] = [];
   const refs: any[] = [];
   const command = 'first line\n' + 'full command details\n'.repeat(40);
-  const item = { id: 'request', kind: 'approval', status: 'pending', body: '', payload: { command, choices: ['once', 'always', 'deny'] } };
+  const item = { id: 'request', chat_id: 'chat', kind: 'approval', status: 'pending', body: '', payload: { command, choices: ['once', 'always', 'deny'] } };
   const calls: string[] = [];
+  const bypassCalls: string[] = [];
   let finish: (() => void) | undefined;
-  const store = { runtime: { bot: { inbox: { request: item } } }, respond: async (_server: string, _id: string, reply: any) => { calls.push(reply.choice); await new Promise<void>((resolve) => { finish = resolve; }); } };
+  const store = { servers: [{ id: 'bot' }], runtime: { bot: { owner: true, info: { features: { chat_approval_bypass: false } }, chats: { chat: { kind: 'chat', title: 'Release work' } }, inbox: { request: item } } }, loadInbox: async () => {}, toast: () => {}, respond: async (_server: string, _id: string, reply: any) => { calls.push(reply.choice); await new Promise<void>((resolve) => { finish = resolve; }); } };
+  const bypass = { enabled: {}, enable: async (_server: any, chat: string, id: string) => { bypassCalls.push(`${chat}:${id}`); } };
+  const useApprovalBypass = Object.assign((select: any) => select(bypass), { getState: () => bypass });
   const useApp = Object.assign((select: any) => select(store), { getState: () => store });
   const jsx = (type: any, props: any) => ({ type, props });
   const modules: Record<string, any> = {
@@ -24,7 +27,8 @@ function harness() {
     },
     'react/jsx-runtime': { jsx, jsxs: jsx },
     'react-native': { View: 'View', Text: 'Text', Pressable: 'Pressable', ScrollView: 'ScrollView' },
-    '../lib/store': { useApp, isOwner: () => true },
+    '../lib/store': { useApp, isOwner: (runtime: any) => runtime?.owner },
+    '../lib/approvalBypass': { useApprovalBypass, bypassKey: () => 'chat' },
     '../lib/themeContext': { makeStyles: () => () => fallback, useTheme: () => fallback },
     './ui': { Button: 'Button' }, './Sheet': { Sheet: 'Sheet' },
   };
@@ -33,7 +37,7 @@ function harness() {
   vm.runInNewContext(ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true } }).outputText,
     { exports, require: (id: string) => modules[id] ?? fallback });
   const render = () => { cursor = 0; return exports.ApprovalCard({ serverId: 'bot', item, compact: true, embedded: true }); };
-  return { render, item, calls, command, finish: () => finish?.() };
+  return { render, item, calls, bypassCalls, store, command, finish: () => finish?.() };
 }
 
 test('expanding a compact approval exposes the full command without responding', () => {
@@ -62,6 +66,41 @@ test('smart denial explains guardian decision and only offers once or deny', () 
   assert.equal(children[0].props.children[1].props.children[2].props.children, 'The Smart guardian blocked this command. You can allow it once or deny it.');
   const actions = children.find((child: any) => Array.isArray(child?.props?.children) && child.props.children.some((b: any) => b?.props?.title === 'Allow once'));
   assert.deepEqual(Array.from(actions.props.children, (b: any) => b.props.title), ['Allow once', 'Deny']);
+});
+
+test('allow everything requires an owner, a chat, the feature and an ordinary pending request', () => {
+  const h = harness();
+  const offered = () => !!h.render().props.children[2]?.props.children?.find?.((b: any) => b.props.title === 'Allow everything in this chat');
+  assert.equal(offered(), false);
+  h.store.runtime.bot.info.features.chat_approval_bypass = true;
+  assert.equal(offered(), true);
+  h.store.runtime.bot.owner = false;
+  assert.equal(offered(), false);
+  h.store.runtime.bot.owner = true;
+  Object.assign(h.item.payload, { smart_denied: true });
+  assert.equal(offered(), false);
+  Object.assign(h.item.payload, { smart_denied: false });
+  h.store.runtime.bot.chats.chat.kind = 'home';
+  assert.equal(offered(), false);
+  h.store.runtime.bot.chats.chat.kind = 'room';
+  assert.equal(offered(), false);
+  delete (h.store.runtime.bot.chats as any).chat;
+  assert.equal(offered(), false);
+});
+
+test('allow everything confirms before making one bypass call', async () => {
+  const h = harness();
+  h.store.runtime.bot.info.features.chat_approval_bypass = true;
+  h.render().props.children[2].props.children.find((b: any) => b.props.title === 'Allow everything in this chat').props.onPress();
+  const sheet = h.render().props.children[4];
+  assert.equal(sheet.props.visible, true);
+  assert.equal(sheet.props.children.props.children[0].props.children, 'This approves the current request. Future commands in “Release work” can run without asking until you turn approvals back on or the session ends. To undo this, choose Turn back on in the chat. Commands could change or delete files.');
+  assert.deepEqual(h.calls, []);
+  assert.deepEqual(h.bypassCalls, []);
+  await sheet.props.children.props.children[2].props.onPress();
+  await Promise.resolve();
+  assert.deepEqual(h.bypassCalls, ['chat:request']);
+  assert.deepEqual(h.calls, []);
 });
 
 test('rapid approval taps submit once; a stale expired request cannot submit', async () => {
