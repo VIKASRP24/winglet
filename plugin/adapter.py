@@ -775,7 +775,8 @@ class WingletAdapter(BasePlatformAdapter):
             return SendResult(success=False, error="An active approval request ID is required for buttons")
         item = await hub.add_inbox(
             "approval", prompt.chat_id, "Approval needed", prompt.command,
-            {"command": prompt.command, "description": prompt.description, "choices": prompt.choices,
+            {"command": prompt.command, "description": prompt.description,
+             "choices": [c for c in prompt.choices if c in ("once", "deny")] if prompt.smart_denied else prompt.choices,
              "labels": labels, "styles": styles, "session_key": prompt.session_key,
              "request_id": request_id, "smart_denied": prompt.smart_denied})
         if item is None:

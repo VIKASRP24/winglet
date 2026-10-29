@@ -18,6 +18,14 @@ hosts over HTTPS on the default port. Previously stored browser subscriptions to
 dropped when delivery is attempted. Encrypted Android push continues to use the server's configured
 ntfy relay.
 
+## Smart guardian decisions
+
+When Hermes flags a request as `smart_denied`, the card explains that the Smart guardian blocked
+it. Winglet restricts the card to the choices Hermes supplied among **once** and **deny**; it does
+not add missing choices. The server also rejects other choices for newly created cards. Normal
+approval cards retain their supplied choices. The Tools screen explains that Smart uses a second
+model; Winglet does not currently detect whether one is configured.
+
 ## Compatibility with current Hermes
 
 Current Hermes calls `WingletAdapter.send_exec_approval` synchronously from

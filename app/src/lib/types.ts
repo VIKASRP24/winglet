@@ -178,6 +178,7 @@ export type InboxItem = {
   payload: {
     command?: string;
     description?: string;
+    smart_denied?: boolean;
     choices?: string[];
     labels?: Record<string, string>;
     styles?: Record<string, string>;
