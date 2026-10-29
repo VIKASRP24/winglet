@@ -1,18 +1,21 @@
-# Smart approvals — partial handoff
-
-Status: **partial; not verified end to end**. This work covers Part 1 only; it does not add any approval bypass.
+# Smart approvals — Hermes integration handoff
 
 ## Contract and changes
 
-- The existing chat approval adapter preserves the Hermes `smart_denied` flag and now limits a flagged card's supplied choices to `once` and `deny`. The existing hub response validation checks those stored choices; it does not add missing choices. Existing owner and signature checks are unchanged.
-- The chat Inbox card explains the guardian's decision and also filters its displayed choices defensively. The Tools screen explains that Smart uses an auxiliary model.
-- Normal, non-denied cards retain their existing choices. No routes, policy levels or storage schemas were added or changed. The Rooms approval flow was not modified.
-- No no-model warning was added: the pinned Hermes configuration and fallback behavior could not be examined reliably under the git permission restriction. Do not infer a missing model from an unknown configuration.
+- Hermes `approvals.mode: smart` assesses flagged commands with the auxiliary `approval` task. An APPROVE grants the individual command; DENY permits an interactive owner to override only once or deny; an error or unrecognized response escalates to a normal human approval.
+- Winglet's chat approval adapter preserves `smart_denied` and limits its supplied choices to `once` and `deny`. The existing hub validates those choices and requires a verified owner's signed request for a positive approval. No approval bypass, route, policy level, or storage schema was added.
+- `tests/test_smart_approvals_hermes.py` exercises the real Hermes command gate, gateway notifier, queue and base adapter together with the Winglet adapter, hub, Inbox and signed HTTP response. Only the auxiliary inference call is stubbed; the flagged command is never executed. It covers approval, Smart denial and signed one-time override, model error and garbage escalation, and manual mode. These tests use `pytest.importorskip`, so the CI job with pinned Hermes runs them and the plain job skips the module.
+
+## Model resolution decision
+
+No `smart_model_configured` field or warning was added. In the examined Hermes source, `agent.auxiliary_client._resolve_task_provider_model` defaults to `auto`; `_resolve_auto_route` can inherit the main provider/model, use task or main fallback chains, or discover providers and credentials. Credential scope, environment, OAuth and runtime availability matter, so absence of an `auxiliary.approval` model in config does not reliably mean there is no model. If no client can be resolved, `_resolve_call_client` raises `AuxiliaryClientUnavailable`; `_smart_approve` catches failures and escalates to the normal human path. This is a source-level finding, not a live-provider test.
+
+## Rooms decision
+
+No Room integration test was added. Room tasks share Hermes's command gate, but their hosted execution and approval UI are not the Winglet chat notifier/Inbox path: `HostedRoomServerRPC` submits an in-process `prompt.submit`, polls the session's pending approval through `info`, and resolves it using `approval.respond`; `HostedRoomRuntime._report_pending_action` publishes the Room action and `HostedRoomService.approve_room_task` validates room/task/generation/request identity and accepts only `once` or `deny`. Winglet's `Rooms._driver` exposes the action, and `Rooms.mutate` delegates to that service. A meaningful end-to-end Smart denial test would require an active hosted agent session and its server request/transport plumbing, not merely calling the chat adapter or fabricating a pending action. It was not practical to validate that setup without running Hermes locally. Room Smart-denial behavior remains unverified.
 
 ## Validation and limits
 
-The plugin adapter regression uses a fake prompt and queue, and checks both stored choices and rejection of broad choices; it does not execute Hermes or a model. An app card test exercises rendering and choices. Each new denial regression was observed failing before its fix. A normal-card test exercises the Winglet handoff with a fake, not Hermes escalation itself.
+The plain Winglet plugin suite passed locally with 668 passed and 32 skipped, including the new Hermes-only module skip. The bundled-web reference check found 28 references and no missing assets. App typecheck and web export passed; the app suite passed 457 tests. This change does not modify the app.
 
-The full plain plugin suite passed 668 tests with 31 skipped. The full app suite passed 457 tests, typecheck passed and the web export succeeded. The bundled web reference check passed (28 references). See the local report for commands and any later test counts.
-
-**Pinned Hermes: CI only.** No real-Hermes tests were written here, and the pinned Hermes source was not reviewed. Smart approve, deny and escalation in chats and Rooms, command execution, and behavior with a missing model or a timeout remain unverified. Rooms use a separate worker path, and how it handles a Smart denial is not established. Treat Smart approvals as unproven until real-Hermes integration tests and a phone check cover them.
+**Pinned Hermes execution is not yet verified.** The new integration tests were written against a nearby Hermes source checkout, not run locally, and still require the CI job to pass against ref `47676981f55de91231fdeef2f0eec47e7c209e78`. Thus the test assertions describe intended coverage, not observed proof yet. No real model, provider credentials, timeout, actual shell execution, hosted Room round trip, or physical phone interaction was exercised. The test only proves a gate decision, not that a terminal runs the command. CI and a real-device/provider check remain necessary before claiming end-to-end verification.
