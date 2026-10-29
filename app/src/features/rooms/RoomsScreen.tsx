@@ -15,8 +15,10 @@ import { Button, Chip, Footnote, IconButton, Field, ListGroup, ListRow, SectionH
 import { api, ApiError, signedApi } from '../../lib/api';
 import { isOwner, useApp } from '../../lib/store';
 import { makeStyles, useTheme } from '../../lib/themeContext';
-import type { Server } from '../../lib/types';
-import { mergeRoomEvents, mentionQuery, recipients, roomLine, type Cursor, type Room, type RoomAction, type RoomBot, type RoomEvent, type RoomList, type RoomPage } from './model';
+import type { Project, Server } from '../../lib/types';
+import { mergeRoomEvents, mentionQuery, recipients, roomLine, projectRoomsSupported, canCreateRoomInProject, type Cursor, type Room, type RoomAction, type RoomBot, type RoomEvent, type RoomList, type RoomPage } from './model';
+import { createProjectRoom } from './projectRoomsApi';
+import { RoomProjectPicker } from './RoomProjectPicker';
 
 const operationId = () => `room-${Date.now()}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
 const pathOf = (id: string) => `/api/rooms/${encodeURIComponent(id)}`;
@@ -29,7 +31,11 @@ function RoomsScreen() {
   const online = useApp(st => !!server && st.network && st.runtime[server.id]?.status === 'online');
   const feature = useApp(st => !!server && !!st.runtime[server.id]?.info?.features?.rooms);
   const owner = useApp(st => !!server && isOwner(st.runtime[server.id]));
-  const params = useLocalSearchParams<{ room?: string }>();
+  const params = useLocalSearchParams<{ room?: string; createProject?: string; projectServer?: string }>();
+  const projectServer = useApp(st => st.servers.find(x => x.id === params.projectServer && (x.parent ?? x.id) === server?.id));
+  const projectFeature = useApp(st => projectRoomsSupported(st.runtime[projectServer?.id ?? server?.id ?? '']?.info?.features));
+  const projectSnapshot = useApp(st => st.runtime[projectServer?.id ?? '']?.projects);
+  const project = projectSnapshot?.projects.find(p => p.id === params.createProject);
   const s = useStyles(); const t = useTheme();
   const [list, setList] = useState<RoomList | null>(null);
   const [error, setError] = useState('');
@@ -46,19 +52,24 @@ function RoomsScreen() {
     void load(); return () => { disposed = true; clearTimeout(timer); };
   }, [server, online, feature, params.room, refresh]));
   useEffect(() => { setList(null); setError(''); setCreating(false); }, [server?.id, owner]);
+  useEffect(() => {
+    if (params.createProject && projectServer && !project) void useApp.getState().loadProjects(projectServer.id);
+    if (params.createProject && projectServer && project && !project.private && !project.archived && owner && online && projectFeature && list) setCreating(true);
+  }, [params.createProject, projectServer, project, owner, online, projectFeature, list]);
   if (!server) return null;
   if (params.room) return <RoomConversation key={`${server.id}:${params.room}`} server={server} roomId={params.room} online={online} owner={owner} />;
   return <Screen title="Rooms"
-    right={online && feature && owner ? <IconButton label="Create room" variant="tonal" onPress={() => setCreating(true)}><Plus size={22} color={t.colors.accent} /></IconButton> : undefined}>
+    right={online && feature && owner && !params.createProject ? <IconButton label="Create room" variant="tonal" onPress={() => setCreating(true)}><Plus size={22} color={t.colors.accent} /></IconButton> : undefined}>
     {!online ? <Text style={s.notice}>Connect to load rooms.</Text> : !feature ? <Text style={s.notice}>Update this gateway to use rooms.</Text> : null}
     {error ? <View style={s.notice}><Text style={s.error}>{error}</Text><Button title="Reload rooms" variant="secondary" onPress={() => setRefresh(x => x+1)} /></View> : null}
     {online && feature && !list && !error ? <ActivityIndicator color={t.colors.accent} style={{ margin: 30 }} /> : null}
-    {list && !list.rooms.length ? <View style={s.empty}><Users size={34} color={t.colors.textSecondary} /><Text style={s.title}>No rooms yet</Text><Text style={s.meta}>{owner ? 'Create a room with two to six bots.' : 'Ask an owner to invite you to a room.'}</Text>{owner ? <Button title="Create a room" onPress={() => setCreating(true)} disabled={!online} /> : null}</View> : null}
+    {list && !list.rooms.length ? <View style={s.empty}><Users size={34} color={t.colors.textSecondary} /><Text style={s.title}>No rooms yet</Text><Text style={s.meta}>{owner ? 'Create a room with two to six bots.' : 'Ask an owner to invite you to a room.'}</Text>{owner && !params.createProject ? <Button title="Create a room" onPress={() => setCreating(true)} disabled={!online} /> : null}</View> : null}
     {list?.rooms.length ? <><SectionHeader title="Conversations" /><ListGroup>{list.rooms.map(room => <ListRow key={room.id}
       icon={<Users />} title={room.title} subtitle={room.members.map(m=>m.display_name).join(', ')}
       value={room.archived ? 'Archived' : room.driver.working ? 'Working' : room.unread ? 'Unread' : 'Ready'}
       onPress={() => router.push({ pathname:'/rooms', params:{ room:room.id } })} />)}</ListGroup></> : null}
-    {creating ? <RoomManage server={server} bots={list?.bots ?? []} onClose={() => setCreating(false)} onSaved={id => { setCreating(false); router.push({ pathname:'/rooms', params:{ room:id } }); }} /> : null}
+    {params.createProject && (!projectFeature || !projectServer || (projectSnapshot && !project) || (project && (project.private || project.archived))) ? <View style={s.notice}><Text style={s.error}>This project cannot be used to create a room.</Text><Button title="All rooms" variant="secondary" onPress={()=>router.setParams({createProject:undefined,projectServer:undefined})}/></View> : null}
+    {creating && (!params.createProject || (!!project && !!projectServer && projectFeature && !project.private && !project.archived)) ? <RoomManage server={server} bots={list?.bots ?? []} projectContext={params.createProject && project && projectServer && projectFeature ? {server:projectServer,project} : undefined} onClose={() => { setCreating(false); router.setParams({createProject:undefined,projectServer:undefined}); }} onSaved={id => { setCreating(false); router.setParams({createProject:undefined,projectServer:undefined}); router.push({ pathname:'/rooms', params:{ room:id } }); }} /> : null}
   </Screen>;
 }
 
@@ -68,7 +79,8 @@ function RoomConversation({ server, roomId, online, owner }: { server: Server; r
   const [older,setOlder]=useState<Cursor | null>(null); const [error,setError]=useState('');
   const draftId=`room-${roomId}`;
   const [text,setText]=useState(()=>useApp.getState().drafts[`${server.id}:${draftId}`]??''); const textRef=useRef(text);
-  const [manage,setManage]=useState(false); const [busy,setBusy]=useState(false); const [confirm,setConfirm]=useState(false);
+  const [manage,setManage]=useState(false); const [moveProject,setMoveProject]=useState(false); const [busy,setBusy]=useState(false); const [confirm,setConfirm]=useState(false);
+  const projectFeature=useApp(st=>projectRoomsSupported(st.runtime[server.id]?.info?.features));
   const [history,setHistory]=useState(false);
   const [refresh,setRefresh]=useState(0); const [revoked,setRevoked]=useState(false); const [follow,setFollow]=useState(true);
   const cursor=useRef<Cursor | null>(null); const mutation=useRef(0); const alive=useRef(true); const scroll=useRef<FlashListRef<RoomEvent>>(null);
@@ -160,7 +172,8 @@ function RoomConversation({ server, roomId, online, owner }: { server: Server; r
     </View>}
     </View>
     <Sheet visible={confirm} title="Stop room" onClose={()=>setConfirm(false)}><View style={s.sheetBody}><Footnote>Stops queued and active turns after the worker acknowledges cancellation.</Footnote><Button title="Stop room" variant="danger" loading={busy} disabled={!online||!owner||revoked} onPress={()=>void action('stop')}/><Button title="Keep working" variant="secondary" onPress={()=>setConfirm(false)}/></View></Sheet>
-    {manage && room ? <RoomManage server={server} room={room} bots={room.available_profiles} onClose={()=>setManage(false)} onSaved={()=>{setManage(false);setRefresh(x=>x+1);}}/>:null}
+    {manage && room ? <RoomManage server={server} room={room} bots={room.available_profiles} onClose={()=>setManage(false)} onSaved={()=>{setManage(false);setRefresh(x=>x+1);}} onMoveProject={owner && online && projectFeature && !room.archived ? ()=>{setManage(false);setMoveProject(true);} : undefined}/>:null}
+    {moveProject && room && owner && projectFeature ? <RoomProjectPicker server={server} room={room} onClose={()=>setMoveProject(false)}/>:null}
   </View>}</KeyboardViewport>;
 }
 
@@ -174,20 +187,28 @@ function PendingAction({item,disabled,onAction}:{item:RoomAction;disabled:boolea
   return <View style={s.notice}><Text style={s.body}>{kind==='approval'?summary||'A bot needs approval to continue.':'A bot turn needs an explicit retry.'}</Text>{disabled?<Text style={s.meta}>An owner can respond while connected.</Text>:<View style={s.wrap}>{kind==='approval'?<><Button title="Allow once" onPress={()=>onAction('approve',{...coordinates,choice:'once'})}/><Button title="Deny" variant="secondary" onPress={()=>onAction('approve',{...coordinates,choice:'deny'})}/></>:<Button title="Retry this turn" onPress={()=>onAction('retry',coordinates)}/>}</View>}</View>;
 }
 
-function RoomManage({server,room,bots,onClose,onSaved}:{server:Server;room?:Room;bots:RoomBot[];onClose:()=>void;onSaved:(id:string)=>void}) {
+function RoomManage({server,room,bots,onClose,onSaved,onMoveProject,projectContext}:{server:Server;room?:Room;bots:RoomBot[];onClose:()=>void;onSaved:(id:string)=>void;onMoveProject?:()=>void;projectContext?:{server:Server;project:Project}}) {
   const s=useStyles();const t=useTheme();const {height}=useWindowDimensions(); const online=useApp(st=>st.network&&st.runtime[server.id]?.status==='online'); const owner=useApp(st=>isOwner(st.runtime[server.id]));
-  const [title,setTitle]=useState(room?.title??'');const [selected,setSelected]=useState(room?.members.map(m=>m.profile)??[] as string[]);const [readers,setReaders]=useState(room?.readers??[]);
+  const [title,setTitle]=useState(room?.title??'');const [selected,setSelected]=useState(room?.members.map(m=>m.profile)??(projectContext ? [projectContext.server.profile??'default'] : []) as string[]);const [readers,setReaders]=useState(room?.readers??[]);
   const [devices,setDevices]=useState<{id:string;name:string;role:string}[]>([]);const [archived,setArchived]=useState(room?.archived??false);const [error,setError]=useState('');const [busy,setBusy]=useState(false);
-  const live=useRef(true);const pending=useRef<{key:string;body:Record<string,any>}|null>(null);
+  const live=useRef(true);const pending=useRef<{key:string;body:Record<string,any>}|null>(null);const inFlight=useRef(false);
   useEffect(()=>{live.current=true;void api<{devices:{id:string;name:string;role:string}[]}>(server,'/api/devices').then(data=>{if(live.current)setDevices(data.devices.filter(x=>x.role!=='owner'));}).catch(()=>{});return()=>{live.current=false;};},[server]);
-  const save=async()=>{if(!online||!owner||busy)return;setBusy(true);const body={title,bots:selected,...(room?{revision:room.revision,readers,archived}:{})};const key=JSON.stringify(body);if(!pending.current||pending.current.key!==key)pending.current={key,body:{...body,operation_id:operationId()}};
-    try{const result=await signedApi<{id?:string}>(server,'POST',room?`${pathOf(room.id)}/update`:'/api/rooms',pending.current.body);if(live.current)onSaved(room?.id??result.id!);}catch(e){if(live.current)setError((e as Error).message);}finally{if(live.current)setBusy(false);}};
+  const save=async()=>{if(!online||!useApp.getState().network||!owner||busy||inFlight.current)return;
+    const current=projectContext ? useApp.getState().runtime[projectContext.server.id] : undefined;
+    const target=projectContext ? current?.projects?.projects.find(p=>p.id===projectContext.project.id) : undefined;
+    if(projectContext && (!canCreateRoomInProject(target,current?.info?.features) || current?.status!=='online')) {setError('This project is no longer available. Reopen it and try again.');return;}
+    inFlight.current=true;setBusy(true);const body={title,bots:selected,...(room?{revision:room.revision,readers,archived}:projectContext?{project_id:projectContext.project.id,revision:target!.revision}:{})};const key=JSON.stringify(room ? body : {title,bots:selected,project_id:projectContext?.project.id??null});if(!pending.current||pending.current.key!==key)pending.current={key,body:{...body,operation_id:operationId()}};
+    try{const result=room ? await signedApi<{id?:string;filed?:boolean;file_error?:string}>(server,'POST',`${pathOf(room.id)}/update`,pending.current.body) : await createProjectRoom(projectContext?.server??server,pending.current.body);
+      if(live.current){if(projectContext && result.filed!==true) useApp.getState().toast({serverId:server.id,title:"Room created, but it couldn't be added to the project",body:result.file_error ?? 'You can move it into a project from room settings.'}); onSaved(room?.id??result.id!);}}
+    catch(e){if(live.current)setError((e as Error).message);}finally{inFlight.current=false;if(live.current)setBusy(false);}};
   return <Sheet visible title={room?'Room settings':'Create a room'} onClose={onClose}><View style={[s.sheetBody,{height:Math.max(180,Math.min(580,height-180))}]}><ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{gap:14,paddingBottom:16}}>
     <Field accessibilityLabel="Room title" placeholder="Room title" value={title} onChangeText={setTitle} maxLength={80}/>
+    {projectContext ? <Text style={s.meta}>This room will be filed in {projectContext.project.name}. Include {projectContext.server.bot.title} in the roster.</Text> : null}
+    {onMoveProject ? <Button title="Move to project…" variant="secondary" onPress={onMoveProject} disabled={!online||!owner||busy}/> : null}
     <SectionHeader title="Bots" right={<Text style={s.meta}>{selected.length} of 2–6</Text>} />{bots.map(bot=><Tap key={bot.name} accessibilityRole="checkbox" accessibilityState={{checked:selected.includes(bot.name),disabled:!bot.served&&!selected.includes(bot.name)}} disabled={!bot.served&&!selected.includes(bot.name)} style={s.choice} onPress={()=>setSelected(old=>old.includes(bot.name)?old.filter(x=>x!==bot.name):[...old,bot.name])}><Text style={[s.body,s.flex]}>{bot.title}{!bot.served?' · Unavailable':''}</Text><Text style={{color:t.colors.accent}}>{selected.includes(bot.name)?'Selected':'Add'}</Text></Tap>)}
     {room?<><Text style={s.meta}>Changing bots stops the discussion; earlier messages stay readable.</Text><Text style={s.body}>Devices with read access</Text><Text style={s.meta}>Owners manage all rooms. Invited members have read-only access.</Text>{devices.map(device=><Tap key={device.id} accessibilityRole="checkbox" accessibilityState={{checked:readers.includes(device.id)}} style={s.choice} onPress={()=>setReaders(old=>old.includes(device.id)?old.filter(x=>x!==device.id):[...old,device.id])}><Text style={[s.body,s.flex]}>{device.name}</Text><Text style={s.chipText}>{readers.includes(device.id)?'Can read':'Invite'}</Text></Tap>)}<Button title={archived?'Restore room':'Archive room'} variant="secondary" onPress={()=>setArchived(x=>!x)}/><Text style={s.meta}>{archived?'Will be archived after Save. Pending work must stop first.':'Active room'}</Text></>:null}
     {error?<Text style={s.error}>{error}</Text>:null}
-    </ScrollView><Button title={room?'Save changes':'Create room'} loading={busy} disabled={!online||!owner||!title.trim()||selected.length<2||selected.length>6} onPress={()=>void save()}/></View></Sheet>;
+    </ScrollView><Button title={room?'Save changes':'Create room'} loading={busy} disabled={!online||!owner||!title.trim()||selected.length<2||selected.length>6||(!!projectContext&&!selected.includes(projectContext.server.profile??'default'))} onPress={()=>void save()}/></View></Sheet>;
 }
 
 const useStyles=makeStyles(t=>({
