@@ -7,13 +7,32 @@ key of the source Winglet's inbound message path hands Hermes. No command is exe
 decides. Collected by the "Plugin tests with Hermes" CI job; skipped where Hermes isn't installed.
 """
 import asyncio
+import os
+import sys
 from types import SimpleNamespace
 
 import pytest
 
 pytest.importorskip("gateway.run_turn_runner")
-pytest.importorskip("gateway.run")
-from gateway.run import GatewayRunner
+
+
+def _gateway_runner():
+    """Import Hermes's gateway runner without keeping what its import writes process-wide
+    (``_HERMES_GATEWAY``, ``HERMES_QUIET``, its dotenv, ``sys.path``): those change how the other
+    Hermes integration tests in this run behave."""
+    env, path = dict(os.environ), list(sys.path)
+    try:
+        from gateway.run import GatewayRunner
+    except ImportError:
+        pytest.skip("gateway.run is not importable", allow_module_level=True)
+    finally:
+        os.environ.clear()
+        os.environ.update(env)
+        sys.path[:] = path
+    return GatewayRunner
+
+
+GatewayRunner = _gateway_runner()
 from gateway.run_turn_runner import TurnRunner
 from tools import approval, approval_context
 from plugin import bridge
