@@ -14,7 +14,7 @@ import type { ApprovalMode, MemberTools, ToolsInfo } from '../lib/types';
 
 const MODES: { value: ApprovalMode; label: string; about: string }[] = [
   { value: 'manual', label: 'Ask me', about: 'It asks before it runs anything risky, like deleting files or installing software.' },
-  { value: 'smart', label: 'Smart', about: 'An auxiliary model reviews risky commands, approving some and asking you about the rest.' },
+  { value: 'smart', label: 'Smart', about: 'A second model approves commands it judges low-risk and asks you about the rest.' },
   { value: 'off', label: 'Never ask', about: 'It runs every command without asking. Only for a machine you can afford to lose.' },
 ];
 

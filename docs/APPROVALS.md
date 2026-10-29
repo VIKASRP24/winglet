@@ -23,8 +23,8 @@ ntfy relay.
 When Hermes flags a request as `smart_denied`, the card explains that the Smart guardian blocked
 it. Winglet restricts the card to the choices Hermes supplied among **once** and **deny**; it does
 not add missing choices. The server also rejects other choices for newly created cards. Normal
-approval cards retain their supplied choices. The Tools screen explains that Smart uses an auxiliary
-model; Winglet does not currently claim to detect whether one is configured.
+approval cards retain their supplied choices. The Tools screen explains that Smart uses a second
+model; Winglet does not currently detect whether one is configured.
 
 ## Compatibility with current Hermes
 

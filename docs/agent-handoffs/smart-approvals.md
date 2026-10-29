@@ -1,6 +1,6 @@
 # Smart approvals — partial handoff
 
-Status: **not verified end to end; changes uncommitted**. This work covers Part 1 only; it does not add any approval bypass.
+Status: **partial; not verified end to end**. This work covers Part 1 only; it does not add any approval bypass.
 
 ## Contract and changes
 
@@ -15,4 +15,4 @@ The plugin adapter regression uses a fake prompt and queue, and checks both stor
 
 The full plain plugin suite passed 668 tests with 31 skipped. The full app suite passed 457 tests, typecheck passed and the web export succeeded. The bundled web reference check passed (28 references). See the local report for commands and any later test counts.
 
-**pinned-Hermes: CI only** — no real-Hermes tests were authored or run here. The required pinned source is available only via `git show`, which the worktree permission hook blocked; the non-pinned working copy was not used as a substitute. Smart approve/deny/escalation in chat and Rooms, command execution, missing-model and timeout behavior remain unverified. Rooms currently exposes once/deny controls through a separate worker path; its handling of Smart denial is not established. Pinned source review and real-Hermes integration tests are required before treating this task as complete. CI and physical-device testing were not run. The reviewer must commit and open the PR; no push or PR was made.
+**Pinned Hermes: CI only.** No real-Hermes tests were written here, and the pinned Hermes source was not reviewed. Smart approve, deny and escalation in chats and Rooms, command execution, and behavior with a missing model or a timeout remain unverified. Rooms use a separate worker path, and how it handles a Smart denial is not established. Treat Smart approvals as unproven until real-Hermes integration tests and a phone check cover them.
