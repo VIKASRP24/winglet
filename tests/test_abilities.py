@@ -347,6 +347,127 @@ def test_turns_are_capped_by_their_own_profiles_adapter():
 # -- MCP servers ----------------------------------------------------------------------------------
 
 
+async def test_custom_mcp_route_requires_owner_and_sealed_secrets(client, hub):
+    owner = await pair_phone(client, hub)
+    member = await pair_phone(client, hub, "Alex", role="member")
+    calls = []
+
+    async def save(name, config, secrets, edit):
+        calls.append((name, config, secrets, edit))
+    hub.hermes.save_custom_mcp = save
+    body = {"name": "mine", "transport": "stdio", "command": "node", "args": ["server.js", "--flag"]}
+    assert (await post_signed(client, member, "/api/mcp/custom", body)).status == 403
+    assert (await client.post("/api/mcp/custom", json=body, headers=owner.auth)).status == 403
+    info = await (await client.get("/api/server-key")).json()
+    body["sealed"] = seal(info, "mcp-env", {"env": {"TOKEN": "secret-value"}}, owner.id)
+    response = await post_signed(client, owner, "/api/mcp/custom", body)
+    assert response.status == 200
+    assert calls == [("mine", {"transport": "stdio", "command": "node", "args": ["server.js", "--flag"]}, {"env": {"TOKEN": "secret-value"}}, False)]
+    assert "secret-value" not in json.dumps(await response.json())
+    assert all("secret-value" not in entry["summary"] for entry in hub.store.list_audit())
+    assert hub.mcp_changed
+    assert (await send_signed(client, member, "PUT", "/api/mcp/custom/mine", body)).status == 403
+
+
+async def test_custom_mcp_rejects_plaintext_secrets_and_wrong_seal(client, hub):
+    owner = await pair_phone(client, hub)
+    info = await (await client.get("/api/server-key")).json()
+    base = {"name": "mine", "transport": "http", "url": "https://example.com/mcp", "auth": "header"}
+    async def save(*args):
+        pass
+    hub.hermes.save_custom_mcp = save
+    assert (await post_signed(client, owner, "/api/mcp/custom", {**base, "headers": {"Authorization": "private"}})).status == 400
+    wrong = seal(info, "provider-key", {"headers": {"Authorization": "private"}}, owner.id)
+    assert (await post_signed(client, owner, "/api/mcp/custom", {**base, "sealed": wrong})).status == 400
+    sealed = seal(info, "mcp-env", {"headers": {"Authorization": "private"}}, owner.id)
+    assert (await post_signed(client, owner, "/api/mcp/custom", {**base, "sealed": sealed})).status == 200
+    hub.store._exec("UPDATE devices SET platform = 'web' WHERE id = ?", (owner.id,))
+    hub.connection = {"mode": "quick", "url": "https://x.trycloudflare.com"}
+    assert (await post_signed(client, owner, "/api/mcp/custom", {**base, "sealed": sealed})).status == 403
+
+
+@pytest.mark.parametrize("url,allowed", [
+    ("https://example.com/mcp", True), ("http://127.0.0.1:8000/mcp", True),
+    ("http://192.168.1.2/mcp", True), ("http://10.0.0.2/mcp", True),
+    ("http://example.com/mcp", False), ("http://8.8.8.8/mcp", False),
+    ("file:///tmp/a", False), ("https://user:password@example.com/", False),
+    ("https://example.com/?token=secret", False),
+])
+async def test_custom_mcp_remote_url_policy(client, hub, url, allowed):
+    owner = await pair_phone(client, hub)
+    async def save(*args):
+        pass
+    hub.hermes.save_custom_mcp = save
+    response = await post_signed(client, owner, "/api/mcp/custom", {"name": "mine", "transport": "http", "url": url, "auth": "none"})
+    assert response.status == (200 if allowed else 400)
+
+
+async def test_custom_mcp_persists_lists_preserves_secrets_and_refuses_collisions(monkeypatch):
+    import contextlib
+    import sys
+    import types
+
+    configured = {"existing": {"command": "old"}}
+    plugin = {"plugin-server": "plugin"}
+    mcp = types.ModuleType("hermes_cli.mcp_config")
+    mcp._get_mcp_servers = lambda: configured
+    def save(name, config):
+        configured[name] = config
+        return True
+    mcp._save_mcp_server = save
+    common = types.ModuleType("hermes_cli.web_routers._common")
+    common.config_write_scope = lambda profile: contextlib.nullcontext()
+    helpers = types.ModuleType("tui_gateway.mcp_rpc_helpers")
+    helpers.server_configs_with_sources = lambda servers: ({**servers, **{n: {} for n in plugin}}, plugin)
+    for name, module in [("hermes_cli", types.ModuleType("hermes_cli")), ("hermes_cli.mcp_config", mcp),
+                         ("hermes_cli.web_routers", types.ModuleType("hermes_cli.web_routers")),
+                         ("hermes_cli.web_routers._common", common), ("tui_gateway", types.ModuleType("tui_gateway")),
+                         ("tui_gateway.mcp_rpc_helpers", helpers)]:
+        monkeypatch.setitem(sys.modules, name, module)
+    monkeypatch.setattr(hermes_api, "_profile_scope", contextlib.nullcontext)
+    async def catalog():
+        return {"entries": [{"name": "catalog"}]}
+    monkeypatch.setattr(hermes_api, "mcp_catalog", catalog)
+    config = {"transport": "stdio", "command": "node", "args": ["server.js", "--option=a b"]}
+    await hermes_api.save_custom_mcp("mine", config, {"env": {"SECRET": "private"}}, False)
+    assert configured["mine"]["command"] == "node"
+    assert configured["mine"]["args"] == ["server.js", "--option=a b"]
+    assert configured["mine"]["env"] == {"SECRET": "private"}
+    await hermes_api.save_custom_mcp("mine", config, {}, True)
+    assert configured["mine"]["env"] == {"SECRET": "private"}
+    remote = {"transport": "http", "url": "https://example.com/mcp", "auth": "header"}
+    await hermes_api.save_custom_mcp("remote", remote, {"headers": {"X-Key": "private"}}, False)
+    assert configured["remote"]["strict_redirect_headers"] is True
+    await hermes_api.save_custom_mcp("remote", remote, {}, True)
+    assert configured["remote"]["strict_redirect_headers"] is True
+    with pytest.raises(hermes_api.HermesRefused):
+        await hermes_api.save_custom_mcp("remote", {**remote, "url": "https://other.example/mcp"}, {}, True)
+    assert configured["remote"]["url"] == "https://example.com/mcp"
+    for name in ("catalog", "EXISTING", "plugin-server"):
+        with pytest.raises(hermes_api.HermesRefused):
+            await hermes_api.save_custom_mcp(name, config, {}, False)
+    with pytest.raises(hermes_api.HermesRefused):
+        await hermes_api.save_custom_mcp("existing", config, {}, True)
+    # A removed server's OAuth tokens stay stored under its name; a new OAuth server must not inherit them.
+    signed_in = {"old-oauth"}
+    mcp._oauth_tokens_present = lambda name: name in signed_in
+    oauth = {"transport": "http", "url": "https://new.example/mcp", "auth": "oauth"}
+    with pytest.raises(hermes_api.HermesRefused):
+        await hermes_api.save_custom_mcp("old-oauth", oauth, {}, False)
+    assert "old-oauth" not in configured
+    await hermes_api.save_custom_mcp("fresh-oauth", oauth, {}, False)
+    assert configured["fresh-oauth"]["auth"] == "oauth"
+
+    class Router:
+        async def list_mcp_servers(self):
+            return {"servers": [{"name": "mine", "transport": "stdio", "command": "node", "args": ["private"],
+                                 "env": {"SECRET": "private"}, "source": "config"}]}
+    monkeypatch.setattr(hermes_api, "_router", lambda name: Router())
+    result = await hermes_api.mcp_servers()
+    assert result[0]["custom"] is True
+    assert "private" not in json.dumps(result)
+
+
 async def test_adding_a_catalog_server_with_its_keys_sealed(client, hub):
     owner = await pair_phone(client, hub)
     info = await (await client.get("/api/server-key")).json()

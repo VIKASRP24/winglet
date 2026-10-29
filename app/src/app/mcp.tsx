@@ -32,6 +32,7 @@ function McpScreen() {
   const [error, setError] = useState('');
   const [open, setOpen] = useState<McpServer | null>(null);
   const [adding, setAdding] = useState<McpCatalogEntry | null>(null);
+  const [custom, setCustom] = useState<'new' | McpServer | null>(null);
   const [job, setJob] = useState<Job | null>(null);
   const [reloading, setReloading] = useState(false);
 
@@ -107,6 +108,7 @@ function McpScreen() {
           )}
 
           <SectionHeader title="Add a server" />
+          <ListGroup><ListRow title="Add your own server…" onPress={() => setCustom('new')} /></ListGroup>
           <SearchField value={query} onChangeText={setQuery} placeholder="Search Linear, Notion, GitHub…" />
           <Footnote>Approved servers from Hermes.</Footnote>
           {!catalog ? <Skeleton height={64} radius={16} style={{ marginTop: 12 }} /> : available.length ? (
@@ -124,7 +126,10 @@ function McpScreen() {
         </Animated.View>
       )}
 
-      <ServerSheet server={server} item={open} onClose={() => setOpen(null)} onChanged={() => { setOpen(null); load(); }} />
+      <ServerSheet server={server} item={open} onClose={() => setOpen(null)} onEdit={(x) => { setOpen(null); setCustom(x); }} onChanged={() => { setOpen(null); load(); }} />
+      {custom ? <CustomSheet server={server} item={custom} onClose={() => setCustom(null)} onSaved={() => {
+        setCustom(null); load(); haptic.success(); toast('Server saved', 'Reconnect to start using it.');
+      }} /> : null}
       <AddSheet server={server} entry={adding} onClose={() => setAdding(null)}
         onJob={(j) => { setAdding(null); setJob(j); }}
         onAdded={(e) => {
@@ -143,7 +148,7 @@ function McpScreen() {
 }
 
 /** One server: test it, sign in, or remove it. */
-function ServerSheet({ server, item, onClose, onChanged }: { server: Server; item: McpServer | null; onClose: () => void; onChanged: () => void }) {
+function ServerSheet({ server, item, onClose, onEdit, onChanged }: { server: Server; item: McpServer | null; onClose: () => void; onEdit: (item: McpServer) => void; onChanged: () => void }) {
   const t = useTheme();
   const s = useStyles();
   const [last, setLast] = useState<McpServer | null>(null);
@@ -253,6 +258,7 @@ function ServerSheet({ server, item, onClose, onChanged }: { server: Server; ite
           </View>
         ) : null}
 
+        {x.custom ? <Button title="Edit server" variant="secondary" onPress={() => onEdit(x)} /> : null}
         <Button title="Test connection" variant="secondary" loading={busy === 'test'} disabled={!!busy} onPress={runTest} />
         {signsIn(x) ? <Button title={signIn?.status === 'approved' ? 'Sign in again' : 'Sign in'} loading={busy === 'sign-in'}
           disabled={!!busy} onPress={startSignIn} /> : null}
@@ -260,6 +266,97 @@ function ServerSheet({ server, item, onClose, onChanged }: { server: Server; ite
           <ConfirmButton title="Remove" confirmTitle="Tap again to remove it and its keys" icon={<Trash2 size={16} color={t.colors.danger} />}
             loading={busy === 'remove'} onConfirm={remove} accessibilityLabel={`Remove ${x.name}`} />
         ) : null}
+      </View>
+    </Sheet>
+  );
+}
+
+/** Custom entries never return secrets or arguments; re-enter arguments when editing. */
+function CustomSheet({ server, item, onClose, onSaved }: { server: Server; item: 'new' | McpServer | null; onClose: () => void; onSaved: () => void }) {
+  const t = useTheme();
+  const s = useStyles();
+  const [last, setLast] = useState<'new' | McpServer | null>(null);
+  const [name, setName] = useState('');
+  const [transport, setTransport] = useState<'http' | 'stdio'>('http');
+  const [url, setUrl] = useState('');
+  const [command, setCommand] = useState('');
+  const [args, setArgs] = useState('');
+  const [auth, setAuth] = useState<'none' | 'header' | 'oauth'>('none');
+  const [header, setHeader] = useState('');
+  const [headerValue, setHeaderValue] = useState('');
+  const [env, setEnv] = useState('');
+  const [review, setReview] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  if (item && item !== last) {
+    setLast(item); setName(item === 'new' ? '' : item.name);
+    setTransport(item !== 'new' && item.transport === 'stdio' ? 'stdio' : 'http');
+    setUrl(item === 'new' ? '' : item.url ?? ''); setCommand(item === 'new' ? '' : item.command ?? '');
+    setArgs(''); setAuth(item !== 'new' && item.auth === 'oauth' ? 'oauth' : item !== 'new' && item.auth === 'header' ? 'header' : 'none');
+    setHeader(''); setHeaderValue(''); setEnv(''); setReview(false); setError('');
+  }
+  if (!last) return null;
+  const editing = last !== 'new';
+  const argList = args ? args.split('\n') : [];
+  const save = async () => {
+    setBusy(true); setError('');
+    try {
+      const body: Record<string, unknown> = { name, transport, ...(transport === 'http' ? { url, auth } : { command, args: argList }) };
+      const secret: Record<string, unknown> = {};
+      if (transport === 'http' && auth === 'header' && (header || headerValue)) {
+        if (!header || !headerValue) throw new Error('Enter both the header name and value.');
+        secret.headers = { [header]: headerValue };
+      }
+      if (transport === 'stdio' && env) {
+        const values: Record<string, string> = {};
+        for (const line of env.split('\n')) {
+          const index = line.indexOf('=');
+          if (index < 1) throw new Error('Enter one NAME=value per line.');
+          values[line.slice(0, index)] = line.slice(index + 1);
+        }
+        secret.env = values;
+      }
+      if (Object.keys(secret).length) {
+        const key = await serverKey(server.url, server.fingerprint);
+        if (!key) throw new Error('Update Winglet on the server first.');
+        body.sealed = seal(key, 'mcp-env', server.deviceId, secret);
+      }
+      await signedApi(server, editing ? 'PUT' : 'POST', editing ? `/api/mcp/custom/${encodeURIComponent(name)}` : '/api/mcp/custom', body);
+      setHeaderValue(''); setEnv(''); onSaved();
+    } catch (e) { setError((e as Error).message); haptic.error(); } finally { setBusy(false); }
+  };
+  return (
+    <Sheet visible={!!item} onClose={onClose} title={review ? 'Confirm server command' : editing ? 'Edit custom server' : 'Add your own server'}>
+      <View style={{ gap: 14, paddingHorizontal: 4 }}>
+        {review ? <>
+          <Text style={s.description}>This program runs on your server. Check the exact executable and arguments before confirming.</Text>
+          <Text selectable style={s.code}>{JSON.stringify([command, ...argList], null, 2)}</Text>
+          <Button title="Confirm and save" loading={busy} disabled={busy} onPress={save} />
+          <Button title="Back" variant="ghost" disabled={busy} onPress={() => setReview(false)} />
+        </> : <>
+          <Field label="Server name" value={name} onChangeText={setName} editable={!editing} autoCapitalize="none" />
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            <Button title="Remote HTTP" variant={transport === 'http' ? 'primary' : 'secondary'} onPress={() => setTransport('http')} />
+            <Button title="Local command" variant={transport === 'stdio' ? 'primary' : 'secondary'} onPress={() => setTransport('stdio')} />
+          </View>
+          {transport === 'http' ? <>
+            <Field label="Server URL" value={url} onChangeText={setUrl} autoCapitalize="none" autoCorrect={false} placeholder="https://example.com/mcp" />
+            <Text style={s.note}>HTTPS is required except for loopback or private LAN addresses. HTTP traffic, including keys, is not encrypted.</Text>
+            <Text style={s.note}>Sign-in method</Text>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+              {(['none', 'header', 'oauth'] as const).map((a) => <Button key={a} title={a === 'none' ? 'None' : a === 'header' ? 'Header key' : 'OAuth'} variant={auth === a ? 'primary' : 'secondary'} onPress={() => setAuth(a)} />)}
+            </View>
+            {auth === 'header' ? <><Field label="Header name" value={header} onChangeText={setHeader} autoCapitalize="none" />
+              <Field label="Header value" value={headerValue} onChangeText={setHeaderValue} secureTextEntry autoCapitalize="none" hint={editing ? 'Leave both fields blank to keep the existing header.' : undefined} /></> : null}
+            {auth === 'oauth' ? <Text style={s.note}>After saving, open the server and choose Sign in.</Text> : null}
+          </> : <>
+            <Field label="Command" value={command} onChangeText={setCommand} autoCapitalize="none" autoCorrect={false} />
+            <Field label="Arguments" value={args} onChangeText={setArgs} multiline autoCapitalize="none" hint={editing ? 'One argument per line. Re-enter all arguments; they are not returned by the server.' : 'One argument per line. Do not put secrets here.'} />
+            <Field label="Environment values" value={env} onChangeText={setEnv} multiline secureTextEntry autoCapitalize="none" hint="One NAME=value per line. Leave blank to keep existing values when editing." />
+          </>}
+          <Button title={transport === 'stdio' ? 'Review command' : 'Save server'} loading={busy} disabled={busy || !name} onPress={() => transport === 'stdio' ? setReview(true) : save()} />
+        </>}
+        {error ? <Text style={[s.note, { color: t.colors.danger }]}>{error}</Text> : null}
       </View>
     </Sheet>
   );

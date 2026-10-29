@@ -1232,11 +1232,80 @@ def _skills_changed() -> None:
         logger.debug("[winglet] skills prompt cache unavailable", exc_info=True)
 
 
+def _skill_source_url(*values) -> Optional[str]:
+    """Only expose an explicit browser URL, never infer one or expose URL credentials."""
+    from urllib.parse import urlsplit
+    for value in values:
+        if not isinstance(value, str) or not value or any(c.isspace() for c in value):
+            continue
+        try:
+            parsed = urlsplit(value)
+            if parsed.scheme in ("http", "https") and parsed.hostname and parsed.username is None and parsed.password is None and not parsed.query and not parsed.fragment:
+                return value
+        except ValueError:
+            continue
+    return None
+
+
+def _skill_identifier(value) -> Optional[str]:
+    """Strip URL credentials and parameters from display identifiers."""
+    from urllib.parse import urlsplit, urlunsplit
+    if not isinstance(value, str):
+        return None
+    if "://" not in value:
+        return value
+    try:
+        if any(c.isspace() or c == "\\" for c in value):
+            return None
+        parsed = urlsplit(value)
+        if parsed.scheme not in ("http", "https") or not parsed.hostname:
+            return None
+        _ = parsed.port
+        return urlunsplit((parsed.scheme, parsed.netloc.rsplit("@", 1)[-1], parsed.path, "", ""))
+    except ValueError:
+        return None
+
+
+OFFICIAL_SKILLS_REPO = "NousResearch/hermes-agent"
+
+
+def _official_skill_url(identifier) -> Optional[str]:
+    """Official skills live in Hermes's GitHub repo at optional-skills/<category>/<skill>, the path their
+    identifier (official/<category>/<skill>) names; Hermes's own live-repo fallback reads the same path."""
+    import re
+    if not isinstance(identifier, str) or not identifier.startswith("official/"):
+        return None
+    rel = identifier.removeprefix("official/")
+    if not re.fullmatch(r"[\w.-]+(?:/[\w.-]+)+", rel) or any(part in (".", "..") for part in rel.split("/")):
+        return None
+    return f"https://github.com/{OFFICIAL_SKILLS_REPO}/tree/main/optional-skills/{rel}"
+
+
 async def list_skills() -> List[dict]:
-    """Installed skills: {name, description, category, enabled, provenance (bundled|hub|agent), usage}."""
+    """Installed skills and source metadata recorded in this profile's hub lock."""
     rows = await _route(_router("skills").get_skills)
     keys = ("name", "description", "category", "enabled", "provenance", "usage")
-    return [{k: row.get(k) for k in keys} for row in rows]
+    installed = {}
+    if any(row.get("provenance") == "hub" for row in rows):
+        try:
+            from tools.skills_hub import HubLockFile
+            with _profile_scope():
+                installed = {entry.get("name"): entry for entry in HubLockFile().list_installed()}
+        except (ImportError, OSError, ValueError, TypeError, KeyError):
+            logger.debug("[winglet] skill source metadata unavailable", exc_info=True)
+    result = []
+    for row in rows:
+        item = {k: row.get(k) for k in keys}
+        entry = installed.get(row.get("name"), {}) if row.get("provenance") == "hub" else {}
+        metadata = entry.get("metadata") or {}
+        if not isinstance(metadata, dict):
+            metadata = {}
+        identifier = entry.get("identifier")
+        item["identifier"] = _skill_identifier(identifier)
+        item["source_url"] = (_skill_source_url(metadata.get("source_url"), metadata.get("url"), entry.get("identifier"))
+                              or _official_skill_url(entry.get("identifier")))
+        result.append(item)
+    return result
 
 
 async def set_skill_enabled(name: str, enabled: bool) -> None:
@@ -1255,8 +1324,19 @@ async def skill_content(name: str) -> dict:
 async def skill_catalog() -> List[dict]:
     """Hermes's official optional skills, which ship with Hermes and install without the network."""
     data = await _route(_router("skills").list_official_skills)
+    import re
     keys = ("name", "description", "identifier", "category", "tags", "installed")
-    return [{k: row.get(k) for k in keys} for row in data.get("skills") or []]
+    result = []
+    for row in data.get("skills") or []:
+        repo = row.get("repo")
+        # Hermes's official metadata uses an owner/repo slug, not a browser URL.
+        safe_repo = repo if isinstance(repo, str) and re.fullmatch(r"[\w.-]+/[\w.-]+", repo) else _skill_source_url(repo)
+        url = _skill_source_url(row.get("source_url"), repo)
+        if url is None and row.get("source") == "official" and safe_repo == OFFICIAL_SKILLS_REPO:
+            url = _official_skill_url(row.get("identifier"))
+        result.append({**{k: row.get(k) for k in keys}, "source_repo": safe_repo,
+                       "source_path": row.get("path"), "source_url": url})
+    return result
 
 
 async def start_skill_install(identifier: str) -> str:
@@ -1425,7 +1505,80 @@ async def mcp_servers() -> List[dict]:
     """Configured MCP servers, without their arguments or environment (they can carry keys)."""
     data = await _route(_router("mcp").list_mcp_servers)
     keys = ("name", "transport", "url", "command", "auth", "enabled", "source", "plugin")
-    return [{k: s.get(k) for k in keys} for s in data.get("servers") or []]
+    @_scoped
+    def custom_names():
+        from hermes_cli.mcp_config import _get_mcp_servers
+        return {name: ("oauth" if cfg.get("auth") == "oauth" else "header" if cfg.get("headers") else None)
+                for name, cfg in _get_mcp_servers().items() if isinstance(cfg, dict) and cfg.get("winglet_custom") is True}
+    custom = custom_names()
+    return [{**{k: s.get(k) for k in keys},
+             "auth": custom.get(s.get("name")) if s.get("name") in custom and s.get("source") != "plugin" else s.get("auth"),
+             "custom": s.get("name") in custom and s.get("source") != "plugin"}
+            for s in data.get("servers") or []]
+
+
+async def save_custom_mcp(name: str, config: dict, secrets: dict, edit: bool) -> None:
+    """Persist only Winglet-created entries, without executing their command."""
+    import asyncio as _asyncio
+    catalog = await mcp_catalog()
+    if not edit and any(e.get("name", "").casefold() == name.casefold() for e in catalog["entries"]):
+        raise HermesRefused("That name belongs to a catalog server.")
+
+    @_scoped
+    def save():
+        try:
+            from hermes_cli.mcp_config import _get_mcp_servers, _save_mcp_server
+            from hermes_cli.web_routers._common import config_write_scope
+            from tui_gateway.mcp_rpc_helpers import server_configs_with_sources
+        except Exception as exc:
+            raise HermesUnavailable("Custom MCP configuration unavailable") from exc
+        with config_write_scope(_BOT.get() or None):
+            configured = _get_mcp_servers()
+            servers, plugins = server_configs_with_sources(configured)
+            matches = [n for n in servers if n.casefold() == name.casefold()]
+            current = configured.get(name)
+            if edit:
+                if plugins.get(name) or not isinstance(current, dict) or current.get("winglet_custom") is not True:
+                    raise HermesRefused("Only custom servers can be edited.")
+                # Until the OAuth token store can be invalidated safely, don't let an
+                # existing server name be repointed or change its transport.
+                if bool(current.get("url")) != (config["transport"] == "http") or (
+                        current.get("url") and current["url"] != config.get("url")):
+                    raise HermesRefused("The server address cannot be changed; use a new server name.")
+            elif matches:
+                raise HermesRefused("A server with that name already exists.")
+            elif config["transport"] == "http" and config["auth"] == "oauth":
+                # Hermes keeps OAuth tokens by server name and removing a server leaves them behind, so a new
+                # server reusing the name would be sent the old server's sign-in.
+                try:
+                    from hermes_cli.mcp_config import _oauth_tokens_present
+                    stale = _oauth_tokens_present(name)
+                except Exception as exc:
+                    raise HermesUnavailable("Couldn't check for an earlier sign-in under this name") from exc
+                if stale:
+                    raise HermesRefused("An earlier server with this name is still signed in. Use a different name.")
+            result = {"winglet_custom": True, "enabled": current.get("enabled", True) if edit else True}
+            if config["transport"] == "http":
+                result.update(url=config["url"], strict_redirect_headers=True)
+                if config["auth"] == "oauth":
+                    result["auth"] = "oauth"
+                elif config["auth"] == "header":
+                    headers = secrets.get("headers")
+                    if headers is None and edit and current.get("url"):
+                        headers = current.get("headers")
+                    if not headers:
+                        raise HermesRefused("Enter a header key and value.")
+                    result["headers"] = headers
+            else:
+                result.update(command=config["command"], args=config["args"])
+                env = secrets.get("env")
+                if env is None and edit and current.get("command"):
+                    env = current.get("env")
+                if env:
+                    result["env"] = env
+            if not _save_mcp_server(name, result):
+                raise HermesRefused("That server configuration was rejected.")
+    await _asyncio.to_thread(save)
 
 
 async def set_mcp_enabled(name: str, enabled: bool) -> None:
