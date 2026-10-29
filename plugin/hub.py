@@ -143,6 +143,7 @@ ROUTE_POLICY = {
     "h_projects": "device", "h_project_create": "signed", "h_project_update": "signed",
     "h_project_order": "signed", "h_project_delete": "signed", "h_project_chat_create": "signed",
     "h_project_chat_move": "signed", "h_project_chat_remove": "signed",
+    "h_project_rooms": "device", "h_project_room_move": "owner_signed",
     "h_models": "owner", "h_providers": "owner", "h_identity": "owner", "h_memory": "owner", "h_usage": "owner",
     "h_model_default": "owner_signed", "h_provider_key": "owner_signed", "h_provider_key_delete": "owner_signed",
     "h_identity_put": "owner_signed", "h_memory_edit": "owner_signed",
@@ -368,6 +369,8 @@ class Hub:
         r.add_post("/api/projects/{project_id}/chats", self.h_project_chat_create)
         r.add_post("/api/projects/{project_id}/chats/{chat_id}", self.h_project_chat_move)
         r.add_delete("/api/projects/{project_id}/chats/{chat_id}", self.h_project_chat_remove)
+        r.add_get("/api/project-rooms", self.h_project_rooms)
+        r.add_post("/api/project-rooms/{room_id}", self.h_project_room_move)
         r.add_get("/api/config/catalog", self.h_config_catalog)
         r.add_post("/api/config/preview", self.h_config_preview)
         r.add_post("/api/config/apply", self.h_config_apply)
@@ -1119,6 +1122,57 @@ class Hub:
     async def h_projects(self, request: web.Request) -> web.Response:
         device = self._require(request)
         return _json({"projects": self.projects.snapshot(device, _BOT.get())})
+
+    async def h_project_rooms(self, request: web.Request) -> web.Response:
+        from .rooms import RoomError
+        device = self._require(request)
+        if self.rooms is None:
+            return _error(409, "Rooms are unavailable.")
+        try:
+            device = self.rooms._actor(device)
+            with self.rooms._db() as db:
+                rows = db.execute('SELECT * FROM winglet_rooms WHERE archived=0').fetchall()
+                visible = {row['id']: dict(row) for row in rows
+                           if device['role'] == 'owner' or device['id'] in json.loads(row['readers'])}
+            projects = {p['id'] for p in self.projects.all_projects(device, _BOT.get())}
+            links = self.store._all('SELECT room_id, project_id FROM project_rooms')
+            result = []
+            for link in links:
+                room = visible.get(link['room_id'])
+                if room and link['project_id'] in projects:
+                    members = json.loads(room['members'])
+                    result.append({'id': room['id'], 'title': room['title'], 'project_id': link['project_id'],
+                                   'bot_missing': (_BOT.get() or 'default') not in [m['profile'] for m in members]})
+            return _json({'rooms': result})
+        except RoomError as exc:
+            return _error(exc.status, str(exc))
+
+    async def h_project_room_move(self, request: web.Request) -> web.Response:
+        from .rooms import RoomError
+        device = self._require(request)
+        if self.rooms is None:
+            return _error(409, "Rooms are unavailable.")
+        body = await self._project_body(request)
+        room_id = request.match_info['room_id']
+        try:
+            device = self.rooms._actor(device, owner=True)
+            with self.rooms._db() as db:
+                db.execute('BEGIN IMMEDIATE')
+                try:
+                    row = self.rooms._room(db, device, room_id)
+                    room = {**row, 'members': json.loads(row['members'])}
+                    result = self.projects.move_room(device, _BOT.get(), room_id, body.get('project_id'), body, room)
+                finally:
+                    db.rollback()
+        except RoomError as exc:
+            return _error(exc.status, str(exc))
+        except ProjectConflict as exc:
+            return _json({'error': str(exc), 'projects': self.projects.snapshot(device, _BOT.get())}, status=exc.status)
+        except ProjectError as exc:
+            return _error(exc.status, str(exc))
+        await self.broadcast_projects(_BOT.get())
+        self.audit('project.room.move', device, f'moved room {room_id}')
+        return _json({**result, 'projects': self.projects.snapshot(device, _BOT.get())})
 
     async def h_project_create(self, request: web.Request) -> web.Response:
         body = await self._project_body(request)

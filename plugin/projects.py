@@ -55,6 +55,13 @@ CREATE TABLE IF NOT EXISTS project_chats (
     updated_at REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS project_chats_project ON project_chats (project_id, position);
+CREATE TABLE IF NOT EXISTS project_rooms (
+    room_id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS project_rooms_project ON project_rooms (project_id);
 CREATE TABLE IF NOT EXISTS project_layout (
     bot TEXT NOT NULL DEFAULT '',
     scope TEXT NOT NULL,
@@ -368,6 +375,7 @@ class Projects:
                                            (project_id,))["n"]
                 # Only the folder and its memberships go: every chat and message stays.
                 self.store._exec("DELETE FROM project_chats WHERE project_id = ?", (project_id,))
+                self.store._exec("DELETE FROM project_rooms WHERE project_id = ?", (project_id,))
                 self.store._exec("DELETE FROM projects WHERE id = ?", (project_id,))
                 self._bump_layout(bot, self.scope_of(device))
             return {"deleted": project_id, "released_chats": int(released)}
@@ -490,6 +498,54 @@ class Projects:
                                                        "chat_id": chat_id}, run)
 
     # -- helpers -------------------------------------------------------------------------
+
+    def move_room(self, device: Dict[str, Any], bot: Optional[str], room_id: str,
+                  project_id: Optional[str], payload: Dict[str, Any], room: Dict[str, Any]) -> Dict[str, Any]:
+        """Atomically file a validated room and record the project retry receipt.
+
+        The caller must hold the room metadata transaction while validating the room and
+        calling this method, so its roster and archive state cannot change concurrently.
+        """
+        if device.get("role") != "owner":
+            raise ProjectForbidden("Only an owner can file a room.")
+        def run():
+            current = self.store._one("SELECT project_id FROM project_rooms WHERE room_id = ?", (room_id,))
+            source = None
+            if current:
+                source = self.store._one("SELECT * FROM projects WHERE id = ?", (current["project_id"],))
+            expected = payload.get("from_project_id") or None
+            if (source["id"] if source else None) != expected:
+                raise ProjectConflict("That room moved on another device. Reload it and try again.")
+            if source and _revision(payload.get("from_revision")) != int(source["revision"]):
+                raise ProjectConflict("That room's project changed on another device. Reload it and try again.")
+            target = None
+            if project_id:
+                target = self._visible_project(device, project_id, bot)
+                if target["owner_device"] is not None:
+                    raise ProjectForbidden("Rooms can only be filed in shared owner projects.")
+                if target["archived"] or room.get("archived"):
+                    raise ProjectError("Restore the project and room before filing it.")
+                if (bot or "default") not in [m.get("profile") for m in room.get("members", [])]:
+                    raise ProjectError("The project's bot must participate in the room.")
+                if _revision(payload.get("revision")) != int(target["revision"]):
+                    raise ProjectConflict("This project changed on another device. Reload it and try again.")
+            if source and target and source["id"] == target["id"]:
+                return {"moved": False, "project_id": project_id}
+            now = _now()
+            if target:
+                self.store._exec("INSERT INTO project_rooms (room_id, project_id, created_at, updated_at) "
+                                 "VALUES (?, ?, ?, ?) ON CONFLICT(room_id) DO UPDATE SET "
+                                 "project_id=excluded.project_id, updated_at=excluded.updated_at",
+                                 (room_id, project_id, now, now))
+            else:
+                self.store._exec("DELETE FROM project_rooms WHERE room_id = ?", (room_id,))
+            for project in (source, target):
+                if project:
+                    self.store._exec("UPDATE projects SET revision=revision+1, updated_at=? WHERE id=?",
+                                     (now, project["id"]))
+            return {"moved": True, "project_id": project_id}
+        return self._run_op(device, bot, "room.move", {**payload, "room_id": room_id,
+                                                         "project_id": project_id}, run)
 
     def _next_chat_position(self, project_id: str) -> int:
         row = self.store._one("SELECT COALESCE(MAX(position), 0) AS p FROM project_chats WHERE project_id = ?",
