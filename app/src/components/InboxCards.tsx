@@ -62,7 +62,8 @@ function ApprovalCard({ serverId, item, compact, embedded, bare }: { serverId: s
   const [confirmAlways, setConfirmAlways] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const acting = useRef(false);
-  const choices = [...(item.payload.choices ?? [])].sort((a, b) => CHOICE_ORDER.indexOf(a) - CHOICE_ORDER.indexOf(b));
+  const choices = [...(item.payload.choices ?? [])].filter((choice) => !item.payload.smart_denied || choice === 'once' || choice === 'deny')
+    .sort((a, b) => CHOICE_ORDER.indexOf(a) - CHOICE_ORDER.indexOf(b));
   const pending = item.status === 'pending';
   const label = (c: string) => item.payload.labels?.[c] ?? (c === 'once' ? 'Allow once' : c === 'session' ? 'Allow this session' : c === 'always' ? 'Always allow' : 'Deny');
   const act = async (choice: string) => {
@@ -85,6 +86,7 @@ function ApprovalCard({ serverId, item, compact, embedded, bare }: { serverId: s
         <View style={{ flex: 1, minWidth: 0 }}>
           <Text style={s.title}>{item.payload.description || (pending ? 'Run this command?' : 'Command request')}</Text>
           {embedded ? <Text style={s.subtitle}>{agoText(item.created_at)}</Text> : null}
+          {item.payload.smart_denied ? <Text style={s.waitingText}>The Smart guardian blocked this command. You can allow it once or deny it.</Text> : null}
         </View>
       </View>
       <View style={s.command}>

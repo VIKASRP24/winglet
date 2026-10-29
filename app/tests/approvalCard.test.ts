@@ -54,6 +54,16 @@ test('Always allow opens confirmation and cannot submit from the first tap', () 
   assert.deepEqual(h.calls, []);
 });
 
+test('smart denial explains guardian decision and only offers once or deny', () => {
+  const h = harness();
+  Object.assign(h.item.payload, { smart_denied: true, choices: ['once', 'session', 'always', 'deny'] });
+  const card = h.render();
+  const children = card.props.children;
+  assert.equal(children[0].props.children[1].props.children[2].props.children, 'The Smart guardian blocked this command. You can allow it once or deny it.');
+  const actions = children.find((child: any) => Array.isArray(child?.props?.children) && child.props.children.some((b: any) => b?.props?.title === 'Allow once'));
+  assert.deepEqual(Array.from(actions.props.children, (b: any) => b.props.title), ['Allow once', 'Deny']);
+});
+
 test('rapid approval taps submit once; a stale expired request cannot submit', async () => {
   const h = harness();
   const button = h.render().props.children[2].props.children[0];
