@@ -7,7 +7,7 @@ import ts from 'typescript';
 const exports: any = {};
 vm.runInNewContext(ts.transpileModule(readFileSync(new URL('../src/lib/abilities.ts', import.meta.url), 'utf8'), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
-}).outputText, { exports, Map, Set });
+}).outputText, { exports, Map, Set, URL });
 
 test('categories and catalog names read as words', () => {
   assert.equal(exports.categoryLabel('software-development'), 'Software development');
@@ -21,6 +21,13 @@ test('search needs every word, anywhere', () => {
   assert.ok(exports.matches('git merge', 'arbiter', 'Neutral arbiter for merge conflicts', ['Git', 'Kanban']));
   assert.ok(!exports.matches('git rebase', 'arbiter', 'merge conflicts', ['Git']));
   assert.ok(exports.matches('  ', 'anything'));
+});
+
+test('skill sources use explicit safe URLs and otherwise identify the source', () => {
+  assert.equal(exports.skillSource({ identifier: 'official/a/one', source_url: 'https://example.org/one' }).url, 'https://example.org/one');
+  assert.equal(exports.skillSource({ identifier: 'official/a/two', source_url: null }).label, 'official/a/two');
+  assert.equal(exports.skillSource({ identifier: 'official/a/two', source_url: 'javascript:alert(1)' }).url, null);
+  assert.equal(exports.skillSource({ provenance: 'hub', identifier: 'github/test', source_url: 'https://example.org/source' }).url, 'https://example.org/source');
 });
 
 test('skills group by category, sorted', () => {

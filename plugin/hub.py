@@ -161,7 +161,7 @@ ROUTE_POLICY = {
     "h_toolset_toggle": "owner_signed", "h_approvals": "owner_signed", "h_member_tools": "owner_signed",
     "h_mcp_install": "owner_signed", "h_mcp_toggle": "owner_signed", "h_mcp_remove": "owner_signed",
     "h_mcp_test": "owner_signed", "h_mcp_reload": "owner_signed", "h_mcp_sign_in": "owner_signed",
-    "h_mcp_sign_in_cancel": "owner_signed",
+    "h_mcp_sign_in_cancel": "owner_signed", "h_mcp_custom": "owner_signed",
     "h_rotate_token": "signed",
     "h_sync_snapshot": "device",
     "h_device_update": "owner_signed", "h_device_delete": "owner_signed", "h_pairing_code": "owner_signed",
@@ -459,6 +459,8 @@ class Hub:
         r.add_get("/api/mcp", self.h_mcp)
         r.add_post("/api/mcp", self.h_mcp_install)
         r.add_get("/api/mcp/catalog", self.h_mcp_catalog)
+        r.add_post("/api/mcp/custom", self.h_mcp_custom)
+        r.add_put("/api/mcp/custom/{name}", self.h_mcp_custom)
         r.add_post("/api/mcp/reload", self.h_mcp_reload)
         r.add_get("/api/mcp/sign-in/{flow_id}", self.h_mcp_sign_in_status)
         r.add_delete("/api/mcp/sign-in/{flow_id}", self.h_mcp_sign_in_cancel)
@@ -3433,6 +3435,72 @@ class Hub:
         await self._call(h.install_mcp, name, env)
         self.mcp_changed = True
         self.audit("mcp.add", device, summary)
+        return _json({"ok": True, "needs_reload": True})
+
+    async def h_mcp_custom(self, request: web.Request) -> web.Response:
+        device = self._require(request)
+        body = await self._body(request)
+        edit = request.method == "PUT"
+        name = request.match_info.get("name") if edit else body.get("name")
+        if not isinstance(name, str) or not _ABILITY_NAME.fullmatch(name):
+            return _error(400, "Invalid server name.")
+        if edit and body.get("name", name) != name:
+            return _error(400, "A server cannot be renamed.")
+        transport = body.get("transport")
+        if transport == "http":
+            url = body.get("url")
+            try:
+                if not isinstance(url, str) or len(url) > 2048 or re.search(r"[\s\x00-\x1f\\]", url):
+                    raise ValueError()
+                parts = urlsplit(url)
+                if parts.scheme not in ("http", "https") or not parts.hostname or parts.username is not None or parts.password is not None or parts.query or parts.fragment:
+                    raise ValueError()
+                _ = parts.port
+                if parts.scheme == "http":
+                    host = parts.hostname.lower()
+                    if host != "localhost":
+                        ip = ipaddress.ip_address(host)
+                        networks = (ipaddress.ip_network("10.0.0.0/8"), ipaddress.ip_network("172.16.0.0/12"),
+                                    ipaddress.ip_network("192.168.0.0/16"), ipaddress.ip_network("fc00::/7"))
+                        if not ip.is_loopback and not any(ip.version == net.version and ip in net for net in networks):
+                            raise ValueError()
+            except ValueError:
+                return _error(400, "Use HTTPS, or HTTP with a loopback or private LAN address. URLs cannot contain credentials, queries or fragments.")
+            auth = body.get("auth", "none")
+            if auth not in ("none", "header", "oauth"):
+                return _error(400, "Invalid sign-in method.")
+            config = {"transport": "http", "url": url, "auth": auth}
+        elif transport == "stdio":
+            command, args = body.get("command"), body.get("args", [])
+            if not isinstance(command, str) or not command.strip() or len(command) > 1024 or any(ord(c) < 32 for c in command) or not isinstance(args, list) or len(args) > 64 or any(not isinstance(a, str) or len(a) > 4096 or any(ord(c) < 32 for c in a) for a in args):
+                return _error(400, "Enter a command and a list of arguments.")
+            config = {"transport": "stdio", "command": command, "args": args}
+        else:
+            return _error(400, "Choose HTTP or stdio.")
+        if any(key in body for key in ("env", "headers", "header_value")):
+            return _error(400, "Secrets must be sealed.")
+        secret_data = {}
+        if body.get("sealed"):
+            refused = self._secrets_refused(device)
+            if refused is not None:
+                return refused
+            try:
+                secret_data = self.keys.unseal_json(str(body["sealed"]), "mcp-env", device["id"])
+            except (keys.SealError, ValueError):
+                return _error(400, "The keys couldn't be opened.")
+        if not isinstance(secret_data, dict) or set(secret_data) - {"env", "headers"}:
+            return _error(400, "Invalid secrets.")
+        for kind, values in secret_data.items():
+            if not isinstance(values, dict) or len(values) > 32 or (kind == "env" and transport != "stdio") or (kind == "headers" and (transport != "http" or config.get("auth") != "header")):
+                return _error(400, "Invalid secrets.")
+            pattern = r"[A-Za-z_][A-Za-z0-9_]*" if kind == "env" else r"[A-Za-z0-9!#$%&'*+.^_`|~-]+"
+            if any(not isinstance(k, str) or not re.fullmatch(pattern, k) or not isinstance(v, str) or not v or len(v) > 4096 or any(ord(c) < 32 or ord(c) == 127 for c in v) for k, v in values.items()):
+                return _error(400, "Invalid secret name or value.")
+        if transport == "http" and config["auth"] == "header" and not edit and not secret_data.get("headers"):
+            return _error(400, "Enter a header key and value.")
+        await self._call(self._need_hermes().save_custom_mcp, name, config, secret_data, edit)
+        self.mcp_changed = True
+        self.audit("mcp.edit" if edit else "mcp.add", device, f"{'updated' if edit else 'added'} {name}")
         return _json({"ok": True, "needs_reload": True})
 
     def _mark_mcp_changed(self) -> None:

@@ -345,10 +345,12 @@ export type Skill = {
   enabled: boolean;
   provenance: 'bundled' | 'hub' | 'agent';
   usage: number;
+  identifier?: string | null;
+  source_url?: string | null;
 };
 
 /** One of Hermes's official optional skills. */
-export type CatalogSkill = { name: string; description: string; identifier: string; category: string; tags: string[]; installed: boolean };
+export type CatalogSkill = { name: string; description: string; identifier: string; category: string; tags: string[]; installed: boolean; source_url?: string | null; source_repo?: string | null; source_path?: string | null };
 
 /** A group of tools the agent can use when it works through Winglet. */
 export type Toolset = { name: string; label: string; description: string; enabled: boolean; configured: boolean };
@@ -370,6 +372,7 @@ export type McpServer = {
   enabled: boolean;
   source: 'config' | 'plugin';
   plugin: string | null;
+  custom?: boolean;
 };
 
 export type McpInfo = { servers: McpServer[]; needs_reload: boolean; can_reload: boolean };

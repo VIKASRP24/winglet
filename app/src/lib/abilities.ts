@@ -37,6 +37,17 @@ export function byCategory<T extends { name: string; category?: string | null }>
     .map(([title, list]) => ({ title, items: list.sort((a, b) => a.name.localeCompare(b.name)) }));
 }
 
+/** Show a link only for an explicit, safe browser URL; otherwise show the identifier. */
+export function skillSource(item: { identifier?: string | null; source_url?: string | null; provenance?: string }): { label: string; url: string | null } {
+  const value = item.source_url ?? '';
+  let url: string | null = null;
+  try {
+    const parsed = new URL(value);
+    if ((parsed.protocol === 'https:' || parsed.protocol === 'http:') && parsed.hostname && !parsed.username && !parsed.password && !parsed.search) url = value;
+  } catch { /* Missing or invalid source URLs are not links. */ }
+  return { label: item.identifier || (item.provenance === 'hub' ? 'Installed' : 'Official'), url };
+}
+
 /** Where a server lives, in a few words: its host, or the command it runs. */
 export function serverPlace(s: { url: string | null; command: string | null; args?: string[] }): string {
   if (s.url) {
