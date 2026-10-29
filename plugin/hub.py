@@ -143,6 +143,7 @@ ROUTE_POLICY = {
     "h_projects": "device", "h_project_create": "signed", "h_project_update": "signed",
     "h_project_order": "signed", "h_project_delete": "signed", "h_project_chat_create": "signed",
     "h_project_chat_move": "signed", "h_project_chat_remove": "signed",
+    "h_project_rooms": "device", "h_project_room_move": "owner_signed",
     "h_models": "owner", "h_providers": "owner", "h_identity": "owner", "h_memory": "owner", "h_usage": "owner",
     "h_model_default": "owner_signed", "h_provider_key": "owner_signed", "h_provider_key_delete": "owner_signed",
     "h_identity_put": "owner_signed", "h_memory_edit": "owner_signed",
@@ -368,6 +369,8 @@ class Hub:
         r.add_post("/api/projects/{project_id}/chats", self.h_project_chat_create)
         r.add_post("/api/projects/{project_id}/chats/{chat_id}", self.h_project_chat_move)
         r.add_delete("/api/projects/{project_id}/chats/{chat_id}", self.h_project_chat_remove)
+        r.add_get("/api/project-rooms", self.h_project_rooms)
+        r.add_post("/api/project-rooms/{room_id}", self.h_project_room_move)
         r.add_get("/api/config/catalog", self.h_config_catalog)
         r.add_post("/api/config/preview", self.h_config_preview)
         r.add_post("/api/config/apply", self.h_config_apply)
@@ -798,7 +801,8 @@ class Hub:
         branching = bool(self.branching is not None and self._has(self.branching, "available")
                          and self.branching.available())
         return {"phone_tools": self.phone_tools is not None, "routine_history": self.routine_history is not None, "routine_run_detail": self.routine_history is not None, **(self.context_insights.capabilities() if self.context_insights else {k:False for k in ("session_context","context_compression","provider_limits","usage_insights")}), "rooms": self.rooms is not None and self.rooms.available(),
-                "room_mentions": self.rooms is not None and self.rooms.available(), "rooms_member_write": False,
+                "room_mentions": self.rooms is not None and self.rooms.available(),
+                "project_rooms": self.rooms is not None and self.rooms.available(), "rooms_member_write": False,
                 "wear_relay": True, "wear_reply": True, "encrypted_push": True, "webpush": True, "ntfy": True, "approvals": True, "questions": True, "uploads": True, "voice": True,
                 "replies": True, "export": True, "mute": True, "status_updates": True, "roles": True,
                 "signed_actions": True, "ws_auth": True, "pickers": True, "agent": self.hermes is not None,
@@ -1119,6 +1123,57 @@ class Hub:
     async def h_projects(self, request: web.Request) -> web.Response:
         device = self._require(request)
         return _json({"projects": self.projects.snapshot(device, _BOT.get())})
+
+    async def h_project_rooms(self, request: web.Request) -> web.Response:
+        from .rooms import RoomError
+        device = self._require(request)
+        if self.rooms is None:
+            return _error(409, "Rooms are unavailable.")
+        try:
+            links = self.store._all('SELECT pr.room_id, p.id AS project_id, p.bot, p.revision '
+                                    'FROM project_rooms pr JOIN projects p ON p.id=pr.project_id '
+                                    'WHERE p.owner_device IS NULL')
+            visible = self.rooms.project_room_metadata(device, [link['room_id'] for link in links])
+            result = []
+            for link in links:
+                room = visible.get(link['room_id'])
+                if room:
+                    members = json.loads(room['members'])
+                    result.append({'id': room['id'], 'title': room['title'], 'project_id': link['project_id'],
+                                   'project_bot': link['bot'] or None, 'project_revision': link['revision'],
+                                   'bot_missing': (link['bot'] or 'default') not in [m['profile'] for m in members]})
+            return _json({'rooms': result})
+        except RoomError as exc:
+            return _error(exc.status, str(exc))
+
+    async def h_project_room_move(self, request: web.Request) -> web.Response:
+        from .rooms import RoomError
+        device = self._require(request)
+        if self.rooms is None:
+            return _error(409, "Rooms are unavailable.")
+        body = await self._project_body(request)
+        room_id = request.match_info['room_id']
+        try:
+            device = self.rooms._actor(device, owner=True)
+            with self.rooms._db() as db:
+                db.execute('BEGIN IMMEDIATE')
+                try:
+                    row = self.rooms._room(db, device, room_id)
+                    room = {**row, 'members': json.loads(row['members'])}
+                    result = self.projects.move_room(device, _BOT.get(), room_id, body.get('project_id'), body, room)
+                finally:
+                    db.rollback()
+        except RoomError as exc:
+            return _error(exc.status, str(exc))
+        except ProjectConflict as exc:
+            return _json({'error': str(exc), 'projects': self.projects.snapshot(device, _BOT.get())}, status=exc.status)
+        except ProjectError as exc:
+            return _error(exc.status, str(exc))
+        await self.broadcast_projects(_BOT.get())
+        if result.get('from_project_id') and result.get('from_project_bot') != _BOT.get():
+            await self.broadcast_projects(result.get('from_project_bot'))
+        self.audit('project.room.move', device, f'moved room {room_id}')
+        return _json({**result, 'projects': self.projects.snapshot(device, _BOT.get())})
 
     async def h_project_create(self, request: web.Request) -> web.Response:
         body = await self._project_body(request)

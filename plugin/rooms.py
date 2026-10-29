@@ -142,6 +142,22 @@ class Rooms:
         return {'rooms': rooms, 'bots': self.catalog() if device['role'] == 'owner' else [],
                 'can_create': device['role'] == 'owner', 'member_write_supported': False}
 
+    def project_room_metadata(self, device, room_ids):
+        """Return active metadata only after the standard room read-grant check."""
+        device = self._actor(device)
+        visible = {}
+        with self._db() as db:
+            for room_id in room_ids:
+                try:
+                    row = self._room(db, device, room_id)
+                except RoomError as exc:
+                    if exc.status == 404:
+                        continue
+                    raise
+                if not row['archived']:
+                    visible[room_id] = row
+        return visible
+
     def state(self, device, room_id):
         device = self._actor(device)
         with self._db() as db:
