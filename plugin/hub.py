@@ -801,7 +801,8 @@ class Hub:
         branching = bool(self.branching is not None and self._has(self.branching, "available")
                          and self.branching.available())
         return {"phone_tools": self.phone_tools is not None, "routine_history": self.routine_history is not None, "routine_run_detail": self.routine_history is not None, **(self.context_insights.capabilities() if self.context_insights else {k:False for k in ("session_context","context_compression","provider_limits","usage_insights")}), "rooms": self.rooms is not None and self.rooms.available(),
-                "room_mentions": self.rooms is not None and self.rooms.available(), "rooms_member_write": False,
+                "room_mentions": self.rooms is not None and self.rooms.available(),
+                "project_rooms": self.rooms is not None and self.rooms.available(), "rooms_member_write": False,
                 "wear_relay": True, "wear_reply": True, "encrypted_push": True, "webpush": True, "ntfy": True, "approvals": True, "questions": True, "uploads": True, "voice": True,
                 "replies": True, "export": True, "mute": True, "status_updates": True, "roles": True,
                 "signed_actions": True, "ws_auth": True, "pickers": True, "agent": self.hermes is not None,
@@ -1129,20 +1130,18 @@ class Hub:
         if self.rooms is None:
             return _error(409, "Rooms are unavailable.")
         try:
-            device = self.rooms._actor(device)
-            with self.rooms._db() as db:
-                rows = db.execute('SELECT * FROM winglet_rooms WHERE archived=0').fetchall()
-                visible = {row['id']: dict(row) for row in rows
-                           if device['role'] == 'owner' or device['id'] in json.loads(row['readers'])}
-            projects = {p['id'] for p in self.projects.all_projects(device, _BOT.get())}
-            links = self.store._all('SELECT room_id, project_id FROM project_rooms')
+            links = self.store._all('SELECT pr.room_id, p.id AS project_id, p.bot, p.revision '
+                                    'FROM project_rooms pr JOIN projects p ON p.id=pr.project_id '
+                                    'WHERE p.owner_device IS NULL')
+            visible = self.rooms.project_room_metadata(device, [link['room_id'] for link in links])
             result = []
             for link in links:
                 room = visible.get(link['room_id'])
-                if room and link['project_id'] in projects:
+                if room:
                     members = json.loads(room['members'])
                     result.append({'id': room['id'], 'title': room['title'], 'project_id': link['project_id'],
-                                   'bot_missing': (_BOT.get() or 'default') not in [m['profile'] for m in members]})
+                                   'project_bot': link['bot'] or None, 'project_revision': link['revision'],
+                                   'bot_missing': (link['bot'] or 'default') not in [m['profile'] for m in members]})
             return _json({'rooms': result})
         except RoomError as exc:
             return _error(exc.status, str(exc))
@@ -1171,6 +1170,8 @@ class Hub:
         except ProjectError as exc:
             return _error(exc.status, str(exc))
         await self.broadcast_projects(_BOT.get())
+        if result.get('from_project_id') and result.get('from_project_bot') != _BOT.get():
+            await self.broadcast_projects(result.get('from_project_bot'))
         self.audit('project.room.move', device, f'moved room {room_id}')
         return _json({**result, 'projects': self.projects.snapshot(device, _BOT.get())})
 
