@@ -98,8 +98,76 @@ async def signed(client, phone, method, path, payload):
 async def test_project_rooms_capability_tracks_room_availability(room_http):
     _, hub, _ = room_http
     assert hub.features()['project_rooms'] is True
+    assert hub.features()['project_rooms_sync'] is True
     hub.rooms = None
     assert hub.features()['project_rooms'] is False
+    assert hub.features()['project_rooms_sync'] is False
+
+
+@pytest.mark.parametrize('bot', [None, 'other'])
+async def test_room_metadata_update_refreshes_its_project_scope(room_http, bot):
+    client, hub, rooms = room_http
+    owner = await pair_phone(client, hub)
+    device = hub.store.get_device(owner.id)
+    project = hub.projects.create(device, bot, {'name': 'Work', 'client_id': 'metadata-project'})['project']
+    hub.projects.move_room(device, bot, 'room-one', project['id'],
+                           {'revision': 1, 'client_id': 'metadata-room-move'},
+                           {'members': [{'profile': 'default'}, {'profile': 'other'}]})
+    notices = []
+    async def broadcast(scope):
+        notices.append(scope)
+    hub.broadcast_projects = broadcast
+    rooms.mutate = lambda *args: {'updated': True}
+    response = await signed(client, owner, 'POST', '/api/rooms/room-one/update', {})
+    assert response.status == 200, await response.text()
+    assert notices == [bot]
+    assert hub.projects.snapshot(device, bot)['projects'][0]['revision'] == 2
+
+
+async def test_room_access_revocation_notifies_member_without_room_metadata(room_http):
+    client, hub, rooms = room_http
+    owner = await pair_phone(client, hub)
+    member = await pair_phone(client, hub, role='member')
+    device = hub.store.get_device(owner.id)
+    project = hub.projects.create(device, None, {'name': 'Work', 'client_id': 'revocation-project'})['project']
+    hub.projects.move_room(device, None, 'room-one', project['id'],
+                           {'revision': 1, 'client_id': 'revocation-room-move'},
+                           {'members': [{'profile': 'default'}, {'profile': 'other'}]})
+    with rooms._db() as db:
+        db.execute('UPDATE winglet_rooms SET readers=?', (json.dumps([member.id]),))
+    assert len((await (await client.get('/api/project-rooms', headers=member.auth)).json())['rooms']) == 1
+    ws = await client.ws_connect('/api/ws')
+    await ws.send_json({'type': 'auth', 'token': member.token})
+    await ws.receive_json()
+    def revoke(*args):
+        with rooms._db() as db:
+            db.execute("UPDATE winglet_rooms SET readers='[]', title='New secret title'")
+        return {'updated': True}
+    rooms.mutate = revoke
+    response = await signed(client, owner, 'POST', '/api/rooms/room-one/update', {})
+    assert response.status == 200, await response.text()
+    event = await ws.receive_json(timeout=2)
+    assert event['type'] == 'project.sync'
+    assert 'Secret room' not in json.dumps(event) and 'New secret title' not in json.dumps(event)
+    assert (await (await client.get('/api/project-rooms', headers=member.auth)).json())['rooms'] == []
+    await ws.close()
+
+
+async def test_room_refresh_notification_failure_does_not_fail_saved_update(room_http):
+    client, hub, rooms = room_http
+    owner = await pair_phone(client, hub)
+    device = hub.store.get_device(owner.id)
+    project = hub.projects.create(device, None, {'name': 'Work', 'client_id': 'failed-notice-project'})['project']
+    hub.projects.move_room(device, None, 'room-one', project['id'],
+                           {'revision': 1, 'client_id': 'failed-notice-move'},
+                           {'members': [{'profile': 'default'}, {'profile': 'other'}]})
+    async def fail(*args):
+        raise RuntimeError('notification unavailable')
+    hub.broadcast_projects = fail
+    rooms.mutate = lambda *args: {'updated': True}
+    response = await signed(client, owner, 'POST', '/api/rooms/room-one/update', {})
+    assert response.status == 200
+    assert await response.json() == {'updated': True}
 
 
 async def test_project_room_route_grants_archive_and_deletion(room_http):

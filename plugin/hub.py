@@ -809,7 +809,8 @@ class Hub:
                          and self.branching.available())
         return {"phone_tools": self.phone_tools is not None, "routine_history": self.routine_history is not None, "routine_run_detail": self.routine_history is not None, **(self.context_insights.capabilities() if self.context_insights else {k:False for k in ("session_context","context_compression","provider_limits","usage_insights")}), "rooms": self.rooms is not None and self.rooms.available(),
                 "room_mentions": self.rooms is not None and self.rooms.available(),
-                "project_rooms": self.rooms is not None and self.rooms.available(), "rooms_member_write": False,
+                "project_rooms": self.rooms is not None and self.rooms.available(),
+                "project_rooms_sync": self.rooms is not None and self.rooms.available(), "rooms_member_write": False,
                 "chat_approval_bypass": self.chat_approval_bypass is not None,
                 "wear_relay": True, "wear_reply": True, "encrypted_push": True, "webpush": True, "ntfy": True, "approvals": True, "questions": True, "uploads": True, "voice": True,
                 "replies": True, "export": True, "mute": True, "status_updates": True, "roles": True,

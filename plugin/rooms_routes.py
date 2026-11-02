@@ -49,6 +49,17 @@ async def _run(request, kind):
             if kind == 'create' and body.get('project_id') is not None and not isinstance(body['project_id'], str):
                 raise RoomError('Invalid project.', 400)
             result=await asyncio.to_thread(hub.rooms.mutate,device,action,room_id,body)
+            if action == 'update':
+                # Title, roster, archive and reader changes affect the project room list
+                # without changing a project's revision. Invalidate it through the same
+                # per-device snapshot channel as room moves, in its owning bot scope.
+                try:
+                    link = hub.store._one('SELECT p.bot FROM project_rooms pr '
+                                          'JOIN projects p ON p.id=pr.project_id WHERE pr.room_id=?', (room_id,))
+                    if link:
+                        await hub.broadcast_projects(link['bot'] or None)
+                except Exception:
+                    logger.exception('[winglet] could not broadcast room metadata changes')
             if kind == 'create' and body.get('project_id'):
                 from .hub import _BOT
                 bot = _BOT.get()
