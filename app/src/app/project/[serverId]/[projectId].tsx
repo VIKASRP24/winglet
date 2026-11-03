@@ -8,7 +8,10 @@ import { AgentFace } from '../../../components/AgentFace';
 import { ChatMenu } from '../../../components/ChatMenu';
 import { ChatView } from '../../../components/ChatView';
 import { ConnectionBanner } from '../../../components/ConnectionBanner';
-import { ArrowLeft, CircleAlert, Hash, MessageSquarePlus, MoreHorizontal, Pin, Search } from '../../../components/icons';
+import { ArrowLeft, CircleAlert, Hash, MessageSquarePlus, MoreHorizontal, Pin, Search, Users } from '../../../components/icons';
+import { useProjectRooms } from '../../../features/rooms/useProjectRooms';
+import { projectRoomsSupported } from '../../../features/rooms/model';
+import { isOwner } from '../../../lib/store';
 import { Button, IconButton, SearchField, SectionHeader, Skeleton, Tap } from '../../../components/ui';
 import { ago } from '../../../lib/agent';
 import { api } from '../../../lib/api';
@@ -45,6 +48,7 @@ function ProjectView({ server, projectId, wide }: { server: Server; projectId: s
   const snapshot = useApp((st) => st.runtime[server.id]?.projects);
   const chats = useApp((st) => st.runtime[server.id]?.chats);
   const runtime = useApp((st) => st.runtime[server.id] ?? undefined);
+  const network = useApp((st) => st.network);
   const drafts = useApp((st) => st.drafts);
   const draftFiles = useApp((st) => st.draftFiles);
   const replyTo = useApp((st) => st.replyTo);
@@ -58,19 +62,25 @@ function ProjectView({ server, projectId, wide }: { server: Server; projectId: s
   const [creating, setCreating] = useState(false);
   const [activeId, setActiveId] = useState<string | undefined>();
   const [showArchived, setShowArchived] = useState(false);
+  const { rooms, error: roomsError, reload: reloadRooms } = useProjectRooms(server);
+  const roomFeature = projectRoomsSupported(runtime?.info?.features);
+  const owner = isOwner(runtime);
   const project = snapshot?.projects.find((p) => p.id === projectId);
   const allChats = useMemo(() => projectChats(snapshot, projectId, chats), [snapshot, projectId, chats]);
   const archivedSet = useMemo(() => new Set(archivedChats), [archivedChats]);
   const hiddenArchived = allChats.filter((c) => archivedSet.has(chatKey(server.id, c.id))).length;
   const list = showArchived ? allChats : allChats.filter((c) => !archivedSet.has(chatKey(server.id, c.id)));
   const feature = !!runtime?.info?.features?.projects;
-  const online = feature && runtime?.status === 'online';
+  const online = feature && network && runtime?.status === 'online';
   const q = query.trim();
   const draftOf = (chat: Chat) => draftPreview(drafts[`${server.id}:${chat.id}`], draftFiles[`${server.id}:${chat.id}`], !!replyTo[`${server.id}:${chat.id}`]);
   const visible = list.filter((chat) => matchesProjectSearch(chat, q, draftOf(chat)));
   const found = useProjectSearch(server, projectId, online ? q : '');
   const scoped = new Set(list.map((c) => c.id));
   const results = found.results.filter((r) => scoped.has(r.chat.id));
+  const projectRooms = rooms.filter(room => room.project_id === projectId
+    && (room.project_bot || 'default') === (server.profile || 'default')
+    && (!q || room.title.toLowerCase().includes(q.toLowerCase())));
 
   // On a wide screen, keep a chat beside the project list; on a phone the list leads to a pushed chat.
   useEffect(() => {
@@ -164,6 +174,22 @@ function ProjectView({ server, projectId, wide }: { server: Server; projectId: s
             <MessageSquarePlus size={20} color={t.colors.text} />
           </IconButton> : null}
         </View>
+        {roomFeature ? <>
+          <SectionHeader title={q ? 'Matching rooms' : 'Rooms'} right={owner && online && !project.private && !project.archived
+            ? <Button title="New room" size="sm" variant="secondary" onPress={() => {
+              useApp.getState().select(server.id);
+              router.push({ pathname: '/rooms', params: { createProject: projectId, projectServer: server.id } });
+            }} /> : undefined} />
+          {roomsError ? <View><Text style={s.noticeText}>Couldn't load rooms: {roomsError}</Text>
+            <Button title="Reload rooms" size="sm" variant="secondary" onPress={reloadRooms} /></View> : null}
+          {projectRooms.length ? <View style={s.list}>{projectRooms.map(room =>
+            <Tap key={room.id} style={s.row} accessibilityLabel={`Room ${room.title}`} onPress={() => {
+              useApp.getState().select(server.id);
+              router.push({ pathname: '/rooms', params: { room: room.id } });
+            }}><Users size={20} color={t.colors.textSecondary} /><View style={{ flex: 1, minWidth: 0 }}>
+              <Text style={s.rowTitle}>{room.title}</Text><Text style={s.sub}>{room.bot_missing ? 'Room · Project bot no longer participates' : 'Room'}</Text>
+            </View></Tap>)}</View> : null}
+        </> : null}
         <SectionHeader title={q ? 'Matching chats' : 'Chats'} right={<Text style={s.time}>{q ? visible.length : list.length}</Text>} />
         {hiddenArchived ? (
           <Button title={`${showArchived ? 'Hide' : 'Show'} archived chats (${hiddenArchived})`} variant="ghost" size="sm"
@@ -186,7 +212,7 @@ function ProjectView({ server, projectId, wide }: { server: Server; projectId: s
             ))}
           </View>
         ) : null}
-        {q && !visible.length && !results.length && !found.busy ? (
+        {q && !visible.length && !projectRooms.length && !results.length && !found.busy ? (
           <View style={s.empty}>
             <Text style={s.emptyTitle}>Nothing in {project.name} matches “{q}”</Text>
             <Button title="Clear search" variant="secondary" onPress={() => setQuery('')} />

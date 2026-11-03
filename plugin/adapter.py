@@ -253,6 +253,7 @@ class WingletAdapter(BasePlatformAdapter):
             hub.listen = f"{self._host}:{self._port}"
             hub.on_user_message = self._on_user_message
             hub.on_approval = self._on_approval
+            hub.chat_approval_bypass = bridge.chat_approval_bypass(self)
             hub.on_answer = self._on_answer
             hub.hermes_version = hermes_api.hermes_version
             hub.commands_provider = hermes_api.list_commands
@@ -775,7 +776,8 @@ class WingletAdapter(BasePlatformAdapter):
             return SendResult(success=False, error="An active approval request ID is required for buttons")
         item = await hub.add_inbox(
             "approval", prompt.chat_id, "Approval needed", prompt.command,
-            {"command": prompt.command, "description": prompt.description, "choices": prompt.choices,
+            {"command": prompt.command, "description": prompt.description,
+             "choices": [c for c in prompt.choices if c in ("once", "deny")] if prompt.smart_denied else prompt.choices,
              "labels": labels, "styles": styles, "session_key": prompt.session_key,
              "request_id": request_id, "smart_denied": prompt.smart_denied})
         if item is None:

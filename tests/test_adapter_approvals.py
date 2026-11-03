@@ -129,6 +129,38 @@ async def test_missing_or_withdrawn_identity_never_creates_an_actionable_card(ad
     assert adapter._hub._http is None
 
 
+async def test_normal_escalation_keeps_hermes_supplied_choices(adapter, monkeypatch):
+    monkeypatch.setattr(bridge, "queued_approvals", lambda session: [{"request_id": "a", "command": "ls"}])
+    choices = ["once", "session", "always", "deny"]
+    actions = [(c, c, "secondary") for c in choices]
+    assert (await adapter._send_exec_approval_prompt(prompt(
+        metadata={"approval_request_id": "a"}, smart_denied=False, actions=actions, choices=choices))).success
+    payload = adapter._hub.store.pending_items("approval")[0]["payload"]
+    assert payload["smart_denied"] is False
+    assert payload["choices"] == choices
+
+
+async def test_smart_denial_card_does_not_offer_broad_approval(adapter, monkeypatch):
+    monkeypatch.setattr(bridge, "queued_approvals", lambda session: [{"request_id": "a", "command": "ls"}])
+    actions = [("Allow once", "once", "primary"), ("Allow session", "session", "secondary"),
+               ("Always", "always", "secondary"), ("Deny", "deny", "danger")]
+    p = prompt(metadata={"approval_request_id": "a"}, smart_denied=True, actions=actions,
+               choices=["once", "session", "always", "deny"])
+    assert (await adapter._send_exec_approval_prompt(p)).success
+    payload = adapter._hub.store.pending_items("approval")[0]["payload"]
+    assert payload["smart_denied"] is True
+    assert payload["choices"] == ["once", "deny"]
+    calls = []
+    async def respond(item, choice):
+        calls.append(choice)
+        return True
+    adapter._hub.on_approval = respond
+    item = adapter._hub.store.pending_items("approval")[0]
+    assert not (await adapter._hub.respond(item["id"], choice="session"))[0]
+    assert not (await adapter._hub.respond(item["id"], choice="always"))[0]
+    assert calls == []
+
+
 async def test_identical_commands_bind_and_resolve_only_the_supplied_id(adapter, monkeypatch):
     queue = [{"request_id": "a", "command": "ls"}, {"request_id": "b", "command": "ls"}]
     monkeypatch.setattr(bridge, "queued_approvals", lambda session: queue)

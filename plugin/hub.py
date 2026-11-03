@@ -43,7 +43,7 @@ from .store import ROLES, Store, new_id
 
 logger = logging.getLogger(__name__)
 
-VERSION = "0.9.0"
+VERSION = "0.10.0"
 # Wire protocol: bumped only for breaking changes. The app compares these to its own and asks for
 # whichever side is out of date to be updated.
 PROTOCOL = 2
@@ -131,6 +131,7 @@ ROUTE_POLICY = {
     "h_vapid": "public", "h_inbox_respond": "public", "h_server_key": "public", "h_address_check": "public",
     "h_me": "device", "h_connection": "device", "h_connection_status": "device", "h_unpair": "device", "h_chats": "device",
     "h_chat_create": "device", "h_chat_rename": "device", "h_chat_delete": "device", "h_messages": "device",
+    "h_chat_bypass_get": "owner", "h_chat_bypass_delete": "owner_signed",
     "h_message_send": "device", "h_upload": "device", "h_export": "device", "h_commands": "device",
     "h_push_prefs": "device", "h_push_prefs_put": "device", "h_inbox": "device", "h_webpush_subscribe": "device",
     "h_webpush_unsubscribe": "device", "h_ntfy": "device", "h_push_test": "device", "h_device_verify": "device",
@@ -143,6 +144,7 @@ ROUTE_POLICY = {
     "h_projects": "device", "h_project_create": "signed", "h_project_update": "signed",
     "h_project_order": "signed", "h_project_delete": "signed", "h_project_chat_create": "signed",
     "h_project_chat_move": "signed", "h_project_chat_remove": "signed",
+    "h_project_rooms": "device", "h_project_room_move": "owner_signed",
     "h_models": "owner", "h_providers": "owner", "h_identity": "owner", "h_memory": "owner", "h_usage": "owner",
     "h_model_default": "owner_signed", "h_provider_key": "owner_signed", "h_provider_key_delete": "owner_signed",
     "h_identity_put": "owner_signed", "h_memory_edit": "owner_signed",
@@ -161,7 +163,7 @@ ROUTE_POLICY = {
     "h_toolset_toggle": "owner_signed", "h_approvals": "owner_signed", "h_member_tools": "owner_signed",
     "h_mcp_install": "owner_signed", "h_mcp_toggle": "owner_signed", "h_mcp_remove": "owner_signed",
     "h_mcp_test": "owner_signed", "h_mcp_reload": "owner_signed", "h_mcp_sign_in": "owner_signed",
-    "h_mcp_sign_in_cancel": "owner_signed",
+    "h_mcp_sign_in_cancel": "owner_signed", "h_mcp_custom": "owner_signed",
     "h_rotate_token": "signed",
     "h_sync_snapshot": "device",
     "h_device_update": "owner_signed", "h_device_delete": "owner_signed", "h_pairing_code": "owner_signed",
@@ -318,6 +320,10 @@ class Hub:
         # Hermes-side callbacks, installed by the adapter.
         self.on_user_message: Optional[InboundFn] = None
         self.on_approval: Optional[ResolveFn] = None
+        # Hermes's per-session approval bypass for one chat (plugin/bridge.py), installed by the
+        # adapter; None (old Hermes) hides "Allow everything in this chat".
+        self.chat_approval_bypass: Any = None
+        self._inbox_response_lock = asyncio.Lock()
         self.on_answer: Optional[ResolveFn] = None
         # Installed by the adapter; the hub itself never imports Hermes.
         self.hermes_version: Callable[[], str] = lambda: ""
@@ -348,6 +354,8 @@ class Hub:
         r.add_post("/api/chats", self.h_chat_create)
         r.add_patch("/api/chats/{chat_id}", self.h_chat_rename)
         r.add_delete("/api/chats/{chat_id}", self.h_chat_delete)
+        r.add_get("/api/chats/{chat_id}/approval-bypass", self.h_chat_bypass_get)
+        r.add_delete("/api/chats/{chat_id}/approval-bypass", self.h_chat_bypass_delete)
         r.add_get("/api/chats/{chat_id}/messages", self.h_messages)
         r.add_post("/api/chats/{chat_id}/messages", self.h_message_send)
         r.add_post("/api/chats/{chat_id}/uploads", self.h_upload)
@@ -368,6 +376,8 @@ class Hub:
         r.add_post("/api/projects/{project_id}/chats", self.h_project_chat_create)
         r.add_post("/api/projects/{project_id}/chats/{chat_id}", self.h_project_chat_move)
         r.add_delete("/api/projects/{project_id}/chats/{chat_id}", self.h_project_chat_remove)
+        r.add_get("/api/project-rooms", self.h_project_rooms)
+        r.add_post("/api/project-rooms/{room_id}", self.h_project_room_move)
         r.add_get("/api/config/catalog", self.h_config_catalog)
         r.add_post("/api/config/preview", self.h_config_preview)
         r.add_post("/api/config/apply", self.h_config_apply)
@@ -459,6 +469,8 @@ class Hub:
         r.add_get("/api/mcp", self.h_mcp)
         r.add_post("/api/mcp", self.h_mcp_install)
         r.add_get("/api/mcp/catalog", self.h_mcp_catalog)
+        r.add_post("/api/mcp/custom", self.h_mcp_custom)
+        r.add_put("/api/mcp/custom/{name}", self.h_mcp_custom)
         r.add_post("/api/mcp/reload", self.h_mcp_reload)
         r.add_get("/api/mcp/sign-in/{flow_id}", self.h_mcp_sign_in_status)
         r.add_delete("/api/mcp/sign-in/{flow_id}", self.h_mcp_sign_in_cancel)
@@ -796,7 +808,10 @@ class Hub:
         branching = bool(self.branching is not None and self._has(self.branching, "available")
                          and self.branching.available())
         return {"phone_tools": self.phone_tools is not None, "routine_history": self.routine_history is not None, "routine_run_detail": self.routine_history is not None, **(self.context_insights.capabilities() if self.context_insights else {k:False for k in ("session_context","context_compression","provider_limits","usage_insights")}), "rooms": self.rooms is not None and self.rooms.available(),
-                "room_mentions": self.rooms is not None and self.rooms.available(), "rooms_member_write": False,
+                "room_mentions": self.rooms is not None and self.rooms.available(),
+                "project_rooms": self.rooms is not None and self.rooms.available(),
+                "project_rooms_sync": self.rooms is not None and self.rooms.available(), "rooms_member_write": False,
+                "chat_approval_bypass": self.chat_approval_bypass is not None,
                 "wear_relay": True, "wear_reply": True, "encrypted_push": True, "webpush": True, "ntfy": True, "approvals": True, "questions": True, "uploads": True, "voice": True,
                 "replies": True, "export": True, "mute": True, "status_updates": True, "roles": True,
                 "signed_actions": True, "ws_auth": True, "pickers": True, "agent": self.hermes is not None,
@@ -1117,6 +1132,57 @@ class Hub:
     async def h_projects(self, request: web.Request) -> web.Response:
         device = self._require(request)
         return _json({"projects": self.projects.snapshot(device, _BOT.get())})
+
+    async def h_project_rooms(self, request: web.Request) -> web.Response:
+        from .rooms import RoomError
+        device = self._require(request)
+        if self.rooms is None:
+            return _error(409, "Rooms are unavailable.")
+        try:
+            links = self.store._all('SELECT pr.room_id, p.id AS project_id, p.bot, p.revision '
+                                    'FROM project_rooms pr JOIN projects p ON p.id=pr.project_id '
+                                    'WHERE p.owner_device IS NULL')
+            visible = self.rooms.project_room_metadata(device, [link['room_id'] for link in links])
+            result = []
+            for link in links:
+                room = visible.get(link['room_id'])
+                if room:
+                    members = json.loads(room['members'])
+                    result.append({'id': room['id'], 'title': room['title'], 'project_id': link['project_id'],
+                                   'project_bot': link['bot'] or None, 'project_revision': link['revision'],
+                                   'bot_missing': (link['bot'] or 'default') not in [m['profile'] for m in members]})
+            return _json({'rooms': result})
+        except RoomError as exc:
+            return _error(exc.status, str(exc))
+
+    async def h_project_room_move(self, request: web.Request) -> web.Response:
+        from .rooms import RoomError
+        device = self._require(request)
+        if self.rooms is None:
+            return _error(409, "Rooms are unavailable.")
+        body = await self._project_body(request)
+        room_id = request.match_info['room_id']
+        try:
+            device = self.rooms._actor(device, owner=True)
+            with self.rooms._db() as db:
+                db.execute('BEGIN IMMEDIATE')
+                try:
+                    row = self.rooms._room(db, device, room_id)
+                    room = {**row, 'members': json.loads(row['members'])}
+                    result = self.projects.move_room(device, _BOT.get(), room_id, body.get('project_id'), body, room)
+                finally:
+                    db.rollback()
+        except RoomError as exc:
+            return _error(exc.status, str(exc))
+        except ProjectConflict as exc:
+            return _json({'error': str(exc), 'projects': self.projects.snapshot(device, _BOT.get())}, status=exc.status)
+        except ProjectError as exc:
+            return _error(exc.status, str(exc))
+        await self.broadcast_projects(_BOT.get())
+        if result.get('from_project_id') and result.get('from_project_bot') != _BOT.get():
+            await self.broadcast_projects(result.get('from_project_bot'))
+        self.audit('project.room.move', device, f'moved room {room_id}')
+        return _json({**result, 'projects': self.projects.snapshot(device, _BOT.get())})
 
     async def h_project_create(self, request: web.Request) -> web.Response:
         body = await self._project_body(request)
@@ -1615,12 +1681,44 @@ class Hub:
         items = [i for i in items if self.can_see(device, chats.get(i["chat_id"]))]
         return _json({"items": items, "pending": self.pending_for(device)})
 
+    def _chat_bypass_key(self, chat_id: str) -> Optional[str]:
+        """The Hermes session key an ordinary chat maps to, or None (Rooms, Updates, unknown chats,
+        or a server whose Hermes has no per-session bypass)."""
+        chat = self.store.get_chat(chat_id)
+        if self.chat_approval_bypass is None or not chat or chat.get("kind") != "chat":
+            return None
+        return self.chat_approval_bypass.session_key(chat_id) or None
+
+    async def h_chat_bypass_get(self, request: web.Request) -> web.Response:
+        key = self._chat_bypass_key(request.match_info["chat_id"])
+        if not key:
+            return _error(404, "chat or approval bypass unavailable")
+        return _json({"enabled": self.chat_approval_bypass.is_enabled(key)})
+
+    async def h_chat_bypass_delete(self, request: web.Request) -> web.Response:
+        chat_id = request.match_info["chat_id"]
+        # Same lock as card answers: a turn-off can't interleave with a turn-on from an answer.
+        async with self._inbox_response_lock:
+            key = self._chat_bypass_key(chat_id)
+            if not key:
+                return _error(404, "chat or approval bypass unavailable")
+            was_on = self.chat_approval_bypass.is_enabled(key)
+            self.chat_approval_bypass.disable(key)
+            self.audit("approval_bypass.off", self._require(request),
+                       f"chat {chat_id}" if was_on else f"chat {chat_id} (already off)")
+        return _json({"enabled": False})
+
     async def h_inbox_respond(self, request: web.Request) -> web.Response:
         item_id = request.match_info["item_id"]
         body = await self._body(request)
         choice = str(body.get("choice") or request.query.get("choice") or "")
         answer = body.get("answer")
+        allow_all = body.get("allow_all", False)
+        if not isinstance(allow_all, bool):
+            return _error(400, "allow_all must be a boolean")
         device = self._device(request)
+        if allow_all and (device is None or device["role"] != "owner"):
+            return _error(403, "Only an owner can disable approvals.")
         if device is None:
             # Older notifications carried signed action links. Only "deny" is honoured from one: an
             # approval must be given from the card itself, where the whole command is visible.
@@ -1628,7 +1726,7 @@ class Hub:
             if not (choice == "deny" and hmac.compare_digest(sig, self.action_signature(item_id, choice))):
                 return _error(401, "not paired")
         item = self.store.get_inbox(item_id)
-        if device is not None and item and item["kind"] == "approval" and choice != "deny":
+        if device is not None and (allow_all or (item and item["kind"] == "approval" and choice != "deny")):
             if device["role"] != "owner":
                 return _error(403, "Only an owner can approve or deny commands. It's waiting in their inbox.")
             problem = await self._signature_problem(request, device)
@@ -1636,7 +1734,8 @@ class Hub:
                 needs = {"needs": "verify"} if problem in (VERIFY_FIRST, BAD_SIGNATURE) else {}
                 return _json({"error": problem, **needs}, status=403)
         try:
-            ok, item = await self.respond(item_id, choice=choice, answer=answer, device=device)
+            ok, item = await self.respond(item_id, choice=choice, answer=answer, device=device,
+                                          allow_all=allow_all, chat_id=body.get("chat_id"))
         except Forbidden as exc:
             return _error(403, str(exc))
         if item is None:
@@ -1644,9 +1743,16 @@ class Hub:
         return _json({"ok": ok, "item": item}, status=200 if ok else 409)
 
     async def respond(self, item_id: str, *, choice: str = "", answer: Any = None,
-                      device: Optional[Dict[str, Any]] = None) -> tuple[bool, Optional[Dict]]:
-        """Answer an inbox card. ``device`` is who's answering; None only for an old notification's
-        deny link, which the caller has already checked."""
+                      device: Optional[Dict[str, Any]] = None, allow_all: bool = False,
+                      chat_id: Optional[str] = None) -> tuple[bool, Optional[Dict]]:
+        """Serialize card answers so only the winner may change bypass state."""
+        async with self._inbox_response_lock:
+            return await self._respond_locked(item_id, choice=choice, answer=answer, device=device,
+                                              allow_all=allow_all, chat_id=chat_id)
+
+    async def _respond_locked(self, item_id: str, *, choice: str, answer: Any,
+                              device: Optional[Dict[str, Any]], allow_all: bool,
+                              chat_id: Optional[str]) -> tuple[bool, Optional[Dict]]:
         item = self.store.get_inbox(item_id)
         if item is None or (device is not None and not self.can_see(device, self.store.get_chat(item["chat_id"]))):
             return False, None
@@ -1654,6 +1760,18 @@ class Hub:
             return False, item
         if item["kind"] == "approval" and device is not None and device["role"] != "owner":
             raise Forbidden("Only an owner can approve or deny commands. It's waiting in their inbox.")
+        bypass_key = None
+        if allow_all:
+            # "Allow everything in this chat": only a one-time approval of an ordinary card. The
+            # session is the stored card's, and must be the one Hermes files that chat under now. The
+            # app must name the chat it showed the confirm for; it is a required cross-check only.
+            if (device is None or device["role"] != "owner" or item["kind"] != "approval"
+                    or choice != "once" or item["payload"].get("smart_denied") is not False
+                    or not isinstance(chat_id, str) or chat_id != item["chat_id"]):
+                return False, item
+            bypass_key = self._chat_bypass_key(item["chat_id"])
+            if not bypass_key or item["payload"].get("session_key") != bypass_key:
+                return False, item
         ok = False
         if item["kind"] == "approval":
             if choice not in (item["payload"].get("choices") or []):
@@ -1661,6 +1779,12 @@ class Hub:
             ok = bool(self.on_approval and await self.on_approval(item, choice))
             resolution = choice
             if ok:
+                # Only after Hermes accepted this answer: a lost race or an expired request never
+                # turns the bypass on. Hermes wakes the worker inside resolve, so a command that
+                # arrives before this line still gets an ordinary card (fails closed; see APPROVALS.md).
+                if bypass_key and not self.chat_approval_bypass.is_enabled(bypass_key):
+                    self.chat_approval_bypass.enable(bypass_key)
+                    self.audit("approval_bypass.on", device, f"chat {item['chat_id']}")
                 self.audit("approval", device, f"{choice}: {_clip(item['payload'].get('command') or item['title'], 120)}")
         elif item["kind"] == "question":
             if isinstance(answer, list):  # multi-select: the labels the user ticked
@@ -3433,6 +3557,72 @@ class Hub:
         await self._call(h.install_mcp, name, env)
         self.mcp_changed = True
         self.audit("mcp.add", device, summary)
+        return _json({"ok": True, "needs_reload": True})
+
+    async def h_mcp_custom(self, request: web.Request) -> web.Response:
+        device = self._require(request)
+        body = await self._body(request)
+        edit = request.method == "PUT"
+        name = request.match_info.get("name") if edit else body.get("name")
+        if not isinstance(name, str) or not _ABILITY_NAME.fullmatch(name):
+            return _error(400, "Invalid server name.")
+        if edit and body.get("name", name) != name:
+            return _error(400, "A server cannot be renamed.")
+        transport = body.get("transport")
+        if transport == "http":
+            url = body.get("url")
+            try:
+                if not isinstance(url, str) or len(url) > 2048 or re.search(r"[\s\x00-\x1f\\]", url):
+                    raise ValueError()
+                parts = urlsplit(url)
+                if parts.scheme not in ("http", "https") or not parts.hostname or parts.username is not None or parts.password is not None or parts.query or parts.fragment:
+                    raise ValueError()
+                _ = parts.port
+                if parts.scheme == "http":
+                    host = parts.hostname.lower()
+                    if host != "localhost":
+                        ip = ipaddress.ip_address(host)
+                        networks = (ipaddress.ip_network("10.0.0.0/8"), ipaddress.ip_network("172.16.0.0/12"),
+                                    ipaddress.ip_network("192.168.0.0/16"), ipaddress.ip_network("fc00::/7"))
+                        if not ip.is_loopback and not any(ip.version == net.version and ip in net for net in networks):
+                            raise ValueError()
+            except ValueError:
+                return _error(400, "Use HTTPS, or HTTP with a loopback or private LAN address. URLs cannot contain credentials, queries or fragments.")
+            auth = body.get("auth", "none")
+            if auth not in ("none", "header"):
+                return _error(400, "Custom servers support no sign-in or a header key. Configure OAuth through Hermes instead.")
+            config = {"transport": "http", "url": url, "auth": auth}
+        elif transport == "stdio":
+            command, args = body.get("command"), body.get("args", [])
+            if not isinstance(command, str) or not command.strip() or len(command) > 1024 or any(ord(c) < 32 for c in command) or not isinstance(args, list) or len(args) > 64 or any(not isinstance(a, str) or len(a) > 4096 or any(ord(c) < 32 for c in a) for a in args):
+                return _error(400, "Enter a command and a list of arguments.")
+            config = {"transport": "stdio", "command": command, "args": args}
+        else:
+            return _error(400, "Choose HTTP or stdio.")
+        if any(key in body for key in ("env", "headers", "header_value")):
+            return _error(400, "Secrets must be sealed.")
+        secret_data = {}
+        if body.get("sealed"):
+            refused = self._secrets_refused(device)
+            if refused is not None:
+                return refused
+            try:
+                secret_data = self.keys.unseal_json(str(body["sealed"]), "mcp-env", device["id"])
+            except (keys.SealError, ValueError):
+                return _error(400, "The keys couldn't be opened.")
+        if not isinstance(secret_data, dict) or set(secret_data) - {"env", "headers"}:
+            return _error(400, "Invalid secrets.")
+        for kind, values in secret_data.items():
+            if not isinstance(values, dict) or len(values) > 32 or (kind == "env" and transport != "stdio") or (kind == "headers" and (transport != "http" or config.get("auth") != "header")):
+                return _error(400, "Invalid secrets.")
+            pattern = r"[A-Za-z_][A-Za-z0-9_]*" if kind == "env" else r"[A-Za-z0-9!#$%&'*+.^_`|~-]+"
+            if any(not isinstance(k, str) or not re.fullmatch(pattern, k) or not isinstance(v, str) or not v or len(v) > 4096 or any(ord(c) < 32 or ord(c) == 127 for c in v) for k, v in values.items()):
+                return _error(400, "Invalid secret name or value.")
+        if transport == "http" and config["auth"] == "header" and not edit and not secret_data.get("headers"):
+            return _error(400, "Enter a header key and value.")
+        await self._call(self._need_hermes().save_custom_mcp, name, config, secret_data, edit)
+        self.mcp_changed = True
+        self.audit("mcp.edit" if edit else "mcp.add", device, f"{'updated' if edit else 'added'} {name}")
         return _json({"ok": True, "needs_reload": True})
 
     def _mark_mcp_changed(self) -> None:

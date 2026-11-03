@@ -45,6 +45,7 @@ import { ProcessesSheet } from '../features/processes/ProcessesSheet';
 import { ContextSheet } from '../features/context-insights/ContextSheet';
 import { GoalSheet, GoalStrip, useChatGoal } from './Goal';
 import { PausedBanner } from './PausedBanner';
+import { ApprovalBypassBanner } from './ApprovalBypassBanner';
 import { Glass } from './Glass';
 import {
   ArrowDown, CalendarClock, Check, ChevronDown, Clock, Copy, FileText, Folder, GitBranch, MoreHorizontal, Pencil, Reply, RotateCcw, Share,
@@ -254,6 +255,7 @@ export function ChatView({ server, chatId, showBack, embedded, landing }: { serv
         <ConnectionBanner server={server} compact />
         <SyncStatus serverId={server.id} />
         <PausedBanner server={server} />
+        {!landing?.prepareChat && chat ? <ApprovalBypassBanner server={server} chatId={chatId} /> : null}
         {!composing ? <BranchStrip server={server} chatId={chatId} state={branching.state} /> : null}
         {!composing && goal ? <GoalStrip goal={goal} onPress={() => setGoalOpen(true)} /> : null}
       </View>

@@ -1,3 +1,12 @@
+export type ProjectRoom = { id: string; title: string; project_id: string; project_bot: string | null; project_revision: number; bot_missing: boolean };
+export const projectRoomsSupported = (features?: Record<string, boolean>) => !!(features?.rooms && features?.projects && features?.project_rooms);
+export const canCreateRoomInProject = (project: {private:boolean; archived:boolean} | undefined, features?: Record<string,boolean>) =>
+  !!project && !project.private && !project.archived && projectRoomsSupported(features);
+export function projectRoomMoveBody(source: {id:string;revision:number} | null, target: {id:string;revision:number} | null, clientId: string) {
+  return { project_id: target?.id ?? null, ...(target ? { revision: target.revision } : {}),
+    from_project_id: source?.id ?? null, ...(source ? { from_revision: source.revision } : {}), client_id: clientId };
+}
+
 export type RoomMember = { member_id: string; profile: string; handle: string; display_name: string };
 export type RoomAction = { kind: 'approval' | 'retry'; task_id: string; member_id?: string; execution_generation?: number; request_id?: string; summary?: string };
 export type Room = {

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, ScrollView, Text, useWindowDimensions, View } from 'react-native';
+import { ActivityIndicator, Linking, ScrollView, Text, useWindowDimensions, View } from 'react-native';
 import Animated, { FadeIn } from 'react-native-reanimated';
 import { JobSheet } from '../components/JobSheet';
 import { Download, Search, Trash2 } from '../components/icons';
@@ -8,7 +8,7 @@ import { Screen } from '../components/Screen';
 import { withSelectedServer } from '../components/ServerScreen';
 import { Sheet } from '../components/Sheet';
 import { Button, ConfirmButton, Footnote, ListGroup, ListRow, LoadError, SearchField, SectionHeader, Segmented, Skeleton, Toggle } from '../components/ui';
-import { byCategory, categoryLabel, matches } from '../lib/abilities';
+import { byCategory, categoryLabel, matches, skillSource } from '../lib/abilities';
 import { api, ApiError, signedApi } from '../lib/api';
 import { idempotencyKey } from '../lib/control';
 import { haptic } from '../lib/haptics';
@@ -174,12 +174,15 @@ function SkillSheet({ server, item, onClose, onToggle, onInstall, onRemove }: {
   }, [item?.name, server]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!x) return null;
+  const source = skillSource(x);
+  const hubSource = !isSkill(x) || x.provenance === 'hub';
   return (
     <Sheet visible={!!item} onClose={onClose} title={x.name}>
       <View style={{ gap: 14, paddingHorizontal: 4 }}>
         <ListGroup>
           <ListRow title="Category" value={categoryLabel(x.category)} />
-          <ListRow title="Source" value={isSkill(x) ? ORIGIN[x.provenance] : 'Official'} />
+          <ListRow title="Source" value={hubSource ? source.label : isSkill(x) ? ORIGIN[x.provenance] : 'Official'} />
+          {hubSource && source.url ? <ListRow title="View source" onPress={() => { void Linking.openURL(source.url!).catch(() => undefined); }} /> : null}
         </ListGroup>
         <Text style={s.description}>{x.description}</Text>
         {isSkill(x) ? (
