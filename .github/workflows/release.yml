@@ -1,10 +1,12 @@
 name: Release
 
 # Push a tag like v0.1.0 to build the Android APK and the plugin bundle and attach them to a
-# GitHub Release. Can also be run by hand from the Actions tab (artifacts only, no release).
+# GitHub Release. PRs to main and manual runs build validation artifacts without publishing.
 on:
   push:
     tags: ["v*"]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -44,6 +46,7 @@ jobs:
     timeout-minutes: 60
     env:
       HAS_SIGNING_KEY: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
+      IS_INTERNAL_PR: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
     steps:
       - uses: actions/checkout@v4
       - name: Work out the version
@@ -55,6 +58,9 @@ jobs:
             LABEL="$VERSION"
           else
             VERSION="$(node -p "require('./app/app.json').expo.version")"
+            if [ "$IS_INTERNAL_PR" = "true" ] && [ "$HAS_SIGNING_KEY" != "true" ]; then
+              echo "::error::Promotion PRs require the production signing key"; exit 1
+            fi
             LABEL="dev-${GITHUB_SHA::7}"
             [ "$HAS_SIGNING_KEY" = "true" ] || LABEL="${LABEL}-debugkey"
           fi

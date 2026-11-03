@@ -46,6 +46,11 @@ and the key proves the APK came from you. CI refuses to publish a release withou
 
 ## Cutting a release
 
+Promotion PRs to `main` run the Release workflow as validation checks, building
+the APKs and plugin without publishing. Internal PRs require the production
+signing key; fork PRs can build with a debug key. Merge only after these checks
+and CI pass. The tag below performs the final build and publication.
+
 ```bash
 git tag v0.1.1
 git push origin v0.1.1

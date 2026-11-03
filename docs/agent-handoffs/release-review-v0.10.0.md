@@ -77,8 +77,10 @@ versioning, and APK signing. This review did not use delegated agents.
 ## Required remote gates and remaining limits
 
 Before promotion, require all CI jobs, including pinned Hermes and Wear native
-compilation, plus a manual Release workflow on the prepared branch. That manual
-run builds signed APKs and the plugin without publishing. Verify its certificate
+compilation, plus the Release workflow on the promotion PR to main. That workflow
+builds signed APKs and the plugin without publishing and reports as PR checks,
+so completion is tracked alongside CI. Internal promotion PRs require the signing
+key. A separate manual validation run is also available. Verify the certificate
 and APK version checks. After promotion, tag the exact main commit `v0.10.0`;
 the tag workflow publishes only after tests and both artifact jobs succeed.
 
