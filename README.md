@@ -30,6 +30,30 @@ and tap you on the shoulder when they need you.
 > **New in [v0.10.0](docs/releases/v0.10.0.md):** Rooms in Projects, clearer Smart approval cards,
 > approval bypass for one chat, custom MCP servers, and links to skill sources.
 
+> [!WARNING]
+> **Winglet is no longer maintained or actively developed.** Development is stopping because Hermes now provides
+> its own first-party Desktop app and Android/Termux distribution, and the Hermes ecosystem includes a more capable
+> mobile client path. New users should start with [Hermes Agent](https://github.com/NousResearch/hermes-agent) and
+> its [official downloads](https://hermes-agent.nousresearch.com/).
+
+## Project status
+
+Winglet is archived as a community project. The recommended replacement is Hermes's own client ecosystem:
+
+- [Hermes Desktop](https://hermes-agent.nousresearch.com/) is the native client for macOS, Windows and Linux.
+- [Hermes Android / Termux](https://hermes-agent.nousresearch.com/docs/getting-started/termux) provides a signed
+  Android package for aarch64 devices. It runs the Hermes CLI/TUI and gateway in Termux; Android background-process
+  limits still apply.
+- The Hermes catalog lists the community-maintained [Hermes Mobile Adapter](https://github.com/geniok1980/hermes-mobile-adapter),
+  which connects a mobile, desktop or web client over WebSocket and supports text, voice, images, video, documents,
+  streaming edits, typing/avatar events, approvals, clarify/slash cards, cron delivery, and agent-provided command and
+  model catalogs. Review its [documentation](https://geniok1980.github.io/hermes-mobile-adapter/) and security disclosure
+  before use; it is a community adapter, not a Nous Research first-party app.
+
+See the [Hermes Agent documentation](https://hermes-agent.nousresearch.com/docs/) for current installation and client
+options. This repository remains available for reference, but it will not receive feature work, compatibility updates,
+or ongoing maintenance.
+
 ## Why Winglet?
 
 OpenAI Dots, Meta Muse and Grok Bot showed what a personal agent on your phone should feel like.
